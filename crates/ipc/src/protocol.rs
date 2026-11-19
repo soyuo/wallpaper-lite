@@ -1,12 +1,15 @@
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::sync::{mpsc, oneshot};
 
 use crate::{IpcError, error::from_io};
 
 pub const PIPE_NAME: &str = r"\\.\pipe\wallpaper-lite";
-pub const PROTOCOL_VERSION: u16 = 1;
+pub const PLAYBACK_EVENTS_PIPE_NAME: &str = r"\\.\pipe\wallpaper-lite-playback-events";
+pub const PROTOCOL_VERSION: u16 = 3;
 pub const MAX_FRAME_BYTES: usize = 4 * 1024;
 pub(crate) const IO_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+const COMMAND_QUEUE_CAPACITY: usize = 16;
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -24,12 +27,29 @@ impl Request {
             command: Command::Ping,
         }
     }
+
+    pub fn new(request_id: u64, command: Command) -> Self {
+        Self {
+            version: PROTOCOL_VERSION,
+            request_id,
+            command,
+        }
+    }
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum Command {
     Ping,
+    LoadVideo { path: String },
+    Play,
+    Pause,
+    Stop,
+    Seek { position_100ns: i64 },
+    SetSpeed { percent: u16 },
+    SetFps { frames_per_second: u16 },
+    GetPlaybackState,
+    SubscribePlaybackState,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -48,12 +68,118 @@ impl Response {
             result: ResponseResult::Pong,
         }
     }
+
+    pub fn new(request_id: u64, result: ResponseResult) -> Self {
+        Self {
+            version: PROTOCOL_VERSION,
+            request_id,
+            result,
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ResponseResult {
     Pong,
+    PlaybackState(PlaybackStateEvent),
+    Error { code: PlaybackCommandErrorCode },
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum IpcPlaybackState {
+    Stopped,
+    Playing,
+    Paused,
+    Ended,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct PlaybackStateEvent {
+    pub sequence: u64,
+    pub state: IpcPlaybackState,
+    pub media_time_100ns: i64,
+    pub duration_100ns: Option<i64>,
+    pub speed_percent: u16,
+    pub fps_limit: u16,
+    pub loading_video: bool,
+    pub last_error: Option<PlaybackCommandErrorCode>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PlaybackCommandErrorCode {
+    PlaybackUnavailable,
+    VideoLoadInProgress,
+    VideoNotLoaded,
+    VideoLoadFailed,
+    InvalidSeek,
+    SeekFailed,
+    UnsupportedSpeed,
+    UnsupportedFps,
+    PlaybackFailed,
+    DecodeFailed,
+}
+
+pub struct PlaybackCommandRequest {
+    command: Command,
+    response: oneshot::Sender<ResponseResult>,
+}
+
+impl PlaybackCommandRequest {
+    pub fn command(&self) -> &Command {
+        &self.command
+    }
+
+    pub fn response_is_closed(&self) -> bool {
+        self.response.is_closed()
+    }
+
+    pub fn respond(self, result: ResponseResult) -> bool {
+        self.response.send(result).is_ok()
+    }
+}
+
+#[derive(Clone)]
+pub struct PlaybackCommandSender(mpsc::Sender<PlaybackCommandRequest>);
+
+pub struct PlaybackCommandReceiver(mpsc::Receiver<PlaybackCommandRequest>);
+
+pub fn playback_command_channel() -> (PlaybackCommandSender, PlaybackCommandReceiver) {
+    let (sender, receiver) = mpsc::channel(COMMAND_QUEUE_CAPACITY);
+    (
+        PlaybackCommandSender(sender),
+        PlaybackCommandReceiver(receiver),
+    )
+}
+
+impl PlaybackCommandSender {
+    pub(crate) async fn dispatch(&self, command: Command) -> ResponseResult {
+        let (response, result) = oneshot::channel();
+        if self
+            .0
+            .send(PlaybackCommandRequest { command, response })
+            .await
+            .is_err()
+        {
+            return ResponseResult::Error {
+                code: PlaybackCommandErrorCode::PlaybackUnavailable,
+            };
+        }
+        result.await.unwrap_or(ResponseResult::Error {
+            code: PlaybackCommandErrorCode::PlaybackUnavailable,
+        })
+    }
+}
+
+impl PlaybackCommandReceiver {
+    pub fn try_recv(
+        &mut self,
+    ) -> Result<PlaybackCommandRequest, tokio::sync::mpsc::error::TryRecvError> {
+        self.0.try_recv()
+    }
 }
 
 pub(crate) fn encode_message<T: Serialize>(message: &T) -> Result<Vec<u8>, IpcError> {
@@ -73,16 +199,16 @@ pub(crate) fn decode_request(payload: &[u8]) -> Result<Request, IpcError> {
     Ok(request)
 }
 
-pub(crate) fn decode_response(payload: &[u8], request_id: u64) -> Result<(), IpcError> {
+pub(crate) fn decode_response(payload: &[u8], request_id: u64) -> Result<ResponseResult, IpcError> {
     let response: Response =
         serde_json::from_slice(payload).map_err(|_| IpcError::MalformedResponse)?;
     if response.version != PROTOCOL_VERSION {
         return Err(IpcError::ProtocolVersionMismatch);
     }
-    if response.request_id != request_id || response.result != ResponseResult::Pong {
+    if response.request_id != request_id {
         return Err(IpcError::MalformedResponse);
     }
-    Ok(())
+    Ok(response.result)
 }
 
 fn checked_frame_len(length: u32) -> Result<usize, IpcError> {
@@ -132,6 +258,21 @@ mod tests {
     use super::*;
 
     #[test]
+    fn playback_request_observes_client_cancellation() {
+        let (response, receiver) = oneshot::channel();
+        let request = PlaybackCommandRequest {
+            command: Command::LoadVideo {
+                path: "clip.mp4".to_owned(),
+            },
+            response,
+        };
+
+        assert!(!request.response_is_closed());
+        drop(receiver);
+        assert!(request.response_is_closed());
+    }
+
+    #[test]
     fn ping_protocol_round_trips_and_matches_request_id() {
         let request = Request::ping(42);
         let request_payload = encode_message(&request).expect("encode request");
@@ -146,6 +287,28 @@ mod tests {
             decode_response(&response_payload, 43),
             Err(IpcError::MalformedResponse)
         ));
+    }
+
+    #[test]
+    fn playback_state_round_trips_async_load_status_and_error() {
+        let response = Response::new(
+            7,
+            ResponseResult::PlaybackState(PlaybackStateEvent {
+                sequence: 3,
+                state: IpcPlaybackState::Playing,
+                media_time_100ns: 250_000,
+                duration_100ns: Some(10_000_000),
+                speed_percent: 100,
+                fps_limit: 60,
+                loading_video: true,
+                last_error: Some(PlaybackCommandErrorCode::VideoLoadFailed),
+            }),
+        );
+        let payload = encode_message(&response).expect("encode playback snapshot");
+        assert_eq!(
+            decode_response(&payload, 7).expect("decode playback snapshot"),
+            response.result
+        );
     }
 
     #[test]
@@ -173,6 +336,12 @@ mod tests {
         let payload = br#"{"version":2,"request_id":1,"result":"pong"}"#;
         assert!(matches!(
             decode_response(payload, 1),
+            Err(IpcError::ProtocolVersionMismatch)
+        ));
+
+        let old_request = br#"{"version":1,"request_id":1,"command":"ping"}"#;
+        assert!(matches!(
+            decode_request(old_request),
             Err(IpcError::ProtocolVersionMismatch)
         ));
     }

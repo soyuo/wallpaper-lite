@@ -1,56 +1,138 @@
 # UI-to-host IPC
 
-Phase 0 uses one Windows named pipe to prove the process boundary between the
-Tauri UI and `wallpaper-host.exe`. The transport currently supports only a
-request/response ping; media commands are outside this protocol version.
+`wallpaper-ui` and `wallpaper-host` communicate through the Windows named pipe
+`\\.\pipe\wallpaper-lite` for commands and
+`\\.\pipe\wallpaper-lite-playback-events` for state subscriptions. Protocol
+version 3 supports a liveness ping and the Phase 3 video playback controls.
+Version 3 adds asynchronous load state to version 2. Request and response
+decoders reject mismatched versions, so UI and host builds must be deployed
+together. Video decoding, scheduling, and presentation stay in the host.
 
 ## Endpoint and framing
 
-- Pipe: `\\.\pipe\wallpaper-lite`.
-- One client request is handled at a time. The host disconnects the client and
-  accepts another request on the same pipe instance.
+- Each control client sends one request and receives one response per
+  connection. State subscribers use a separate pipe, so a long-lived event
+  stream does not hold up playback commands.
 - Each message is UTF-8 JSON preceded by a four-byte unsigned little-endian
-  payload length. The length must be between 1 and 4096 bytes before the host
-  or client allocates a payload buffer.
-- The client retries a busy pipe every 25 ms for at most one second. No server
-  produces the `host_unavailable` error. The request/response exchange and the
-  host's wait for one request each have a two-second limit.
-- The client closes its pipe handle when the request returns. The host calls
-  `DisconnectNamedPipe` through Tokio's named-pipe server API before accepting
-  the next client. Process shutdown closes the host's remaining handle.
+  payload length. The length must be between 1 and 4096 bytes before a payload
+  buffer is allocated.
+- Requests carry protocol `version` and a `request_id`; the response echoes
+  both. The client retries a busy pipe every 25 ms for at most one second.
+- Pipe request reads and request/response waits have a two-second deadline.
+  `load_video` acknowledges that a source open has started; completion or
+  failure arrives on the state-event pipe. The playback worker runs on its own
+  bounded command queue so source opening, decoding, scheduling, and GPU
+  presentation do not run on the Tokio IPC loop.
+- The command queue holds at most 16 pending requests. A disconnected client
+  before load acknowledgement causes its candidate source to be dropped. Once
+  acknowledged, the load continues independently and reports its outcome over
+  playback state.
 
-## Version 1 ping
+## Request and response shapes
 
-Request:
+Version 3 retains the ping request:
 
 ```json
-{"version":1,"request_id":1,"command":"ping"}
+{"version":3,"request_id":1,"command":"ping"}
 ```
 
-Response:
+Playback commands use the same request envelope. Enum values are snake case;
+fields use the names below:
 
 ```json
-{"version":1,"request_id":1,"result":"pong"}
+{"version":3,"request_id":2,"command":{"load_video":{"path":"C:/Media/clip.mp4"}}}
+{"version":3,"request_id":3,"command":"play"}
+{"version":3,"request_id":4,"command":"pause"}
+{"version":3,"request_id":5,"command":"stop"}
+{"version":3,"request_id":6,"command":{"seek":{"position_100ns":5000000}}}
+{"version":3,"request_id":7,"command":{"set_speed":{"percent":125}}}
+{"version":3,"request_id":8,"command":{"set_fps":{"frames_per_second":30}}}
+{"version":3,"request_id":9,"command":"get_playback_state"}
 ```
 
-The response must use protocol version 1 and echo the request ID. Invalid JSON,
-an unexpected result, or an ID mismatch returns `malformed_response`. A version
-mismatch returns `protocol_version_mismatch`.
+The playback-events pipe accepts a long-lived subscription request:
+
+```json
+{"version":3,"request_id":10,"command":"subscribe_playback_state"}
+```
+
+The response result is either `pong`, a typed playback error, or a
+`playback_state` snapshot:
+
+```json
+{"version":3,"request_id":3,"result":{"playback_state":{"sequence":2,"state":"playing","media_time_100ns":50000,"duration_100ns":120000000,"speed_percent":100,"fps_limit":60,"loading_video":false,"last_error":null}}}
+```
+
+State snapshots are returned with control-command responses and on explicit
+`get_playback_state` requests. Their monotonically wrapping `sequence` lets a
+client discard stale snapshots. A subscriber receives the current state
+immediately and later coalesced updates on the separate event pipe.
+`media_time_100ns` is the current media clock; duration is `null` when no
+source is loaded. `loading_video` indicates an acknowledged asynchronous open,
+and `last_error` carries a safe typed error from asynchronous work.
+
+## Playback semantics
+
+- `load_video` acknowledges source opening immediately with
+  `loading_video: true`; the current source remains active during inspection.
+  A failed open leaves it active and publishes `last_error: video_load_failed`.
+  Successful replacement resets transport to stopped at zero and releases the
+  old source. A request disconnected before acknowledgement drops its candidate;
+  an acknowledged load continues independently and reports completion or
+  failure through playback state.
+- `play`, `pause`, `stop`, and `seek` operate on the host-owned scheduler and
+  Media Foundation source reader. Seek positions are signed 100 ns units and
+  must be within the loaded source duration.
+- Seeking or stopping while paused/stopped presents the newest frame for the
+  resulting media position, so the visible desktop does not remain on a stale
+  frame.
+- `set_speed.percent` accepts the scheduler's supported exact speed presets.
+  `set_fps.frames_per_second` accepts values from 1 through 120. The two
+  settings are independent.
+- If a read/decode or scheduler failure occurs between requests, playback stops
+  and the next `get_playback_state` returns a typed `decode_failed` or
+  `playback_failed` error once; a later snapshot reports the stopped state.
+- `GetPlaybackState` returns a single current snapshot. While playing, updates
+  are coalesced and capped at four per second; load acceptance/completion/failure,
+  transport, seek, settings, end-of-stream, and error transitions publish
+  immediately. Closing the event-pipe connection stops delivery.
+- Decoded frames pass through a bounded three-frame PTS queue. The host sends
+  only due frames to the recovery worker; static UI/IPC polling does not redraw.
+- The playback scheduler and source-opening coordination live on a dedicated
+  playback thread; each Media Foundation source reader stays on its own COM
+  initialized worker thread. Bounded frame queues keep decoding from blocking
+  command processing and drop frames under backpressure. Replacing a source
+  signals the prior reader to stop, waits up to one second for its thread, and
+  clears scheduled frames. Host shutdown explicitly signals the playback
+  thread; each source worker gets a bounded stop and join before recovery
+  releases its GPU/window resources. A playback worker that exceeds its
+  five-second shutdown deadline is detached with a warning, and recovery
+  resources stay alive until process termination so an in-flight frame cannot
+  use a destroyed window.
 
 ## Error codes
 
+`PlaybackCommandErrorCode` values are stable protocol data and contain no path
+or OS diagnostic text:
+
 | Code | Meaning |
 | --- | --- |
-| `host_unavailable` | No host pipe exists. |
-| `timeout` | Pipe remained busy or request/response I/O exceeded its deadline. |
-| `disconnected` | The peer closed the pipe before completing the message. |
-| `malformed_response` | Response JSON or correlation fields are invalid. |
-| `message_too_large` | A frame exceeds 4096 bytes. |
-| `protocol_version_mismatch` | The peer uses a different protocol version. |
-| `transport_error` | Another Windows pipe I/O error occurred. |
-| `unsupported_platform` | Named-pipe transport is only implemented on Windows. |
+| `playback_unavailable` | The playback worker is stopping or unavailable. |
+| `video_load_in_progress` | A source open is still in progress; only one open is allowed at a time. |
+| `video_not_loaded` | A transport command needs a loaded source. |
+| `video_load_failed` | The requested source could not be opened. |
+| `invalid_seek` | The seek position is outside the source duration. |
+| `seek_failed` | Media Foundation rejected an otherwise valid seek. |
+| `unsupported_speed` | The requested speed is not a supported preset. |
+| `unsupported_fps` | The requested output cap is outside 1–120 FPS. |
+| `playback_failed` | The scheduler could not apply the transport command. |
+| `decode_failed` | Source decoding stopped after a decode error. |
 
-`wallpaper-ui` exposes the request as the Tauri command `host_ping`; the React
-host adapter invokes it. `wallpaper-host` runs the server independently. See
-[`apps/ui/README.md`](../../apps/ui/README.md) for the development round-trip
-steps.
+Transport-level errors include `host_unavailable`, `timeout`, `disconnected`,
+`malformed_response`, `message_too_large`, `protocol_version_mismatch`,
+`transport_error`, and `unsupported_platform`.
+
+`wallpaper-ui` currently exposes the ping request as the Tauri command
+`host_ping`; video UI controls are outside Phase 3. `wallpaper-host` runs the
+pipe server independently. See [`apps/ui/README.md`](../../apps/ui/README.md)
+for development round-trip steps.
