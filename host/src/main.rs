@@ -130,6 +130,28 @@ fn main() -> process::ExitCode {
     // Keep the device and immediate context alive for the host process lifetime.
     let _graphics_device = graphics_device;
 
+    let wallpaper_window = match desktop_host.attach_wallpaper_window() {
+        Ok(window) => window,
+        Err(error) => {
+            tracing::error!(
+                component = "desktop",
+                event = "wallpaper_window_attach_failed",
+                error_code = error.to_app_error().code.as_str(),
+                diagnostic = %error.diagnostic_summary(),
+                "Wallpaper window could not be attached"
+            );
+            return process::ExitCode::FAILURE;
+        }
+    };
+    tracing::info!(
+        component = "desktop",
+        event = "wallpaper_window_attached",
+        parent_kind = desktop_host.kind().as_str(),
+        "Wallpaper window attached below desktop icons"
+    );
+    // Keep the native window alive until IPC exits; its Drop implementation destroys and joins.
+    let _wallpaper_window = wallpaper_window;
+
     let runtime = match tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
