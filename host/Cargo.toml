@@ -12,6 +12,7 @@ path = "src/main.rs"
 [dependencies]
 wallpaper-core = { workspace = true }
 wallpaper-desktop = { workspace = true }
+wallpaper-media = { workspace = true }
 wallpaper-renderer = { workspace = true }
 wallpaper-ipc = { workspace = true }
 tokio = { workspace = true }
