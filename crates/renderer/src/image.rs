@@ -32,7 +32,8 @@ use windows::{
 };
 
 use crate::{
-    D3d11Device, PlacementDimensions, PlacementMode, RendererError, calculate_image_placement,
+    D3d11Device, ImageTransform, PlacementDimensions, PlacementMode, RendererError,
+    calculate_transformed_image_placement,
 };
 
 const VERTEX_SHADER: &str = r#"
@@ -42,7 +43,10 @@ struct VertexOutput {
 };
 
 cbuffer PlacementData : register(b0) {
-    float4 destination_rect;
+    float4 destination_top_left;
+    float4 destination_top_right;
+    float4 destination_bottom_right;
+    float4 destination_bottom_left;
     float4 source_uv_rect;
 };
 
@@ -56,12 +60,9 @@ VertexOutput vs_main(uint vertex_id : SV_VertexID) {
         float2(0.0, 1.0)
     };
     VertexOutput output;
-    output.position = float4(
-        lerp(destination_rect.x, destination_rect.z, coordinates[vertex_id].x),
-        lerp(destination_rect.y, destination_rect.w, coordinates[vertex_id].y),
-        0.0,
-        1.0
-    );
+    float2 top = lerp(destination_top_left.xy, destination_top_right.xy, coordinates[vertex_id].x);
+    float2 bottom = lerp(destination_bottom_left.xy, destination_bottom_right.xy, coordinates[vertex_id].x);
+    output.position = float4(lerp(top, bottom, coordinates[vertex_id].y), 0.0, 1.0);
     output.uv = float2(
         lerp(source_uv_rect.x, source_uv_rect.z, coordinates[vertex_id].x),
         lerp(source_uv_rect.y, source_uv_rect.w, coordinates[vertex_id].y)
@@ -100,6 +101,7 @@ pub struct D3d11ImagePresenter<'a> {
     height: u32,
     source_dimensions: PlacementDimensions,
     placement_mode: PlacementMode,
+    transform: ImageTransform,
     presented_frames: u64,
 }
 
@@ -118,6 +120,23 @@ impl<'a> D3d11ImagePresenter<'a> {
         window_handle: isize,
         image: &DecodedImage,
         placement_mode: PlacementMode,
+    ) -> Result<Self, RendererError> {
+        Self::new_with_transform(
+            device,
+            window_handle,
+            image,
+            placement_mode,
+            ImageTransform::default(),
+        )
+    }
+
+    /// Create the presenter with placement and runtime transform parameters.
+    pub fn new_with_transform(
+        device: &'a D3d11Device,
+        window_handle: isize,
+        image: &DecodedImage,
+        placement_mode: PlacementMode,
+        transform: ImageTransform,
     ) -> Result<Self, RendererError> {
         let hwnd = hwnd_from_raw(window_handle);
         if !unsafe { IsWindow(Some(hwnd)) }.as_bool() {
@@ -177,8 +196,13 @@ impl<'a> D3d11ImagePresenter<'a> {
         })?;
 
         let (image_texture, image_view) = create_image_texture(device, image)?;
-        let placement_buffer =
-            create_placement_buffer(device, source_dimensions, output_dimensions, placement_mode)?;
+        let placement_buffer = create_placement_buffer(
+            device,
+            source_dimensions,
+            output_dimensions,
+            placement_mode,
+            transform,
+        )?;
         let vertex_shader = create_vertex_shader(device, VERTEX_SHADER)?;
         let pixel_shader = create_pixel_shader(device, PIXEL_SHADER)?;
         let sampler = create_sampler(device)?;
@@ -200,6 +224,7 @@ impl<'a> D3d11ImagePresenter<'a> {
             height,
             source_dimensions,
             placement_mode,
+            transform,
             presented_frames: 0,
         };
         presenter.create_render_target()?;
@@ -216,6 +241,7 @@ impl<'a> D3d11ImagePresenter<'a> {
             source_dimensions,
             PlacementDimensions::new(self.width, self.height)?,
             self.placement_mode,
+            self.transform,
         )?;
         self.unbind_resources();
         self.image_texture = texture;
@@ -225,7 +251,7 @@ impl<'a> D3d11ImagePresenter<'a> {
         self.render_current_image()
     }
 
-    /// Change scale and crop behavior, drawing one frame only when the mode changes.
+    /// Change placement mode, drawing one frame only when the mode changes.
     pub fn set_placement_mode(
         &mut self,
         placement_mode: PlacementMode,
@@ -238,10 +264,34 @@ impl<'a> D3d11ImagePresenter<'a> {
             self.source_dimensions,
             PlacementDimensions::new(self.width, self.height)?,
             placement_mode,
+            self.transform,
         )?;
+        self.render_with_placement_buffer(&placement_buffer)?;
         self.placement_buffer = placement_buffer;
         self.placement_mode = placement_mode;
-        self.render_current_image()
+        Ok(())
+    }
+
+    /// Apply runtime transform parameters and present one frame only if they changed.
+    pub fn set_transform(&mut self, transform: ImageTransform) -> Result<(), RendererError> {
+        if transform == self.transform {
+            return Ok(());
+        }
+        let placement_buffer = create_placement_buffer(
+            self.device,
+            self.source_dimensions,
+            PlacementDimensions::new(self.width, self.height)?,
+            self.placement_mode,
+            transform,
+        )?;
+        self.render_with_placement_buffer(&placement_buffer)?;
+        self.placement_buffer = placement_buffer;
+        self.transform = transform;
+        Ok(())
+    }
+
+    pub const fn transform(&self) -> ImageTransform {
+        self.transform
     }
 
     pub const fn placement_mode(&self) -> PlacementMode {
@@ -262,6 +312,7 @@ impl<'a> D3d11ImagePresenter<'a> {
             self.source_dimensions,
             PlacementDimensions::new(width, height)?,
             self.placement_mode,
+            self.transform,
         )?;
 
         unsafe {
@@ -319,6 +370,14 @@ impl<'a> D3d11ImagePresenter<'a> {
     }
 
     fn render_current_image(&mut self) -> Result<(), RendererError> {
+        let placement_buffer = self.placement_buffer.clone();
+        self.render_with_placement_buffer(&placement_buffer)
+    }
+
+    fn render_with_placement_buffer(
+        &mut self,
+        placement_buffer: &ID3D11Buffer,
+    ) -> Result<(), RendererError> {
         if !unsafe { IsWindow(Some(self.hwnd)) }.as_bool() {
             return Err(RendererError::WindowUnavailable);
         }
@@ -330,7 +389,7 @@ impl<'a> D3d11ImagePresenter<'a> {
         let targets = [Some(render_target.clone())];
         let image_views = [Some(self.image_view.clone())];
         let samplers = [Some(self.sampler.clone())];
-        let placement_buffers = [Some(self.placement_buffer.clone())];
+        let placement_buffers = [Some(placement_buffer.clone())];
         let viewport = [D3D11_VIEWPORT {
             TopLeftX: 0.0,
             TopLeftY: 0.0,
@@ -442,7 +501,10 @@ fn create_image_texture(
 
 #[repr(C)]
 struct PlacementConstants {
-    destination_clip: [f32; 4],
+    destination_top_left: [f32; 4],
+    destination_top_right: [f32; 4],
+    destination_bottom_right: [f32; 4],
+    destination_bottom_left: [f32; 4],
     source_uv: [f32; 4],
 }
 
@@ -451,17 +513,22 @@ fn create_placement_buffer(
     source: PlacementDimensions,
     output: PlacementDimensions,
     mode: PlacementMode,
+    transform: ImageTransform,
 ) -> Result<ID3D11Buffer, RendererError> {
-    let placement = calculate_image_placement(source, output, mode);
-    let destination = placement.destination();
+    let placement = calculate_transformed_image_placement(source, output, mode, transform)?;
+    let corners = placement.destination_corners();
+    let clip_corners = [
+        clip_point(corners[0].x(), corners[0].y())?,
+        clip_point(corners[1].x(), corners[1].y())?,
+        clip_point(corners[2].x(), corners[2].y())?,
+        clip_point(corners[3].x(), corners[3].y())?,
+    ];
     let source_uv = placement.source_uv();
     let constants = PlacementConstants {
-        destination_clip: [
-            destination.left() * 2.0 - 1.0,
-            1.0 - destination.top() * 2.0,
-            destination.right() * 2.0 - 1.0,
-            1.0 - destination.bottom() * 2.0,
-        ],
+        destination_top_left: clip_corners[0],
+        destination_top_right: clip_corners[1],
+        destination_bottom_right: clip_corners[2],
+        destination_bottom_left: clip_corners[3],
         source_uv: [
             source_uv.left(),
             source_uv.top(),
@@ -492,6 +559,19 @@ fn create_placement_buffer(
         hresult: error.code().0,
     })?;
     buffer.ok_or(RendererError::PlacementBufferCreation { hresult: 0 })
+}
+
+fn clip_point(x: f32, y: f32) -> Result<[f32; 4], RendererError> {
+    let x = f64::from(x) * 2.0 - 1.0;
+    let y = 1.0 - f64::from(y) * 2.0;
+    if !x.is_finite()
+        || !y.is_finite()
+        || x.abs() > f64::from(f32::MAX)
+        || y.abs() > f64::from(f32::MAX)
+    {
+        return Err(RendererError::InvalidTransformParameters);
+    }
+    Ok([x as f32, y as f32, 0.0, 0.0])
 }
 
 fn create_vertex_shader(
@@ -626,8 +706,59 @@ mod tests {
 
     use super::{D3d11ImagePresenter, hwnd_from_raw};
     use crate::D3d11Device;
-    use crate::PlacementMode;
+    use crate::{ImageTransform, NormalizedCrop, PlacementMode};
     use windows::Win32::UI::WindowsAndMessaging::SWP_NOACTIVATE;
+
+    #[test]
+    fn clip_conversion_rejects_nonrepresentable_finite_coordinates() {
+        assert!(matches!(
+            super::clip_point(f32::MAX, 0.5),
+            Err(crate::RendererError::InvalidTransformParameters)
+        ));
+        assert!(super::clip_point(0.0, 0.0).is_ok());
+    }
+
+    #[test]
+    fn failed_geometry_updates_leave_state_retryable() {
+        let host = discover_desktop_host().expect("an interactive Windows shell is required");
+        let window = host
+            .attach_wallpaper_window()
+            .expect("the wallpaper child should attach to the desktop host");
+        let device = D3d11Device::create_hardware().expect("hardware D3D11 is required");
+        let image = decode_image(fixture_path("pixels.png")).expect("fixture should decode");
+        let mut presenter = D3d11ImagePresenter::new(&device, window.raw_handle(), &image)
+            .expect("image should present");
+        let original_hwnd = presenter.hwnd;
+        let transform = ImageTransform::new(
+            (8.0, -4.0),
+            (1.25, 0.75),
+            12.0,
+            (0.5, 0.5),
+            NormalizedCrop::default(),
+        )
+        .expect("transform should be valid");
+
+        presenter.hwnd = hwnd_from_raw(0);
+        assert!(matches!(
+            presenter.set_transform(transform),
+            Err(crate::RendererError::WindowUnavailable)
+        ));
+        assert_eq!(presenter.transform(), ImageTransform::default());
+        assert!(matches!(
+            presenter.set_placement_mode(PlacementMode::Fit),
+            Err(crate::RendererError::WindowUnavailable)
+        ));
+        assert_eq!(presenter.placement_mode(), PlacementMode::Cover);
+
+        presenter.hwnd = original_hwnd;
+        presenter
+            .set_transform(transform)
+            .expect("same transform should retry after the window is restored");
+        presenter
+            .set_placement_mode(PlacementMode::Fit)
+            .expect("same mode should retry after the window is restored");
+        assert_eq!(presenter.presented_frames(), 3);
+    }
 
     fn fixture_path(name: &str) -> std::path::PathBuf {
         std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -713,6 +844,39 @@ mod tests {
             .set_placement_mode(PlacementMode::Stretch)
             .expect("stretch mode should present");
         assert_eq!(presenter.presented_frames(), 3);
+        drop(presenter);
+    }
+
+    #[test]
+    fn transform_changes_present_once_and_leave_the_source_file_unchanged() {
+        let host = discover_desktop_host().expect("an interactive Windows shell is required");
+        let window = host
+            .attach_wallpaper_window()
+            .expect("the wallpaper child should attach to the desktop host");
+        let device = D3d11Device::create_hardware().expect("hardware D3D11 is required");
+        let path = fixture_path("pixels.png");
+        let source_before = std::fs::read(&path).expect("source fixture should be readable");
+        let image = decode_image(&path).expect("fixture should decode");
+        let mut presenter = D3d11ImagePresenter::new(&device, window.raw_handle(), &image)
+            .expect("image should present");
+
+        let crop = NormalizedCrop::new(0.25, 0.0, 0.5, 1.0).expect("crop should be valid");
+        let transform = ImageTransform::new((20.0, -10.0), (1.5, 0.75), 17.0, (0.25, 0.8), crop)
+            .expect("transform should be valid");
+        presenter
+            .set_transform(transform)
+            .expect("transform should update the geometry");
+        assert_eq!(presenter.presented_frames(), 2);
+        assert_eq!(presenter.transform(), transform);
+
+        presenter
+            .set_transform(transform)
+            .expect("reapplying the active transform should be a no-op");
+        assert_eq!(presenter.presented_frames(), 2);
+        assert_eq!(
+            std::fs::read(&path).expect("source fixture should remain readable"),
+            source_before
+        );
         drop(presenter);
     }
 }
