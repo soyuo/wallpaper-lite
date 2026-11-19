@@ -2,6 +2,12 @@
 
 use wallpaper_core::error::{AppError, ErrorCode};
 
+mod placement;
+
+pub use placement::{
+    ImagePlacement, PlacementDimensions, PlacementMode, PlacementRect, calculate_image_placement,
+};
+
 #[cfg(target_os = "windows")]
 mod image;
 
@@ -17,6 +23,8 @@ pub enum RendererError {
     MissingImmediateContext,
     WindowUnavailable,
     WindowSizeUnavailable,
+    InvalidPlacementDimensions,
+    PlacementBufferCreation { hresult: i32 },
     SwapChainCreation { hresult: i32 },
     SwapChainResize { hresult: i32 },
     BackBufferAccess { hresult: i32 },
@@ -60,6 +68,12 @@ impl RendererError {
             Self::WindowUnavailable => "stage=d3d11_present detail=window_unavailable".into(),
             Self::WindowSizeUnavailable => {
                 "stage=d3d11_present detail=window_size_unavailable".into()
+            }
+            Self::InvalidPlacementDimensions => {
+                "stage=d3d11_present detail=invalid_placement_dimensions".into()
+            }
+            Self::PlacementBufferCreation { hresult } => {
+                diagnostic("placement_buffer_create", hresult)
             }
             Self::SwapChainCreation { hresult } => diagnostic("swap_chain_create", hresult),
             Self::SwapChainResize { hresult } => diagnostic("swap_chain_resize", hresult),
@@ -105,6 +119,15 @@ impl<'a> D3d11ImagePresenter<'a> {
         Err(RendererError::UnsupportedPlatform)
     }
 
+    pub fn new_with_placement(
+        _device: &'a D3d11Device,
+        _window_handle: isize,
+        _image: &wallpaper_media::DecodedImage,
+        _placement_mode: PlacementMode,
+    ) -> Result<Self, RendererError> {
+        Err(RendererError::UnsupportedPlatform)
+    }
+
     pub fn set_image(
         &mut self,
         _image: &wallpaper_media::DecodedImage,
@@ -114,6 +137,17 @@ impl<'a> D3d11ImagePresenter<'a> {
 
     pub fn refresh_if_resized(&mut self) -> Result<bool, RendererError> {
         Err(RendererError::UnsupportedPlatform)
+    }
+
+    pub fn set_placement_mode(
+        &mut self,
+        _placement_mode: PlacementMode,
+    ) -> Result<(), RendererError> {
+        Err(RendererError::UnsupportedPlatform)
+    }
+
+    pub const fn placement_mode(&self) -> PlacementMode {
+        PlacementMode::Cover
     }
 
     pub const fn presented_frames(&self) -> u64 {
