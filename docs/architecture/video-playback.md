@@ -15,6 +15,19 @@ Frames with negative PTS, nonpositive duration, or an overflowing presentation
 end are rejected before entering the queue. Callers present only returned
 frames, so an idle clock sample does not redraw.
 
+## Output FPS cap
+
+`VideoFpsLimit` accepts typed presets of 15, 24, 30, 60, and 120 FPS, or a
+validated custom value from 1 through 120 FPS. The default cap is 60 FPS. The
+scheduler enforces the minimum wall-clock interval using monotonic 100 ns ticks
+and ceiling division, so fractional intervals never exceed the requested cap.
+Changing the cap does not re-anchor or alter media time; playback speed can be
+added independently. If the source is slower than the cap, only decoded frames
+are returned and no synthetic frames are created. If the source is faster,
+the queue supplies the newest due frame at each available output slot.
+Expired frames are pruned on every scheduler sample, and EOS completion is
+evaluated independently of the presentation gate.
+
 ## Transport behavior
 
 - `play` starts from the stored media position; from `Paused` it re-anchors the
@@ -31,5 +44,5 @@ frames, so an idle clock sample does not redraw.
 
 The API accepts a clock sample on each operation, so tests use integer fake
 clock values and do not sleep. This module does not control the decoder's seek
-operation, playback speed, output FPS, audio, IPC, or UI; those are later Phase
-3 work items.
+operation, playback-speed mapping, audio, IPC, or UI; those are later Phase 3
+work items.
