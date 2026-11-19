@@ -7,12 +7,14 @@ use windows::{
         Graphics::{
             Direct3D::{D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST, Fxc::D3DCompile},
             Direct3D11::{
-                D3D11_BIND_SHADER_RESOURCE, D3D11_CULL_NONE, D3D11_FILL_SOLID,
-                D3D11_FILTER_MIN_MAG_MIP_LINEAR, D3D11_RASTERIZER_DESC, D3D11_SAMPLER_DESC,
-                D3D11_SUBRESOURCE_DATA, D3D11_TEXTURE_ADDRESS_CLAMP, D3D11_TEXTURE2D_DESC,
-                D3D11_USAGE_IMMUTABLE, D3D11_VIEWPORT, ID3D11DepthStencilView, ID3D11DeviceContext,
-                ID3D11PixelShader, ID3D11RasterizerState, ID3D11RenderTargetView,
-                ID3D11SamplerState, ID3D11ShaderResourceView, ID3D11Texture2D, ID3D11VertexShader,
+                D3D11_BIND_CONSTANT_BUFFER, D3D11_BIND_SHADER_RESOURCE, D3D11_BUFFER_DESC,
+                D3D11_CULL_NONE, D3D11_FILL_SOLID, D3D11_FILTER_MIN_MAG_MIP_LINEAR,
+                D3D11_RASTERIZER_DESC, D3D11_SAMPLER_DESC, D3D11_SUBRESOURCE_DATA,
+                D3D11_TEXTURE_ADDRESS_CLAMP, D3D11_TEXTURE2D_DESC, D3D11_USAGE_DEFAULT,
+                D3D11_USAGE_IMMUTABLE, D3D11_VIEWPORT, ID3D11Buffer, ID3D11DepthStencilView,
+                ID3D11DeviceContext, ID3D11PixelShader, ID3D11RasterizerState,
+                ID3D11RenderTargetView, ID3D11SamplerState, ID3D11ShaderResourceView,
+                ID3D11Texture2D, ID3D11VertexShader,
             },
             Dxgi::{
                 Common::{
@@ -29,7 +31,9 @@ use windows::{
     core::{Interface, PCSTR, s},
 };
 
-use crate::{D3d11Device, RendererError};
+use crate::{
+    D3d11Device, PlacementDimensions, PlacementMode, RendererError, calculate_image_placement,
+};
 
 const VERTEX_SHADER: &str = r#"
 struct VertexOutput {
@@ -37,20 +41,31 @@ struct VertexOutput {
     float2 uv : TEXCOORD0;
 };
 
+cbuffer PlacementData : register(b0) {
+    float4 destination_rect;
+    float4 source_uv_rect;
+};
+
 VertexOutput vs_main(uint vertex_id : SV_VertexID) {
-    const float2 positions[3] = {
-        float2(-1.0, 1.0),
-        float2(3.0, 1.0),
-        float2(-1.0, -3.0)
-    };
-    const float2 coordinates[3] = {
+    const float2 coordinates[6] = {
         float2(0.0, 0.0),
-        float2(2.0, 0.0),
-        float2(0.0, 2.0)
+        float2(1.0, 0.0),
+        float2(1.0, 1.0),
+        float2(0.0, 0.0),
+        float2(1.0, 1.0),
+        float2(0.0, 1.0)
     };
     VertexOutput output;
-    output.position = float4(positions[vertex_id], 0.0, 1.0);
-    output.uv = coordinates[vertex_id];
+    output.position = float4(
+        lerp(destination_rect.x, destination_rect.z, coordinates[vertex_id].x),
+        lerp(destination_rect.y, destination_rect.w, coordinates[vertex_id].y),
+        0.0,
+        1.0
+    );
+    output.uv = float2(
+        lerp(source_uv_rect.x, source_uv_rect.z, coordinates[vertex_id].x),
+        lerp(source_uv_rect.y, source_uv_rect.w, coordinates[vertex_id].y)
+    );
     return output;
 }
 "#;
@@ -74,6 +89,7 @@ pub struct D3d11ImagePresenter<'a> {
     hwnd: HWND,
     swap_chain: IDXGISwapChain1,
     render_target: Option<ID3D11RenderTargetView>,
+    placement_buffer: ID3D11Buffer,
     image_texture: ID3D11Texture2D,
     image_view: ID3D11ShaderResourceView,
     vertex_shader: ID3D11VertexShader,
@@ -82,6 +98,8 @@ pub struct D3d11ImagePresenter<'a> {
     rasterizer: ID3D11RasterizerState,
     width: u32,
     height: u32,
+    source_dimensions: PlacementDimensions,
+    placement_mode: PlacementMode,
     presented_frames: u64,
 }
 
@@ -91,11 +109,23 @@ impl<'a> D3d11ImagePresenter<'a> {
         window_handle: isize,
         image: &DecodedImage,
     ) -> Result<Self, RendererError> {
+        Self::new_with_placement(device, window_handle, image, PlacementMode::Cover)
+    }
+
+    /// Create the presenter with a specific scale and crop mode.
+    pub fn new_with_placement(
+        device: &'a D3d11Device,
+        window_handle: isize,
+        image: &DecodedImage,
+        placement_mode: PlacementMode,
+    ) -> Result<Self, RendererError> {
         let hwnd = hwnd_from_raw(window_handle);
         if !unsafe { IsWindow(Some(hwnd)) }.as_bool() {
             return Err(RendererError::WindowUnavailable);
         }
         let (width, height) = client_size(hwnd)?;
+        let source_dimensions = PlacementDimensions::new(image.width(), image.height())?;
+        let output_dimensions = PlacementDimensions::new(width, height)?;
         let dxgi_device: IDXGIDevice =
             device
                 .device()
@@ -147,6 +177,8 @@ impl<'a> D3d11ImagePresenter<'a> {
         })?;
 
         let (image_texture, image_view) = create_image_texture(device, image)?;
+        let placement_buffer =
+            create_placement_buffer(device, source_dimensions, output_dimensions, placement_mode)?;
         let vertex_shader = create_vertex_shader(device, VERTEX_SHADER)?;
         let pixel_shader = create_pixel_shader(device, PIXEL_SHADER)?;
         let sampler = create_sampler(device)?;
@@ -157,6 +189,7 @@ impl<'a> D3d11ImagePresenter<'a> {
             hwnd,
             swap_chain,
             render_target: None,
+            placement_buffer,
             image_texture,
             image_view,
             vertex_shader,
@@ -165,6 +198,8 @@ impl<'a> D3d11ImagePresenter<'a> {
             rasterizer,
             width,
             height,
+            source_dimensions,
+            placement_mode,
             presented_frames: 0,
         };
         presenter.create_render_target()?;
@@ -175,10 +210,42 @@ impl<'a> D3d11ImagePresenter<'a> {
     /// Replace the current GPU texture and present the new image once.
     pub fn set_image(&mut self, image: &DecodedImage) -> Result<(), RendererError> {
         let (texture, view) = create_image_texture(self.device, image)?;
+        let source_dimensions = PlacementDimensions::new(image.width(), image.height())?;
+        let placement_buffer = create_placement_buffer(
+            self.device,
+            source_dimensions,
+            PlacementDimensions::new(self.width, self.height)?,
+            self.placement_mode,
+        )?;
         self.unbind_resources();
         self.image_texture = texture;
         self.image_view = view;
+        self.source_dimensions = source_dimensions;
+        self.placement_buffer = placement_buffer;
         self.render_current_image()
+    }
+
+    /// Change scale and crop behavior, drawing one frame only when the mode changes.
+    pub fn set_placement_mode(
+        &mut self,
+        placement_mode: PlacementMode,
+    ) -> Result<(), RendererError> {
+        if placement_mode == self.placement_mode {
+            return Ok(());
+        }
+        let placement_buffer = create_placement_buffer(
+            self.device,
+            self.source_dimensions,
+            PlacementDimensions::new(self.width, self.height)?,
+            placement_mode,
+        )?;
+        self.placement_buffer = placement_buffer;
+        self.placement_mode = placement_mode;
+        self.render_current_image()
+    }
+
+    pub const fn placement_mode(&self) -> PlacementMode {
+        self.placement_mode
     }
 
     /// Resize swap-chain buffers and present only when the child client size changed.
@@ -190,6 +257,12 @@ impl<'a> D3d11ImagePresenter<'a> {
         if width == self.width && height == self.height {
             return Ok(false);
         }
+        let placement_buffer = create_placement_buffer(
+            self.device,
+            self.source_dimensions,
+            PlacementDimensions::new(width, height)?,
+            self.placement_mode,
+        )?;
 
         unsafe {
             self.device
@@ -211,6 +284,7 @@ impl<'a> D3d11ImagePresenter<'a> {
         })?;
         self.width = width;
         self.height = height;
+        self.placement_buffer = placement_buffer;
         self.create_render_target()?;
         self.render_current_image()?;
         Ok(true)
@@ -256,6 +330,7 @@ impl<'a> D3d11ImagePresenter<'a> {
         let targets = [Some(render_target.clone())];
         let image_views = [Some(self.image_view.clone())];
         let samplers = [Some(self.sampler.clone())];
+        let placement_buffers = [Some(self.placement_buffer.clone())];
         let viewport = [D3D11_VIEWPORT {
             TopLeftX: 0.0,
             TopLeftY: 0.0,
@@ -266,6 +341,7 @@ impl<'a> D3d11ImagePresenter<'a> {
         }];
 
         unsafe {
+            context.ClearRenderTargetView(render_target, &[0.0, 0.0, 0.0, 1.0]);
             context.OMSetRenderTargets(Some(&targets), None::<&ID3D11DepthStencilView>);
             context.RSSetViewports(Some(&viewport));
             context.RSSetState(&self.rasterizer);
@@ -273,11 +349,13 @@ impl<'a> D3d11ImagePresenter<'a> {
                 .IASetInputLayout(None::<&windows::Win32::Graphics::Direct3D11::ID3D11InputLayout>);
             context.IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
             context.VSSetShader(&self.vertex_shader, None);
+            context.VSSetConstantBuffers(0, Some(&placement_buffers));
             context.PSSetShader(&self.pixel_shader, None);
             context.PSSetShaderResources(0, Some(&image_views));
             context.PSSetSamplers(0, Some(&samplers));
-            context.Draw(3, 0);
+            context.Draw(6, 0);
             context.PSSetShaderResources(0, Some(&[None]));
+            context.VSSetConstantBuffers(0, Some(&[None]));
             context.OMSetRenderTargets(None, None::<&ID3D11DepthStencilView>);
         }
 
@@ -295,6 +373,9 @@ impl<'a> D3d11ImagePresenter<'a> {
             self.device
                 .immediate_context()
                 .PSSetShaderResources(0, Some(&[None]));
+            self.device
+                .immediate_context()
+                .VSSetConstantBuffers(0, Some(&[None]));
             self.device
                 .immediate_context()
                 .OMSetRenderTargets(None, None::<&ID3D11DepthStencilView>);
@@ -357,6 +438,60 @@ fn create_image_texture(
     })?;
     let view = view.ok_or(RendererError::ImageViewCreation { hresult: 0 })?;
     Ok((texture, view))
+}
+
+#[repr(C)]
+struct PlacementConstants {
+    destination_clip: [f32; 4],
+    source_uv: [f32; 4],
+}
+
+fn create_placement_buffer(
+    device: &D3d11Device,
+    source: PlacementDimensions,
+    output: PlacementDimensions,
+    mode: PlacementMode,
+) -> Result<ID3D11Buffer, RendererError> {
+    let placement = calculate_image_placement(source, output, mode);
+    let destination = placement.destination();
+    let source_uv = placement.source_uv();
+    let constants = PlacementConstants {
+        destination_clip: [
+            destination.left() * 2.0 - 1.0,
+            1.0 - destination.top() * 2.0,
+            destination.right() * 2.0 - 1.0,
+            1.0 - destination.bottom() * 2.0,
+        ],
+        source_uv: [
+            source_uv.left(),
+            source_uv.top(),
+            source_uv.right(),
+            source_uv.bottom(),
+        ],
+    };
+    let subresource = D3D11_SUBRESOURCE_DATA {
+        pSysMem: (&constants as *const PlacementConstants).cast(),
+        SysMemPitch: 0,
+        SysMemSlicePitch: 0,
+    };
+    let description = D3D11_BUFFER_DESC {
+        ByteWidth: std::mem::size_of::<PlacementConstants>() as u32,
+        Usage: D3D11_USAGE_DEFAULT,
+        BindFlags: D3D11_BIND_CONSTANT_BUFFER.0 as u32,
+        CPUAccessFlags: 0,
+        MiscFlags: 0,
+        StructureByteStride: 0,
+    };
+    let mut buffer = None;
+    unsafe {
+        device
+            .device()
+            .CreateBuffer(&description, Some(&subresource), Some(&mut buffer))
+    }
+    .map_err(|error| RendererError::PlacementBufferCreation {
+        hresult: error.code().0,
+    })?;
+    buffer.ok_or(RendererError::PlacementBufferCreation { hresult: 0 })
 }
 
 fn create_vertex_shader(
@@ -491,6 +626,7 @@ mod tests {
 
     use super::{D3d11ImagePresenter, hwnd_from_raw};
     use crate::D3d11Device;
+    use crate::PlacementMode;
     use windows::Win32::UI::WindowsAndMessaging::SWP_NOACTIVATE;
 
     fn fixture_path(name: &str) -> std::path::PathBuf {
@@ -546,6 +682,37 @@ mod tests {
         );
         assert_eq!(presenter.presented_frames(), 2);
 
+        drop(presenter);
+    }
+
+    #[test]
+    fn placement_changes_present_once_and_reselecting_the_mode_stays_idle() {
+        let host = discover_desktop_host().expect("an interactive Windows shell is required");
+        let window = host
+            .attach_wallpaper_window()
+            .expect("the wallpaper child should attach to the desktop host");
+        let device = D3d11Device::create_hardware().expect("hardware D3D11 is required");
+        let image = decode_image(fixture_path("pixels.png")).expect("fixture should decode");
+        let mut presenter = D3d11ImagePresenter::new(&device, window.raw_handle(), &image)
+            .expect("image should present");
+        assert_eq!(presenter.placement_mode(), PlacementMode::Cover);
+        assert_eq!(presenter.presented_frames(), 1);
+
+        presenter
+            .set_placement_mode(PlacementMode::Fit)
+            .expect("fit mode should present");
+        assert_eq!(presenter.presented_frames(), 2);
+        assert_eq!(presenter.placement_mode(), PlacementMode::Fit);
+
+        presenter
+            .set_placement_mode(PlacementMode::Fit)
+            .expect("selecting the active mode should be a no-op");
+        assert_eq!(presenter.presented_frames(), 2);
+
+        presenter
+            .set_placement_mode(PlacementMode::Stretch)
+            .expect("stretch mode should present");
+        assert_eq!(presenter.presented_frames(), 3);
         drop(presenter);
     }
 }
