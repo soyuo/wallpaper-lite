@@ -14,7 +14,29 @@ pub enum ErrorCode {
     ProtocolVersionMismatch,
     UnsupportedPlatform,
     TransportError,
+    WindowsInitializationFailed,
+    GraphicsInitializationFailed,
     Internal,
+}
+
+impl ErrorCode {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::HostUnavailable => "host_unavailable",
+            Self::Timeout => "timeout",
+            Self::Disconnected => "disconnected",
+            Self::MalformedMessage => "malformed_message",
+            Self::MalformedRequest => "malformed_request",
+            Self::MalformedResponse => "malformed_response",
+            Self::MessageTooLarge => "message_too_large",
+            Self::ProtocolVersionMismatch => "protocol_version_mismatch",
+            Self::UnsupportedPlatform => "unsupported_platform",
+            Self::TransportError => "transport_error",
+            Self::WindowsInitializationFailed => "windows_initialization_failed",
+            Self::GraphicsInitializationFailed => "graphics_initialization_failed",
+            Self::Internal => "internal",
+        }
+    }
 }
 
 /// Safe error data that may cross into the UI. Diagnostic details stay in logs.

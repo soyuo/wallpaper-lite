@@ -72,6 +72,44 @@ fn main() -> process::ExitCode {
         "Wallpaper host starting"
     );
 
+    if let Err(error) = wallpaper_desktop::initialize_windows() {
+        tracing::error!(
+            component = "desktop",
+            event = "windows_initialization_failed",
+            error_code = error.to_app_error().code.as_str(),
+            diagnostic = %error.diagnostic_summary(),
+            "Windows desktop initialization failed"
+        );
+        return process::ExitCode::FAILURE;
+    }
+    tracing::info!(
+        component = "desktop",
+        event = "windows_initialized",
+        "Windows desktop process initialized"
+    );
+
+    let graphics_device = match wallpaper_renderer::D3d11Device::create_hardware() {
+        Ok(device) => device,
+        Err(error) => {
+            tracing::error!(
+                component = "renderer",
+                event = "graphics_initialization_failed",
+                error_code = error.to_app_error().code.as_str(),
+                diagnostic = %error.diagnostic_summary(),
+                "Direct3D device initialization failed"
+            );
+            return process::ExitCode::FAILURE;
+        }
+    };
+    tracing::info!(
+        component = "renderer",
+        event = "d3d11_device_initialized",
+        feature_level = format!("0x{:04X}", graphics_device.feature_level()),
+        "D3D11 device and immediate context initialized"
+    );
+    // Keep the device and immediate context alive for the host process lifetime.
+    let _graphics_device = graphics_device;
+
     let runtime = match tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
