@@ -28,9 +28,11 @@ host -> media -> core
 host -> ipc -> core
 ```
 
-`crates/media` owns WIC still-image decoding and Media Foundation video decoding.
-The renderer consumes decoded RGBA8 images or timestamped video frames and does
-not access source files.
+`crates/media` owns WIC still-image decoding, Media Foundation video decoding,
+the bounded decoded-frame queue, and PTS-based playback scheduling. The renderer
+consumes decoded RGBA8 images or timestamped video frames and does not access
+source files. See [`video-playback.md`](video-playback.md) for clock and
+transport semantics.
 
 ## Windows host bootstrap
 
