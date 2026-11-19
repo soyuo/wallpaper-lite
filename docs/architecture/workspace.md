@@ -10,7 +10,7 @@ owned by the narrowest crate that can enforce its lifecycle and safety rules.
 | --- | --- | --- |
 | `crates/core` | Platform-independent domain types and shared contracts | None |
 | `crates/desktop` | Windows desktop and shell integration | `core` |
-| `crates/media` | WIC still-image decoding into owned RGBA buffers | `core` |
+| `crates/media` | WIC still-image decoding and Media Foundation video-source metadata | `core` |
 | `crates/renderer` | D3D11 device and static-image presentation | `core`, `media` |
 | `crates/ipc` | UI-to-host protocol and named-pipe transport | `core` |
 | `host` | `wallpaper-host.exe` composition root and process lifecycle | `core`, `desktop`, `media`, `renderer`, `ipc` |
@@ -68,9 +68,13 @@ child window after shell restart without restarting the host process.
 ## Deferred boundaries
 
 Still-image decoding is implemented in `crates/media` using Windows Imaging
-Component (WIC) for PNG and JPEG. Placement modes, transform and color shaders,
-display topology, and performance policy remain for later roadmap phases; their
-intended boundaries include `crates/display`, `crates/performance`, and `shaders`.
+Component (WIC) for PNG and JPEG. Image placement, transform, and color
+adjustments are implemented in `crates/renderer`. Media Foundation currently
+opens H.264 sources and reads stream metadata; sample decoding, bounded frame
+queueing, playback scheduling, and D3D11 video-frame presentation remain in
+Phase 3. Display topology and performance policy remain later boundaries in
+`crates/display` and `crates/performance`.
 
 See [`media-decoding.md`](media-decoding.md) for the still-image pixel contract,
-resource limits, and WIC behavior.
+resource limits, and WIC behavior. See [`video-source.md`](video-source.md)
+for the Media Foundation source-reader boundary and lifetime.
