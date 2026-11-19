@@ -1,4 +1,4 @@
-//! Direct3D device ownership and static-image presentation.
+//! Direct3D device ownership and still/video-frame presentation.
 
 use wallpaper_core::error::{AppError, ErrorCode};
 
@@ -29,6 +29,7 @@ pub enum RendererError {
     WindowUnavailable,
     WindowSizeUnavailable,
     InvalidPlacementDimensions,
+    InvalidVideoFrame,
     InvalidTransformParameters,
     InvalidCropBounds,
     InvalidColorAdjustments,
@@ -83,6 +84,7 @@ impl RendererError {
             Self::InvalidPlacementDimensions => {
                 "stage=d3d11_present detail=invalid_placement_dimensions".into()
             }
+            Self::InvalidVideoFrame => "stage=d3d11_present detail=invalid_video_frame".into(),
             Self::InvalidTransformParameters => {
                 "stage=image_transform detail=invalid_parameters".into()
             }
@@ -119,7 +121,7 @@ pub struct D3d11Device {
     feature_level: u32,
 }
 
-/// D3D11 static-image presenter is implemented on Windows only.
+/// D3D11 still-image and video-frame presenter is implemented on Windows only.
 #[cfg(not(target_os = "windows"))]
 pub struct D3d11ImagePresenter<'a> {
     _device: std::marker::PhantomData<&'a D3d11Device>,
@@ -163,9 +165,24 @@ impl<'a> D3d11ImagePresenter<'a> {
         Err(RendererError::UnsupportedPlatform)
     }
 
+    pub fn new_with_video_frame(
+        _device: &'a D3d11Device,
+        _window_handle: isize,
+        _frame: &wallpaper_media::DecodedVideoFrame,
+    ) -> Result<Self, RendererError> {
+        Err(RendererError::UnsupportedPlatform)
+    }
+
     pub fn set_image(
         &mut self,
         _image: &wallpaper_media::DecodedImage,
+    ) -> Result<(), RendererError> {
+        Err(RendererError::UnsupportedPlatform)
+    }
+
+    pub fn set_video_frame(
+        &mut self,
+        _frame: &wallpaper_media::DecodedVideoFrame,
     ) -> Result<(), RendererError> {
         Err(RendererError::UnsupportedPlatform)
     }
