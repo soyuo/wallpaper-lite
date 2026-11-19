@@ -10,3 +10,6 @@ path = "src/lib.rs"
 
 [dependencies]
 wallpaper-core = { workspace = true }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { workspace = true }

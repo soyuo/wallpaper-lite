@@ -25,6 +25,22 @@ host -> renderer -> core
 host -> ipc -> core
 ```
 
+## Windows host bootstrap
+
+Before serving IPC, `wallpaper-host.exe` calls `wallpaper_desktop::initialize_windows`
+to set per-monitor DPI awareness using the Windows 8.1+ API, then creates a
+hardware D3D11 device and
+immediate context through `wallpaper_renderer::D3d11Device::create_hardware`.
+`D3d11Device` owns both COM interfaces; their references are released when the
+host exits. The host keeps this owner alive for its process lifetime.
+
+Initialization failures return typed crate errors, map to the shared
+`wallpaper_core::error::AppError` code, and log only the failed stage and
+numeric HRESULT. A failed bootstrap exits the host cleanly instead of panicking.
+The renderer test `creates_and_releases_hardware_device_and_immediate_context`
+smoke-checks creation and normal COM release on Windows. This bootstrap does
+not create a window, swap chain, shader, or rendering pipeline.
+
 The host owns process startup and coordinates the desktop, renderer, and IPC
 crates. The UI does not own Win32 windows or D3D11 resources. Lower-level crates
 must not depend on `host`, and the dependency graph must not contain cycles.
