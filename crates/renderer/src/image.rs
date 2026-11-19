@@ -494,6 +494,20 @@ impl<'a> D3d11ImagePresenter<'a> {
         &mut self,
         placement_buffer: &ID3D11Buffer,
     ) -> Result<(), RendererError> {
+        self.draw_with_placement_buffer(placement_buffer)?;
+        unsafe { self.swap_chain.Present(1, DXGI_PRESENT(0)) }
+            .ok()
+            .map_err(|error| RendererError::Present {
+                hresult: error.code().0,
+            })?;
+        self.presented_frames = self.presented_frames.saturating_add(1);
+        Ok(())
+    }
+
+    fn draw_with_placement_buffer(
+        &self,
+        placement_buffer: &ID3D11Buffer,
+    ) -> Result<(), RendererError> {
         if !unsafe { IsWindow(Some(self.hwnd)) }.as_bool() {
             return Err(RendererError::WindowUnavailable);
         }
@@ -535,30 +549,25 @@ impl<'a> D3d11ImagePresenter<'a> {
             context.PSSetConstantBuffers(0, Some(&[None]));
             context.OMSetRenderTargets(None, None::<&ID3D11DepthStencilView>);
         }
-
-        unsafe { self.swap_chain.Present(1, DXGI_PRESENT(0)) }
-            .ok()
-            .map_err(|error| RendererError::Present {
-                hresult: error.code().0,
-            })?;
-        self.presented_frames = self.presented_frames.saturating_add(1);
         Ok(())
     }
 
+    #[cfg(test)]
+    fn draw_current_frame_for_readback(&self) -> Result<(), RendererError> {
+        self.draw_with_placement_buffer(&self.placement_buffer)
+    }
+
     fn unbind_resources(&self) {
+        let context = self.device.immediate_context();
         unsafe {
-            self.device
-                .immediate_context()
-                .PSSetShaderResources(0, Some(&[None]));
-            self.device
-                .immediate_context()
-                .VSSetConstantBuffers(0, Some(&[None]));
-            self.device
-                .immediate_context()
-                .PSSetConstantBuffers(0, Some(&[None]));
-            self.device
-                .immediate_context()
-                .OMSetRenderTargets(None, None::<&ID3D11DepthStencilView>);
+            context.PSSetShaderResources(0, Some(&[None]));
+            context.VSSetConstantBuffers(0, Some(&[None]));
+            context.PSSetConstantBuffers(0, Some(&[None]));
+            context.PSSetSamplers(0, Some(&[None]));
+            context.VSSetShader(None::<&ID3D11VertexShader>, None);
+            context.PSSetShader(None::<&ID3D11PixelShader>, None);
+            context.RSSetState(None::<&ID3D11RasterizerState>);
+            context.OMSetRenderTargets(None, None::<&ID3D11DepthStencilView>);
         }
     }
 }
@@ -839,13 +848,119 @@ mod tests {
     use std::{thread, time::Duration};
 
     use wallpaper_desktop::discover_desktop_host;
-    use wallpaper_media::decode_image;
-    use windows::Win32::UI::WindowsAndMessaging::SetWindowPos;
+    use wallpaper_media::{DecodedImage, decode_image};
+    use windows::Win32::Graphics::Direct3D11::{
+        D3D11_CPU_ACCESS_READ, D3D11_MAP_READ, D3D11_MAPPED_SUBRESOURCE, D3D11_TEXTURE2D_DESC,
+        D3D11_USAGE_STAGING, ID3D11Buffer, ID3D11DepthStencilView, ID3D11PixelShader,
+        ID3D11RenderTargetView, ID3D11SamplerState, ID3D11ShaderResourceView, ID3D11Texture2D,
+        ID3D11VertexShader,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::{IsWindow, SetWindowPos};
+    use windows::core::Interface;
 
     use super::{D3d11ImagePresenter, hwnd_from_raw};
     use crate::D3d11Device;
+    use crate::color::apply_rgba8_reference;
     use crate::{ColorAdjustments, ImageTransform, NormalizedCrop, PlacementMode};
     use windows::Win32::UI::WindowsAndMessaging::SWP_NOACTIVATE;
+
+    fn read_render_target_pixel(presenter: &D3d11ImagePresenter<'_>, x: u32, y: u32) -> [u8; 4] {
+        presenter
+            .draw_current_frame_for_readback()
+            .expect("current image should be drawn for readback");
+        let render_target = presenter
+            .render_target
+            .as_ref()
+            .expect("presenter should have a render target");
+        let resource = unsafe { render_target.GetResource() }
+            .expect("render target resource should be available");
+        let texture: ID3D11Texture2D = resource
+            .cast()
+            .expect("render target should be a 2D texture");
+        let mut description = D3D11_TEXTURE2D_DESC::default();
+        unsafe { texture.GetDesc(&mut description) };
+        assert!(x < description.Width && y < description.Height);
+
+        description.Usage = D3D11_USAGE_STAGING;
+        description.BindFlags = 0;
+        description.CPUAccessFlags = D3D11_CPU_ACCESS_READ.0 as u32;
+        description.MiscFlags = 0;
+        let mut staging = None;
+        unsafe {
+            presenter
+                .device
+                .device()
+                .CreateTexture2D(&description, None, Some(&mut staging))
+        }
+        .expect("staging texture should be created");
+        let staging = staging.expect("staging texture should be returned");
+        let context = presenter.device.immediate_context();
+        unsafe {
+            context.CopyResource(&staging, &texture);
+        }
+        let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
+        unsafe { context.Map(&staging, 0, D3D11_MAP_READ, 0, Some(&mut mapped)) }
+            .expect("staging texture should be readable");
+        let offset = y as usize * mapped.RowPitch as usize + x as usize * 4;
+        let pixel =
+            unsafe { std::slice::from_raw_parts((mapped.pData as *const u8).add(offset), 4) };
+        let result = [pixel[0], pixel[1], pixel[2], pixel[3]];
+        unsafe { context.Unmap(&staging, 0) };
+        result
+    }
+
+    fn assert_presenter_resources_are_unbound(device: &D3d11Device) {
+        let context = device.immediate_context();
+        let mut render_targets = [None::<ID3D11RenderTargetView>];
+        let mut depth_stencil = None;
+        let mut image_views = [None::<ID3D11ShaderResourceView>];
+        let mut vertex_buffers = [None::<ID3D11Buffer>];
+        let mut pixel_buffers = [None::<ID3D11Buffer>];
+        let mut vertex_shader = None::<ID3D11VertexShader>;
+        let mut pixel_shader = None::<ID3D11PixelShader>;
+        let mut samplers = [None::<ID3D11SamplerState>];
+        unsafe {
+            context.OMGetRenderTargets(Some(&mut render_targets), Some(&mut depth_stencil));
+            context.PSGetShaderResources(0, Some(&mut image_views));
+            context.VSGetConstantBuffers(0, Some(&mut vertex_buffers));
+            context.PSGetConstantBuffers(0, Some(&mut pixel_buffers));
+            context.VSGetShader(&mut vertex_shader, None, None);
+            context.PSGetShader(&mut pixel_shader, None, None);
+            context.PSGetSamplers(0, Some(&mut samplers));
+        }
+        let rasterizer = unsafe { context.RSGetState() };
+        assert!(render_targets[0].is_none());
+        assert!(depth_stencil.is_none());
+        assert!(image_views[0].is_none());
+        assert!(vertex_buffers[0].is_none());
+        assert!(pixel_buffers[0].is_none());
+        assert!(vertex_shader.is_none());
+        assert!(pixel_shader.is_none());
+        assert!(samplers[0].is_none());
+        assert!(rasterizer.is_err());
+    }
+
+    fn expected_center_sample(image: &DecodedImage) -> [u8; 4] {
+        let width = image.width() as usize;
+        let height = image.height() as usize;
+        let center_x = width / 2;
+        let center_y = height / 2;
+        let pixels = image.rgba8();
+        let mut result = [0; 4];
+        for channel in 0..4 {
+            let sum: u32 = [
+                (center_y - 1) * width + center_x - 1,
+                (center_y - 1) * width + center_x,
+                center_y * width + center_x - 1,
+                center_y * width + center_x,
+            ]
+            .iter()
+            .map(|pixel| u32::from(pixels[pixel * 4 + channel]))
+            .sum();
+            result[channel] = ((sum + 2) / 4) as u8;
+        }
+        result
+    }
 
     #[test]
     fn clip_conversion_rejects_nonrepresentable_finite_coordinates() {
@@ -933,6 +1048,182 @@ mod tests {
         assert_eq!(
             std::fs::read(&path).expect("source fixture should remain readable"),
             source_before
+        );
+    }
+
+    #[test]
+    fn gpu_color_output_matches_the_linear_srgb_reference() {
+        let host = discover_desktop_host().expect("an interactive Windows shell is required");
+        let window = host
+            .attach_wallpaper_window()
+            .expect("the wallpaper child should attach to the desktop host");
+        let device = D3d11Device::create_hardware().expect("hardware D3D11 is required");
+        let image = decode_image(fixture_path("solid.jpg")).expect("JPEG fixture should decode");
+        let source_pixel = expected_center_sample(&image);
+        let mut presenter = D3d11ImagePresenter::new(&device, window.raw_handle(), &image)
+            .expect("JPEG fixture should present");
+        let cases = [
+            ColorAdjustments::default(),
+            ColorAdjustments::new(2.0, 1.0, 1.0, 1.0, 1.0, 0.0, (1.0, 1.0, 1.0))
+                .expect("brightness case should be valid"),
+            ColorAdjustments::new(1.0, 1.6, 1.0, 1.0, 1.0, 0.0, (1.0, 1.0, 1.0))
+                .expect("contrast case should be valid"),
+            ColorAdjustments::new(1.0, 1.0, 0.0, 1.0, 1.0, 0.0, (1.0, 1.0, 1.0))
+                .expect("saturation case should be valid"),
+            ColorAdjustments::new(1.0, 1.0, 1.0, 2.0, 1.0, 0.0, (1.0, 1.0, 1.0))
+                .expect("gamma case should be valid"),
+            ColorAdjustments::new(1.0, 1.0, 1.0, 1.0, 0.5, 0.0, (1.0, 1.0, 1.0))
+                .expect("opacity case should be valid"),
+            ColorAdjustments::new(1.0, 1.0, 1.0, 1.0, 1.0, 0.75, (1.0, 1.0, 1.0))
+                .expect("temperature case should be valid"),
+            ColorAdjustments::new(1.0, 1.0, 1.0, 1.0, 1.0, 0.0, (2.0, 1.0, 1.0))
+                .expect("RGB balance case should be valid"),
+            ColorAdjustments::new(1.25, 1.1, 0.8, 1.2, 0.9, 0.25, (1.0, 0.95, 1.05))
+                .expect("combined case should be valid"),
+        ];
+
+        for adjustments in cases {
+            presenter
+                .set_color_adjustments(adjustments)
+                .expect("GPU color settings should render");
+            let expected = apply_rgba8_reference(source_pixel, adjustments);
+            let actual =
+                read_render_target_pixel(&presenter, presenter.width / 2, presenter.height / 2);
+            for channel in 0..4 {
+                assert!(
+                    actual[channel].abs_diff(expected[channel]) <= 3,
+                    "GPU/reference mismatch for {adjustments:?}, channel {channel}: actual {actual:?}, expected {expected:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn gpu_placement_and_crop_output_matches_documented_geometry() {
+        let host = discover_desktop_host().expect("an interactive Windows shell is required");
+        let window = host
+            .attach_wallpaper_window()
+            .expect("the wallpaper child should attach to the desktop host");
+        let device = D3d11Device::create_hardware().expect("hardware D3D11 is required");
+        let image = decode_image(fixture_path("pixels.png")).expect("PNG fixture should decode");
+        let mut presenter = D3d11ImagePresenter::new(&device, window.raw_handle(), &image)
+            .expect("PNG fixture should present");
+        let center_x = presenter.width / 2;
+        let center_y = presenter.height / 2;
+
+        presenter
+            .set_placement_mode(PlacementMode::Fit)
+            .expect("Fit should render");
+        let fit_bar = read_render_target_pixel(&presenter, center_x, 0);
+        assert!(
+            fit_bar[..3].iter().all(|channel| *channel <= 1),
+            "{fit_bar:?}"
+        );
+
+        presenter
+            .set_placement_mode(PlacementMode::Stretch)
+            .expect("Stretch should render");
+        let stretched_top = read_render_target_pixel(&presenter, center_x, 0);
+        assert!(stretched_top[..3].iter().any(|channel| *channel > 8));
+
+        presenter
+            .set_placement_mode(PlacementMode::Cover)
+            .expect("Cover should render");
+        let crop = NormalizedCrop::new(0.0, 0.0, 0.5, 1.0).expect("left-half crop is valid");
+        let transform = ImageTransform::new((0.0, 0.0), (1.0, 1.0), 0.0, (0.5, 0.5), crop)
+            .expect("identity transform with crop is valid");
+        presenter
+            .set_transform(transform)
+            .expect("cropped image should render");
+        let cropped_center = read_render_target_pixel(&presenter, center_x, center_y);
+        assert!(cropped_center[0] >= 250, "{cropped_center:?}");
+        assert!(
+            cropped_center[1] <= 4 && cropped_center[2] <= 4,
+            "{cropped_center:?}"
+        );
+
+        let translated = ImageTransform::new(
+            (400.0, 0.0),
+            (1.0, 1.0),
+            0.0,
+            (0.5, 0.5),
+            NormalizedCrop::default(),
+        )
+        .expect("physical-pixel translation is valid");
+        presenter
+            .set_transform(translated)
+            .expect("translated image should render");
+        let uncovered_left = read_render_target_pixel(&presenter, 0, center_y);
+        assert!(uncovered_left[..3].iter().all(|channel| *channel <= 1));
+
+        let scaled = ImageTransform::new(
+            (0.0, 0.0),
+            (0.5, 0.5),
+            0.0,
+            (0.5, 0.5),
+            NormalizedCrop::default(),
+        )
+        .expect("centered scale is valid");
+        presenter
+            .set_transform(scaled)
+            .expect("scaled image should render");
+        let scaled_uncovered = read_render_target_pixel(&presenter, 0, center_y);
+        assert!(scaled_uncovered[..3].iter().all(|channel| *channel <= 1));
+
+        let top_left_anchor = ImageTransform::new(
+            (0.0, 0.0),
+            (0.5, 0.5),
+            0.0,
+            (0.0, 0.0),
+            NormalizedCrop::default(),
+        )
+        .expect("top-left anchor is valid");
+        presenter
+            .set_transform(top_left_anchor)
+            .expect("top-left anchored image should render");
+        let anchored_top_left = read_render_target_pixel(&presenter, 16, 16);
+        assert!(anchored_top_left[..3].iter().any(|channel| *channel > 8));
+
+        let rotated = ImageTransform::new(
+            (0.0, 0.0),
+            (1.0, 1.0),
+            90.0,
+            (0.5, 0.5),
+            NormalizedCrop::default(),
+        )
+        .expect("quarter-turn rotation is valid");
+        presenter
+            .set_transform(rotated)
+            .expect("rotated image should render");
+        let rotated_top = read_render_target_pixel(&presenter, center_x, center_y - 100);
+        let rotated_bottom = read_render_target_pixel(&presenter, center_x, center_y + 100);
+        assert!(
+            rotated_top[0] > rotated_bottom[0].saturating_add(20),
+            "top={rotated_top:?}, bottom={rotated_bottom:?}"
+        );
+
+        let attached_hwnd = window.raw_handle();
+        let context = device.immediate_context();
+        let render_targets = [presenter.render_target.clone()];
+        let image_views = [Some(presenter.image_view.clone())];
+        let placement_buffers = [Some(presenter.placement_buffer.clone())];
+        let samplers = [Some(presenter.sampler.clone())];
+        unsafe {
+            context.OMSetRenderTargets(Some(&render_targets), None::<&ID3D11DepthStencilView>);
+            context.PSSetShaderResources(0, Some(&image_views));
+            context.VSSetConstantBuffers(0, Some(&placement_buffers));
+            context.PSSetConstantBuffers(0, Some(&placement_buffers));
+            context.PSSetSamplers(0, Some(&samplers));
+            context.VSSetShader(&presenter.vertex_shader, None);
+            context.PSSetShader(&presenter.pixel_shader, None);
+            context.RSSetState(&presenter.rasterizer);
+        }
+        drop(presenter);
+        assert_presenter_resources_are_unbound(&device);
+        drop(window);
+        assert!(
+            !unsafe { IsWindow(Some(hwnd_from_raw(attached_hwnd))) }.as_bool(),
+            "the attached child window should be destroyed after presenter cleanup"
         );
     }
 
