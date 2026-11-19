@@ -50,6 +50,8 @@ The current UI-to-host named-pipe protocol is documented in
 
 `crates/desktop` validates the shell window before the host starts its IPC server. See
 [`desktop-host-discovery.md`](desktop-host-discovery.md) for the candidate checks and retry behavior.
+The host then owns a message-pumped child window below the shell icon view; see
+[`desktop-window-attachment.md`](desktop-window-attachment.md) for z-order, DPI, and cleanup behavior.
 
 ## Deferred boundaries
 

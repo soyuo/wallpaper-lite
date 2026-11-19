@@ -4,9 +4,13 @@ use wallpaper_core::error::{AppError, ErrorCode};
 
 #[cfg(target_os = "windows")]
 mod shell;
+#[cfg(target_os = "windows")]
+mod window;
 
 #[cfg(target_os = "windows")]
 pub use shell::discover_desktop_host;
+#[cfg(target_os = "windows")]
+pub use window::AttachedDesktopWindow;
 
 /// Failure while preparing the Windows desktop process.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -18,6 +22,14 @@ pub enum DesktopError {
     AmbiguousDesktopHost { candidate_count: usize },
     StaleDesktopHost,
     WindowEnumerationFailed { hresult: i32 },
+    WindowClassRegistrationFailed { win32_error: u32 },
+    WindowCreationFailed { hresult: i32 },
+    WindowPositionFailed { hresult: i32 },
+    DesktopWindowThreadFailed { os_error_code: Option<i32> },
+    DesktopWindowDpiContextUnavailable,
+    DesktopWindowDpiContextFailed,
+    DesktopWindowBoundsUnavailable,
+    WallpaperWindowUnavailable,
 }
 
 /// The class of a validated Windows shell desktop window.
@@ -65,6 +77,19 @@ impl DesktopHost {
         }
     }
 
+    /// Create an owned child window at the bottom of the desktop icon host's child z-order.
+    pub fn attach_wallpaper_window(self) -> Result<AttachedDesktopWindow, DesktopError> {
+        #[cfg(target_os = "windows")]
+        {
+            window::AttachedDesktopWindow::attach(self)
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = self;
+            Err(DesktopError::UnsupportedPlatform)
+        }
+    }
+
     pub(crate) const fn new(
         raw_handle: isize,
         shell_process_id: u32,
@@ -93,9 +118,17 @@ impl DesktopError {
             | Self::DesktopHostNotFound
             | Self::AmbiguousDesktopHost { .. }
             | Self::StaleDesktopHost
-            | Self::WindowEnumerationFailed { .. } => AppError::new(
+            | Self::WindowEnumerationFailed { .. }
+            | Self::WindowClassRegistrationFailed { .. }
+            | Self::WindowCreationFailed { .. }
+            | Self::WindowPositionFailed { .. }
+            | Self::DesktopWindowThreadFailed { .. }
+            | Self::DesktopWindowDpiContextUnavailable
+            | Self::DesktopWindowDpiContextFailed
+            | Self::DesktopWindowBoundsUnavailable
+            | Self::WallpaperWindowUnavailable => AppError::new(
                 ErrorCode::DesktopHostUnavailable,
-                "The Windows desktop host is not available.",
+                "The Windows desktop window could not be attached.",
             ),
         }
     }
@@ -124,6 +157,32 @@ impl DesktopError {
                 "stage=desktop_host_discovery reason=window_enumeration_failed hresult=0x{:08X}",
                 hresult as u32
             ),
+            Self::WindowClassRegistrationFailed { win32_error } => format!(
+                "stage=desktop_window_attach reason=class_registration_failed win32_error={win32_error}"
+            ),
+            Self::WindowCreationFailed { hresult } => format!(
+                "stage=desktop_window_attach reason=create_window_failed hresult=0x{:08X}",
+                hresult as u32
+            ),
+            Self::WindowPositionFailed { hresult } => format!(
+                "stage=desktop_window_attach reason=position_window_failed hresult=0x{:08X}",
+                hresult as u32
+            ),
+            Self::DesktopWindowThreadFailed { os_error_code } => format!(
+                "stage=desktop_window_attach reason=window_thread_failed os_error_code={os_error_code:?}"
+            ),
+            Self::DesktopWindowDpiContextUnavailable => {
+                "stage=desktop_window_attach reason=dpi_context_unavailable".into()
+            }
+            Self::DesktopWindowDpiContextFailed => {
+                "stage=desktop_window_attach reason=dpi_context_change_failed".into()
+            }
+            Self::DesktopWindowBoundsUnavailable => {
+                "stage=desktop_window_attach reason=parent_bounds_unavailable".into()
+            }
+            Self::WallpaperWindowUnavailable => {
+                "stage=desktop_window_attach reason=attached_window_unavailable".into()
+            }
         }
     }
 }
@@ -146,6 +205,11 @@ pub fn initialize_windows() -> Result<(), DesktopError> {
 pub fn discover_desktop_host() -> Result<DesktopHost, DesktopError> {
     Err(DesktopError::UnsupportedPlatform)
 }
+
+/// Placeholder type for non-Windows consumers of the cross-platform desktop API.
+#[cfg(not(target_os = "windows"))]
+#[derive(Debug)]
+pub struct AttachedDesktopWindow;
 
 /// Return a typed error on non-Windows targets instead of silently skipping setup.
 #[cfg(not(target_os = "windows"))]
