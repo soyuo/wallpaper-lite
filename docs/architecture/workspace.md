@@ -10,6 +10,7 @@ owned by the narrowest crate that can enforce its lifecycle and safety rules.
 | --- | --- | --- |
 | `crates/core` | Platform-independent domain types and shared contracts | None |
 | `crates/desktop` | Windows desktop and shell integration | `core` |
+| `crates/media` | WIC still-image decoding into owned RGBA buffers | `core` |
 | `crates/renderer` | D3D11 device and rendering boundary | `core` |
 | `crates/ipc` | UI-to-host protocol and named-pipe transport | `core` |
 | `host` | `wallpaper-host.exe` composition root and process lifecycle | `core`, `desktop`, `renderer`, `ipc` |
@@ -24,6 +25,9 @@ host -> desktop -> core
 host -> renderer -> core
 host -> ipc -> core
 ```
+
+`crates/media` currently depends on `core`; renderer integration is handled by
+the next Phase 2 issue.
 
 ## Windows host bootstrap
 
@@ -58,8 +62,10 @@ child window after shell restart without restarting the host process.
 
 ## Deferred boundaries
 
-Media decoding, display topology, performance policy, shaders, and product
-features remain in their later roadmap phases. Their intended boundaries are
-`crates/media`, `crates/display`, `crates/performance`, and `shaders`; this
-workspace only reserves the architecture and does not create empty crates for
-future work.
+Still-image decoding is implemented in `crates/media` using Windows Imaging
+Component (WIC) for PNG and JPEG. Display topology, performance policy, shaders,
+and related product features remain for later roadmap phases; their intended
+boundaries include `crates/display`, `crates/performance`, and `shaders`.
+
+See [`media-decoding.md`](media-decoding.md) for the still-image pixel contract,
+resource limits, and WIC behavior.
