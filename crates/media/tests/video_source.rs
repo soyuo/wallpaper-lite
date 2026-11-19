@@ -5,6 +5,8 @@ use std::path::PathBuf;
 #[cfg(target_os = "windows")]
 use wallpaper_media::VideoStreamSelection;
 use wallpaper_media::{MediaError, VideoSource};
+#[cfg(target_os = "windows")]
+use wallpaper_media::{VideoDecoderMode, VideoPixelFormat, VideoReadEvent};
 
 fn fixture(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -105,6 +107,94 @@ fn open_failures_and_multiple_sources_do_not_break_later_initialization() {
     drop(second);
 
     assert!(VideoSource::open(path).is_ok());
+}
+
+#[cfg(target_os = "windows")]
+#[test]
+fn decodes_timestamped_rgba_frames_in_presentation_order_and_reports_eos() {
+    let path = fixture("short-h264.mp4");
+    let original_bytes = fs::read(&path).unwrap();
+    let mut source = VideoSource::open(&path).expect("software Source Reader should open fixture");
+    assert_eq!(source.decoder_mode(), VideoDecoderMode::Software);
+
+    let mut previous_pts = None;
+    let mut frames = 0;
+    loop {
+        match source.read_next().expect("fixture samples should decode") {
+            VideoReadEvent::Frame(frame) => {
+                assert_eq!((frame.width(), frame.height()), (64, 48));
+                assert_eq!(frame.pixel_format(), VideoPixelFormat::Rgba8);
+                assert_eq!(frame.stride(), 64 * 4);
+                assert_eq!(frame.rgba8().len(), 64 * 48 * 4);
+                assert!(frame.rgba8().chunks_exact(4).all(|pixel| pixel[3] == 255));
+                assert!(frame.duration_100ns() > 0);
+                assert!(previous_pts.is_none_or(|previous| frame.pts_100ns() > previous));
+                previous_pts = Some(frame.pts_100ns());
+                frames += 1;
+            }
+            VideoReadEvent::StreamTick { timestamp_100ns } => {
+                assert!(timestamp_100ns >= 0);
+            }
+            VideoReadEvent::EndOfStream => break,
+        }
+    }
+    assert_eq!(frames, 30);
+    assert_eq!(source.read_next().unwrap(), VideoReadEvent::EndOfStream);
+    drop(source);
+    assert_eq!(fs::read(path).unwrap(), original_bytes);
+}
+
+#[cfg(target_os = "windows")]
+#[test]
+fn d3d11_device_enables_dxva_preference_without_forcing_hardware_only_decode() {
+    use windows::Win32::{
+        Foundation::HMODULE,
+        Graphics::{
+            Direct3D::D3D_DRIVER_TYPE_HARDWARE,
+            Direct3D11::{
+                D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_CREATE_DEVICE_VIDEO_SUPPORT,
+                D3D11CreateDevice, ID3D11Device, ID3D11Multithread,
+            },
+        },
+    };
+    use windows::core::Interface;
+
+    let path = fixture("short-h264.mp4");
+    let original_bytes = fs::read(&path).unwrap();
+    let mut device: Option<ID3D11Device> = None;
+    let mut context = None;
+    unsafe {
+        D3D11CreateDevice(
+            None,
+            D3D_DRIVER_TYPE_HARDWARE,
+            HMODULE::default(),
+            D3D11_CREATE_DEVICE_BGRA_SUPPORT | D3D11_CREATE_DEVICE_VIDEO_SUPPORT,
+            None,
+            windows::Win32::Graphics::Direct3D11::D3D11_SDK_VERSION,
+            Some(&mut device),
+            None,
+            Some(&mut context),
+        )
+    }
+    .expect("test machine should expose a D3D11 hardware device");
+    let device = device.expect("D3D11 should return its device interface");
+    let mut source = VideoSource::open_with_d3d11_device(&path, &device)
+        .expect("DXVA-preferred Source Reader should open and retain software fallback");
+    assert_eq!(source.decoder_mode(), VideoDecoderMode::HardwarePreferred);
+    let context = unsafe { device.GetImmediateContext() }.unwrap();
+    let multithread = context.cast::<ID3D11Multithread>().unwrap();
+    assert!(unsafe { multithread.GetMultithreadProtected() }.as_bool());
+    let mut frames = 0;
+    while let VideoReadEvent::Frame(frame) =
+        source.read_next().expect("DXVA frames should be readable")
+    {
+        assert_eq!(frame.pixel_format(), VideoPixelFormat::Rgba8);
+        assert_eq!(frame.rgba8().len(), 64 * 48 * 4);
+        frames += 1;
+    }
+    assert_eq!(frames, 30);
+    drop(source);
+    assert_eq!(fs::read(path).unwrap(), original_bytes);
 }
 
 #[cfg(not(target_os = "windows"))]

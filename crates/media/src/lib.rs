@@ -57,6 +57,14 @@ pub enum MediaError {
     VideoMetadataUnavailable { hresult: i32 },
     InvalidVideoMetadata,
     InvalidVideoPath,
+    VideoSampleDecodeFailed { hresult: i32 },
+    VideoSampleBufferAccess { hresult: i32 },
+    VideoFormatChanged,
+    VideoDecoderReportedError,
+    UnsupportedVideoPixelFormat,
+    InvalidVideoSample,
+    InvalidVideoTimestamp,
+    VideoFrameAllocationFailed,
     ComInitialization { hresult: i32 },
     FactoryCreation { hresult: i32 },
     DecoderCreation { hresult: i32 },
@@ -91,6 +99,17 @@ impl MediaError {
             | Self::InvalidVideoPath => AppError::new(
                 ErrorCode::VideoSourceOpenFailed,
                 "The video source could not be opened.",
+            ),
+            Self::VideoSampleDecodeFailed { .. }
+            | Self::VideoSampleBufferAccess { .. }
+            | Self::VideoFormatChanged
+            | Self::VideoDecoderReportedError
+            | Self::UnsupportedVideoPixelFormat
+            | Self::InvalidVideoSample
+            | Self::InvalidVideoTimestamp
+            | Self::VideoFrameAllocationFailed => AppError::new(
+                ErrorCode::VideoDecodeFailed,
+                "The video frame could not be decoded.",
             ),
             _ => AppError::new(
                 ErrorCode::ImageDecodeFailed,
@@ -129,6 +148,26 @@ impl MediaError {
             ),
             Self::InvalidVideoMetadata => "stage=video_open reason=invalid_video_metadata".into(),
             Self::InvalidVideoPath => "stage=video_open reason=invalid_path".into(),
+            Self::VideoSampleDecodeFailed { hresult } => format!(
+                "stage=video_decode reason=sample_decode_failed hresult=0x{:08X}",
+                hresult as u32
+            ),
+            Self::VideoSampleBufferAccess { hresult } => format!(
+                "stage=video_decode reason=sample_buffer_access_failed hresult=0x{:08X}",
+                hresult as u32
+            ),
+            Self::VideoFormatChanged => "stage=video_decode reason=unexpected_format_change".into(),
+            Self::VideoDecoderReportedError => {
+                "stage=video_decode reason=reader_reported_error".into()
+            }
+            Self::UnsupportedVideoPixelFormat => {
+                "stage=video_decode reason=unsupported_pixel_format".into()
+            }
+            Self::InvalidVideoSample => "stage=video_decode reason=invalid_sample".into(),
+            Self::InvalidVideoTimestamp => "stage=video_decode reason=invalid_timestamp".into(),
+            Self::VideoFrameAllocationFailed => {
+                "stage=video_decode reason=frame_allocation_failed".into()
+            }
             Self::ComInitialization { hresult } => format!(
                 "stage=image_decode reason=com_initialization_failed hresult=0x{:08X}",
                 hresult as u32
@@ -168,6 +207,63 @@ impl MediaError {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VideoStreamSelection {
     FirstVideo,
+}
+
+/// Whether this reader was configured to prefer DXVA through the supplied D3D11 device.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VideoDecoderMode {
+    Software,
+    HardwarePreferred,
+}
+
+/// Decoded frames are always tightly packed top-to-bottom RGBA8.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VideoPixelFormat {
+    Rgba8,
+}
+
+/// One decoded presentation-order video frame.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DecodedVideoFrame {
+    width: u32,
+    height: u32,
+    stride: u32,
+    pixel_format: VideoPixelFormat,
+    rgba8: Vec<u8>,
+    pts_100ns: i64,
+    duration_100ns: i64,
+}
+
+impl DecodedVideoFrame {
+    pub const fn width(&self) -> u32 {
+        self.width
+    }
+    pub const fn height(&self) -> u32 {
+        self.height
+    }
+    pub const fn stride(&self) -> u32 {
+        self.stride
+    }
+    pub const fn pixel_format(&self) -> VideoPixelFormat {
+        self.pixel_format
+    }
+    pub fn rgba8(&self) -> &[u8] {
+        &self.rgba8
+    }
+    pub const fn pts_100ns(&self) -> i64 {
+        self.pts_100ns
+    }
+    pub const fn duration_100ns(&self) -> i64 {
+        self.duration_100ns
+    }
+}
+
+/// A reader result that preserves timing and source-reader control events.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VideoReadEvent {
+    Frame(DecodedVideoFrame),
+    StreamTick { timestamp_100ns: i64 },
+    EndOfStream,
 }
 
 /// Validated metadata for the first video stream in a source file.
@@ -213,6 +309,7 @@ impl VideoMetadata {
 /// The reader is released before Media Foundation is shut down. The source is opened read-only.
 pub struct VideoSource {
     metadata: VideoMetadata,
+    decoder_mode: VideoDecoderMode,
     #[cfg(target_os = "windows")]
     _platform: video::VideoSourceHandle,
 }
@@ -222,9 +319,10 @@ impl VideoSource {
     pub fn open(path: impl AsRef<Path>) -> Result<Self, MediaError> {
         #[cfg(target_os = "windows")]
         {
-            let (platform, metadata) = video::open(path.as_ref())?;
+            let (platform, metadata, decoder_mode) = video::open(path.as_ref(), None)?;
             Ok(Self {
                 metadata,
+                decoder_mode,
                 _platform: platform,
             })
         }
@@ -237,6 +335,36 @@ impl VideoSource {
 
     pub const fn metadata(&self) -> VideoMetadata {
         self.metadata
+    }
+
+    pub const fn decoder_mode(&self) -> VideoDecoderMode {
+        self.decoder_mode
+    }
+
+    /// Reads until the next frame, stream tick, or end-of-stream marker.
+    pub fn read_next(&mut self) -> Result<VideoReadEvent, MediaError> {
+        #[cfg(target_os = "windows")]
+        {
+            video::read_next(&mut self._platform)
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            Err(MediaError::UnsupportedVideoPlatform)
+        }
+    }
+
+    /// Opens the source with DXVA preferred and Media Foundation's software fallback available.
+    #[cfg(target_os = "windows")]
+    pub fn open_with_d3d11_device(
+        path: impl AsRef<Path>,
+        device: &windows::Win32::Graphics::Direct3D11::ID3D11Device,
+    ) -> Result<Self, MediaError> {
+        let (platform, metadata, decoder_mode) = video::open(path.as_ref(), Some(device))?;
+        Ok(Self {
+            metadata,
+            decoder_mode,
+            _platform: platform,
+        })
     }
 }
 
