@@ -12,7 +12,10 @@ mod video;
 mod wic;
 
 pub use frame_queue::{FrameEnqueueOutcome, FrameQueueError, VideoFrameQueue};
-pub use playback::{PlaybackError, PlaybackScheduler, PlaybackState};
+pub use playback::{
+    PlaybackError, PlaybackScheduler, PlaybackState, VideoFpsLimit, VideoFpsLimitError,
+    VideoFpsPreset,
+};
 
 #[cfg(any(target_os = "windows", test))]
 const MAX_IMAGE_DIMENSION: u32 = 16_384;

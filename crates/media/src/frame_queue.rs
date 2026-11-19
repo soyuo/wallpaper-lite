@@ -145,14 +145,19 @@ impl VideoFrameQueue {
         newest_due
     }
 
+    /// Remove frames whose PTS-plus-duration interval has elapsed, returning
+    /// the number removed. This allows transport completion to advance even
+    /// when an output-FPS cap temporarily blocks presentation.
+    pub fn discard_expired(&mut self, playback_time_100ns: i64) -> usize {
+        let previous_len = self.frames.len();
+        self.frames
+            .retain(|frame| !is_expired(frame, playback_time_100ns));
+        previous_len - self.frames.len()
+    }
+
     /// Clears all queued frames, for example when starting a seek timeline.
     pub fn clear(&mut self) {
         self.frames.clear();
-    }
-
-    fn discard_expired(&mut self, playback_time_100ns: i64) {
-        self.frames
-            .retain(|frame| !is_expired(frame, playback_time_100ns));
     }
 }
 

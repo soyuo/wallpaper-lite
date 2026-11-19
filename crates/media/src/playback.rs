@@ -1,5 +1,101 @@
 use crate::{DecodedVideoFrame, FrameEnqueueOutcome, VideoFrameQueue};
 
+const HUNDRED_NANOSECONDS_PER_SECOND: u32 = 10_000_000;
+const MAX_PRESENTATION_FPS: u16 = 120;
+
+/// Supported common output-FPS presets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VideoFpsPreset {
+    Fps15,
+    Fps24,
+    Fps30,
+    Fps60,
+    Fps120,
+}
+
+impl VideoFpsPreset {
+    pub const ALL: [Self; 5] = [
+        Self::Fps15,
+        Self::Fps24,
+        Self::Fps30,
+        Self::Fps60,
+        Self::Fps120,
+    ];
+
+    pub const fn frames_per_second(self) -> u16 {
+        match self {
+            Self::Fps15 => 15,
+            Self::Fps24 => 24,
+            Self::Fps30 => 30,
+            Self::Fps60 => 60,
+            Self::Fps120 => 120,
+        }
+    }
+}
+
+/// Validated maximum output presentation rate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VideoFpsLimit {
+    frames_per_second: u16,
+}
+
+impl VideoFpsLimit {
+    pub const fn preset(preset: VideoFpsPreset) -> Self {
+        Self {
+            frames_per_second: preset.frames_per_second(),
+        }
+    }
+
+    /// Create a custom cap from 1 through 120 FPS.
+    pub fn custom(frames_per_second: u16) -> Result<Self, VideoFpsLimitError> {
+        if !(1..=MAX_PRESENTATION_FPS).contains(&frames_per_second) {
+            return Err(VideoFpsLimitError {
+                requested: frames_per_second,
+            });
+        }
+        Ok(Self { frames_per_second })
+    }
+
+    pub const fn frames_per_second(self) -> u16 {
+        self.frames_per_second
+    }
+
+    /// Smallest whole 100 ns interval that never exceeds this output rate.
+    pub const fn minimum_interval_100ns(self) -> i64 {
+        HUNDRED_NANOSECONDS_PER_SECOND.div_ceil(self.frames_per_second as u32) as i64
+    }
+}
+
+impl Default for VideoFpsLimit {
+    fn default() -> Self {
+        Self::preset(VideoFpsPreset::Fps60)
+    }
+}
+
+/// A custom presentation FPS value outside the supported 1–120 range.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VideoFpsLimitError {
+    requested: u16,
+}
+
+impl VideoFpsLimitError {
+    pub const fn requested_fps(self) -> u16 {
+        self.requested
+    }
+}
+
+impl std::fmt::Display for VideoFpsLimitError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "custom FPS {} is outside 1..=120",
+            self.requested
+        )
+    }
+}
+
+impl std::error::Error for VideoFpsLimitError {}
+
 /// Basic transport state for a timestamp-scheduled video source.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PlaybackState {
@@ -45,6 +141,8 @@ impl std::error::Error for PlaybackError {}
 #[derive(Debug)]
 pub struct PlaybackScheduler {
     queue: VideoFrameQueue,
+    fps_limit: VideoFpsLimit,
+    last_presented_wall_time_100ns: Option<i64>,
     state: PlaybackState,
     media_anchor_100ns: i64,
     wall_anchor_100ns: Option<i64>,
@@ -63,6 +161,8 @@ impl PlaybackScheduler {
     pub fn new() -> Self {
         Self {
             queue: VideoFrameQueue::new(),
+            fps_limit: VideoFpsLimit::default(),
+            last_presented_wall_time_100ns: None,
             state: PlaybackState::Stopped,
             media_anchor_100ns: 0,
             wall_anchor_100ns: None,
@@ -78,6 +178,15 @@ impl PlaybackScheduler {
 
     pub fn queued_frames(&self) -> usize {
         self.queue.len()
+    }
+
+    pub const fn fps_limit(&self) -> VideoFpsLimit {
+        self.fps_limit
+    }
+
+    /// Change the presentation cap without re-anchoring the media clock.
+    pub fn set_fps_limit(&mut self, fps_limit: VideoFpsLimit) {
+        self.fps_limit = fps_limit;
     }
 
     /// Return the media timestamp corresponding to a monotonic clock sample.
@@ -202,6 +311,21 @@ impl PlaybackScheduler {
         if self.state != PlaybackState::Playing {
             return Ok(None);
         }
+        self.queue.discard_expired(media_time);
+        let last_frame_elapsed = self
+            .last_presented_end_100ns
+            .is_none_or(|end| media_time >= end);
+        if self.source_ended && self.queue.is_empty() && last_frame_elapsed {
+            self.state = PlaybackState::Ended;
+            self.media_anchor_100ns = media_time;
+            self.wall_anchor_100ns = None;
+            return Ok(None);
+        }
+        if self.last_presented_wall_time_100ns.is_some_and(|last| {
+            monotonic_time_100ns - last < self.fps_limit.minimum_interval_100ns()
+        }) {
+            return Ok(None);
+        }
 
         if let Some(frame) = self.queue.pop_due(media_time) {
             self.last_presented_end_100ns = Some(
@@ -210,17 +334,10 @@ impl PlaybackScheduler {
                     .checked_add(frame.duration_100ns())
                     .ok_or(PlaybackError::TimeOverflow)?,
             );
+            self.last_presented_wall_time_100ns = Some(monotonic_time_100ns);
             return Ok(Some(frame));
         }
 
-        let last_frame_elapsed = self
-            .last_presented_end_100ns
-            .is_none_or(|end| media_time >= end);
-        if self.source_ended && self.queue.is_empty() && last_frame_elapsed {
-            self.state = PlaybackState::Ended;
-            self.media_anchor_100ns = media_time;
-            self.wall_anchor_100ns = None;
-        }
         Ok(None)
     }
 
@@ -263,7 +380,7 @@ impl PlaybackScheduler {
 
 #[cfg(test)]
 mod tests {
-    use super::{PlaybackError, PlaybackScheduler, PlaybackState};
+    use super::{PlaybackError, PlaybackScheduler, PlaybackState, VideoFpsLimit, VideoFpsPreset};
     use crate::{DecodedVideoFrame, FrameEnqueueOutcome, VideoPixelFormat};
 
     fn frame(pts_100ns: i64, duration_100ns: i64, marker: u8) -> DecodedVideoFrame {
@@ -324,6 +441,7 @@ mod tests {
     #[test]
     fn seek_and_restart_flush_frames_from_the_previous_timeline() {
         let mut scheduler = PlaybackScheduler::new();
+        scheduler.set_fps_limit(VideoFpsLimit::preset(VideoFpsPreset::Fps120));
         scheduler.play(0).unwrap();
         scheduler.enqueue_frame(frame(100, 100, 1), 0).unwrap();
         scheduler.seek(0, 10).unwrap();
@@ -331,37 +449,50 @@ mod tests {
         scheduler.enqueue_frame(frame(0, 100, 2), 10).unwrap();
         assert_eq!(scheduler.next_due_frame(10).unwrap().unwrap().rgba8()[0], 2);
 
-        scheduler.enqueue_frame(frame(100, 100, 3), 10).unwrap();
-        scheduler.restart(20).unwrap();
+        let restart_time = 83_344;
+        scheduler
+            .enqueue_frame(frame(100, 100, 3), restart_time)
+            .unwrap();
+        scheduler.restart(restart_time).unwrap();
         assert_eq!(scheduler.state(), PlaybackState::Playing);
         assert_eq!(scheduler.queued_frames(), 0);
-        assert_eq!(scheduler.media_time_100ns(20).unwrap(), 0);
-        scheduler.enqueue_frame(frame(0, 100, 4), 20).unwrap();
-        assert_eq!(scheduler.next_due_frame(20).unwrap().unwrap().rgba8()[0], 4);
+        assert_eq!(scheduler.media_time_100ns(restart_time).unwrap(), 0);
+        scheduler
+            .enqueue_frame(frame(0, 100, 4), restart_time)
+            .unwrap();
+        assert_eq!(
+            scheduler
+                .next_due_frame(restart_time)
+                .unwrap()
+                .unwrap()
+                .rgba8()[0],
+            4
+        );
     }
 
     #[test]
     fn stop_and_end_of_stream_have_deterministic_transitions() {
         let mut scheduler = PlaybackScheduler::new();
+        scheduler.set_fps_limit(VideoFpsLimit::preset(VideoFpsPreset::Fps120));
         scheduler.play(0).unwrap();
-        scheduler.enqueue_frame(frame(0, 100, 1), 0).unwrap();
+        scheduler.enqueue_frame(frame(0, 100_000, 1), 0).unwrap();
         assert_eq!(scheduler.next_due_frame(0).unwrap().unwrap().pts_100ns(), 0);
         scheduler.end_of_stream(0).unwrap();
-        assert_eq!(scheduler.next_due_frame(99).unwrap(), None);
+        assert_eq!(scheduler.next_due_frame(83_333).unwrap(), None);
         assert_eq!(scheduler.state(), PlaybackState::Playing);
-        assert_eq!(scheduler.next_due_frame(100).unwrap(), None);
+        assert_eq!(scheduler.next_due_frame(100_000).unwrap(), None);
         assert_eq!(scheduler.state(), PlaybackState::Ended);
         assert_eq!(
-            scheduler.enqueue_frame(frame(100, 100, 2), 100),
+            scheduler.enqueue_frame(frame(100_000, 100_000, 2), 100_000),
             Err(PlaybackError::SourceAlreadyEnded)
         );
 
-        scheduler.play(100).unwrap();
+        scheduler.play(100_000).unwrap();
         assert_eq!(scheduler.state(), PlaybackState::Playing);
-        assert_eq!(scheduler.media_time_100ns(100).unwrap(), 0);
-        scheduler.stop(100).unwrap();
+        assert_eq!(scheduler.media_time_100ns(100_000).unwrap(), 0);
+        scheduler.stop(100_000).unwrap();
         assert_eq!(scheduler.state(), PlaybackState::Stopped);
-        assert_eq!(scheduler.media_time_100ns(10_000).unwrap(), 0);
+        assert_eq!(scheduler.media_time_100ns(100_001).unwrap(), 0);
         assert_eq!(scheduler.queued_frames(), 0);
     }
 
@@ -425,5 +556,101 @@ mod tests {
             Err(PlaybackError::InvalidFrameTiming)
         );
         assert_eq!(scheduler.queued_frames(), 0);
+    }
+
+    #[test]
+    fn fps_presets_and_custom_limits_are_validated() {
+        let expected = [
+            (15, 666_667),
+            (24, 416_667),
+            (30, 333_334),
+            (60, 166_667),
+            (120, 83_334),
+        ];
+        for (preset, (fps, interval)) in VideoFpsPreset::ALL.into_iter().zip(expected) {
+            let limit = VideoFpsLimit::preset(preset);
+            assert_eq!(preset.frames_per_second(), fps);
+            assert_eq!(limit.frames_per_second(), fps);
+            assert_eq!(limit.minimum_interval_100ns(), interval);
+        }
+        assert_eq!(VideoFpsLimit::default().frames_per_second(), 60);
+        assert_eq!(VideoFpsLimit::custom(1).unwrap().frames_per_second(), 1);
+        assert_eq!(VideoFpsLimit::custom(90).unwrap().frames_per_second(), 90);
+        assert_eq!(VideoFpsLimit::custom(120).unwrap().frames_per_second(), 120);
+        assert_eq!(VideoFpsLimit::custom(0).unwrap_err().requested_fps(), 0);
+        assert_eq!(VideoFpsLimit::custom(121).unwrap_err().requested_fps(), 121);
+    }
+
+    fn simulate_one_second(source_fps: u16, cap_fps: u16) -> (usize, usize) {
+        let mut scheduler = PlaybackScheduler::new();
+        scheduler.set_fps_limit(VideoFpsLimit::custom(cap_fps).unwrap());
+        scheduler.play(0).unwrap();
+        let source_interval = (10_000_000_i64 + i64::from(source_fps) - 1) / i64::from(source_fps);
+        let minimum_output_interval = VideoFpsLimit::custom(cap_fps)
+            .unwrap()
+            .minimum_interval_100ns();
+        let mut presented = 0;
+        let mut max_queued = 0;
+        let mut last_output_time = None;
+        for frame_index in 0..source_fps {
+            let pts = i64::from(frame_index) * source_interval;
+            scheduler
+                .enqueue_frame(frame(pts, source_interval, frame_index as u8), pts)
+                .unwrap();
+            max_queued = max_queued.max(scheduler.queued_frames());
+            if scheduler.next_due_frame(pts).unwrap().is_some() {
+                if let Some(previous) = last_output_time {
+                    assert!(pts - previous >= minimum_output_interval);
+                }
+                last_output_time = Some(pts);
+                presented += 1;
+            }
+        }
+        (presented, max_queued)
+    }
+
+    #[test]
+    fn fps_cap_limits_output_without_changing_the_media_clock_or_synthesizing_frames() {
+        assert_eq!(simulate_one_second(30, 30).0, 30);
+        assert_eq!(simulate_one_second(60, 30).0, 30);
+        assert_eq!(simulate_one_second(30, 60).0, 30);
+        assert_eq!(simulate_one_second(60, 60).0, 60);
+        let (presented, max_queued) = simulate_one_second(60, 15);
+        assert_eq!(presented, 15);
+        assert!(max_queued <= 3);
+
+        let mut scheduler = PlaybackScheduler::new();
+        scheduler.play(100).unwrap();
+        assert_eq!(scheduler.media_time_100ns(1_000_100).unwrap(), 1_000_000);
+        scheduler.set_fps_limit(VideoFpsLimit::preset(VideoFpsPreset::Fps15));
+        assert_eq!(scheduler.media_time_100ns(1_000_100).unwrap(), 1_000_000);
+    }
+
+    #[test]
+    fn end_of_stream_advances_without_waiting_for_the_next_fps_slot() {
+        let mut scheduler = PlaybackScheduler::new();
+        scheduler.set_fps_limit(VideoFpsLimit::custom(1).unwrap());
+        scheduler.play(0).unwrap();
+        scheduler.enqueue_frame(frame(0, 1_000_000, 1), 0).unwrap();
+        assert_eq!(scheduler.next_due_frame(0).unwrap().unwrap().pts_100ns(), 0);
+
+        scheduler
+            .enqueue_frame(frame(1_000_000, 10_000_000, 2), 1_000_000)
+            .unwrap();
+        scheduler.end_of_stream(1_000_000).unwrap();
+        assert_eq!(scheduler.next_due_frame(1_000_000).unwrap(), None);
+        assert_eq!(scheduler.queued_frames(), 1);
+        assert_eq!(scheduler.state(), PlaybackState::Playing);
+
+        assert_eq!(
+            scheduler
+                .next_due_frame(10_000_000)
+                .unwrap()
+                .unwrap()
+                .pts_100ns(),
+            1_000_000
+        );
+        assert_eq!(scheduler.next_due_frame(11_000_000).unwrap(), None);
+        assert_eq!(scheduler.state(), PlaybackState::Ended);
     }
 }
