@@ -96,6 +96,92 @@ impl std::fmt::Display for VideoFpsLimitError {
 
 impl std::error::Error for VideoFpsLimitError {}
 
+/// Documented playback speeds for the video media timeline.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum VideoPlaybackSpeed {
+    Quarter,
+    Half,
+    ThreeQuarters,
+    #[default]
+    Normal,
+    FiveQuarters,
+    OneAndHalf,
+    Double,
+}
+
+impl VideoPlaybackSpeed {
+    pub const ALL: [Self; 7] = [
+        Self::Quarter,
+        Self::Half,
+        Self::ThreeQuarters,
+        Self::Normal,
+        Self::FiveQuarters,
+        Self::OneAndHalf,
+        Self::Double,
+    ];
+
+    pub const fn from_percent(percent: u16) -> Result<Self, VideoPlaybackSpeedError> {
+        match percent {
+            25 => Ok(Self::Quarter),
+            50 => Ok(Self::Half),
+            75 => Ok(Self::ThreeQuarters),
+            100 => Ok(Self::Normal),
+            125 => Ok(Self::FiveQuarters),
+            150 => Ok(Self::OneAndHalf),
+            200 => Ok(Self::Double),
+            _ => Err(VideoPlaybackSpeedError { requested: percent }),
+        }
+    }
+
+    pub const fn percent(self) -> u16 {
+        match self {
+            Self::Quarter => 25,
+            Self::Half => 50,
+            Self::ThreeQuarters => 75,
+            Self::Normal => 100,
+            Self::FiveQuarters => 125,
+            Self::OneAndHalf => 150,
+            Self::Double => 200,
+        }
+    }
+
+    const fn ratio(self) -> (i64, i64) {
+        match self {
+            Self::Quarter => (1, 4),
+            Self::Half => (1, 2),
+            Self::ThreeQuarters => (3, 4),
+            Self::Normal => (1, 1),
+            Self::FiveQuarters => (5, 4),
+            Self::OneAndHalf => (3, 2),
+            Self::Double => (2, 1),
+        }
+    }
+}
+
+/// Unsupported percentage passed to `VideoPlaybackSpeed::from_percent`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VideoPlaybackSpeedError {
+    requested: u16,
+}
+
+impl VideoPlaybackSpeedError {
+    pub const fn requested_percent(self) -> u16 {
+        self.requested
+    }
+}
+
+impl std::fmt::Display for VideoPlaybackSpeedError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "unsupported video playback speed {}%",
+            self.requested
+        )
+    }
+}
+
+impl std::error::Error for VideoPlaybackSpeedError {}
+
 /// Basic transport state for a timestamp-scheduled video source.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PlaybackState {
@@ -143,6 +229,7 @@ pub struct PlaybackScheduler {
     queue: VideoFrameQueue,
     fps_limit: VideoFpsLimit,
     last_presented_wall_time_100ns: Option<i64>,
+    speed: VideoPlaybackSpeed,
     state: PlaybackState,
     media_anchor_100ns: i64,
     wall_anchor_100ns: Option<i64>,
@@ -163,6 +250,7 @@ impl PlaybackScheduler {
             queue: VideoFrameQueue::new(),
             fps_limit: VideoFpsLimit::default(),
             last_presented_wall_time_100ns: None,
+            speed: VideoPlaybackSpeed::default(),
             state: PlaybackState::Stopped,
             media_anchor_100ns: 0,
             wall_anchor_100ns: None,
@@ -187,6 +275,34 @@ impl PlaybackScheduler {
     /// Change the presentation cap without re-anchoring the media clock.
     pub fn set_fps_limit(&mut self, fps_limit: VideoFpsLimit) {
         self.fps_limit = fps_limit;
+    }
+
+    pub const fn speed(&self) -> VideoPlaybackSpeed {
+        self.speed
+    }
+
+    /// Change playback rate continuously, without changing the source PTS or
+    /// configured output-FPS limit.
+    pub fn set_speed(
+        &mut self,
+        speed: VideoPlaybackSpeed,
+        monotonic_time_100ns: i64,
+    ) -> Result<(), PlaybackError> {
+        self.observe_monotonic_time(monotonic_time_100ns)?;
+        if self.speed == speed {
+            return Ok(());
+        }
+        let media_time = if self.state == PlaybackState::Playing {
+            self.media_time_from_anchor(monotonic_time_100ns)?
+        } else {
+            self.media_anchor_100ns
+        };
+        self.speed = speed;
+        self.media_anchor_100ns = media_time;
+        if self.state == PlaybackState::Playing {
+            self.wall_anchor_100ns = Some(monotonic_time_100ns);
+        }
+        Ok(())
     }
 
     /// Return the media timestamp corresponding to a monotonic clock sample.
@@ -354,9 +470,15 @@ impl PlaybackScheduler {
         let elapsed = monotonic_time_100ns
             .checked_sub(wall_anchor)
             .ok_or(PlaybackError::TimeOverflow)?;
-        self.media_anchor_100ns
-            .checked_add(elapsed)
-            .ok_or(PlaybackError::TimeOverflow)
+        let (speed_numerator, speed_denominator) = self.speed.ratio();
+        let scaled_elapsed = i128::from(elapsed)
+            .checked_mul(i128::from(speed_numerator))
+            .ok_or(PlaybackError::TimeOverflow)?
+            / i128::from(speed_denominator);
+        let media_time = i128::from(self.media_anchor_100ns)
+            .checked_add(scaled_elapsed)
+            .ok_or(PlaybackError::TimeOverflow)?;
+        i64::try_from(media_time).map_err(|_| PlaybackError::TimeOverflow)
     }
 
     fn observe_monotonic_time(&mut self, now: i64) -> Result<(), PlaybackError> {
@@ -380,7 +502,10 @@ impl PlaybackScheduler {
 
 #[cfg(test)]
 mod tests {
-    use super::{PlaybackError, PlaybackScheduler, PlaybackState, VideoFpsLimit, VideoFpsPreset};
+    use super::{
+        PlaybackError, PlaybackScheduler, PlaybackState, VideoFpsLimit, VideoFpsPreset,
+        VideoPlaybackSpeed,
+    };
     use crate::{DecodedVideoFrame, FrameEnqueueOutcome, VideoPixelFormat};
 
     fn frame(pts_100ns: i64, duration_100ns: i64, marker: u8) -> DecodedVideoFrame {
@@ -652,5 +777,75 @@ mod tests {
         );
         assert_eq!(scheduler.next_due_frame(11_000_000).unwrap(), None);
         assert_eq!(scheduler.state(), PlaybackState::Ended);
+    }
+
+    #[test]
+    fn documented_playback_speeds_map_media_time_and_reject_unsupported_values() {
+        let expected = [
+            (25, 2_500_000),
+            (50, 5_000_000),
+            (75, 7_500_000),
+            (100, 10_000_000),
+            (125, 12_500_000),
+            (150, 15_000_000),
+            (200, 20_000_000),
+        ];
+        for (speed, (percent, media_time)) in VideoPlaybackSpeed::ALL.into_iter().zip(expected) {
+            assert_eq!(speed.percent(), percent);
+            assert_eq!(VideoPlaybackSpeed::from_percent(percent), Ok(speed));
+            let mut scheduler = PlaybackScheduler::new();
+            scheduler.set_speed(speed, 0).unwrap();
+            scheduler.play(0).unwrap();
+            assert_eq!(scheduler.media_time_100ns(10_000_000).unwrap(), media_time);
+        }
+        for unsupported in [0, 1, 90, 110, 201] {
+            assert_eq!(
+                VideoPlaybackSpeed::from_percent(unsupported)
+                    .unwrap_err()
+                    .requested_percent(),
+                unsupported
+            );
+        }
+    }
+
+    #[test]
+    fn speed_changes_pause_resume_and_seek_keep_continuous_media_time_and_fps_cap() {
+        let mut scheduler = PlaybackScheduler::new();
+        scheduler.set_fps_limit(VideoFpsLimit::preset(VideoFpsPreset::Fps30));
+        scheduler.play(100).unwrap();
+        assert_eq!(scheduler.media_time_100ns(1_000_100).unwrap(), 1_000_000);
+
+        scheduler
+            .set_speed(VideoPlaybackSpeed::Double, 1_000_100)
+            .unwrap();
+        assert_eq!(scheduler.media_time_100ns(1_000_100).unwrap(), 1_000_000);
+        assert_eq!(scheduler.fps_limit().frames_per_second(), 30);
+        assert_eq!(scheduler.media_time_100ns(1_500_100).unwrap(), 2_000_000);
+
+        scheduler.pause(1_500_100).unwrap();
+        assert_eq!(scheduler.media_time_100ns(10_000_000).unwrap(), 2_000_000);
+        scheduler
+            .set_speed(VideoPlaybackSpeed::Half, 10_000_000)
+            .unwrap();
+        scheduler.play(10_000_000).unwrap();
+        assert_eq!(scheduler.media_time_100ns(12_000_000).unwrap(), 3_000_000);
+
+        scheduler.seek(5_000_000, 12_000_000).unwrap();
+        assert_eq!(scheduler.media_time_100ns(12_000_000).unwrap(), 5_000_000);
+        assert_eq!(scheduler.media_time_100ns(14_000_000).unwrap(), 6_000_000);
+        assert_eq!(scheduler.fps_limit().frames_per_second(), 30);
+    }
+
+    #[test]
+    fn accelerated_media_clock_selects_source_frames_by_unchanged_pts() {
+        let mut scheduler = PlaybackScheduler::new();
+        scheduler.set_speed(VideoPlaybackSpeed::Double, 0).unwrap();
+        scheduler.play(0).unwrap();
+        scheduler
+            .enqueue_frame(frame(1_000_000, 250_000, 7), 500_000)
+            .unwrap();
+        let selected = scheduler.next_due_frame(500_000).unwrap().unwrap();
+        assert_eq!(selected.pts_100ns(), 1_000_000);
+        assert_eq!(selected.rgba8()[0], 7);
     }
 }
