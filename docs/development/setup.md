@@ -26,3 +26,8 @@ cargo +stable check --workspace --target x86_64-pc-windows-msvc
 
 For the Tauri UI's Node.js, WebView2, and development commands, see
 [`apps/ui/README.md`](../../apps/ui/README.md).
+
+
+See [Phase 0 Windows acceptance](phase-0-acceptance.md) for the integrated GUI, IPC, and D3D11 runtime results and reproduction steps.
+
+See [Phase 0 Windows acceptance](phase-0-acceptance.md) for the integrated GUI, IPC, and D3D11 runtime results and reproduction steps.
