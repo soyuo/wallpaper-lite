@@ -37,6 +37,11 @@ device. The Phase 1 host has no media selection or playback state yet, so conten
 be exercised until the media and playback phases; recovery leaves those future host-owned states
 outside the window lifecycle.
 
+During host shutdown, `DesktopRecoveryWorker::stop()` queues `Shutdown`, wakes any retry wait, and
+joins the worker before the lifecycle monitor is dropped. This stops new attachments and releases
+the current child first; the monitor then sets its stop flag, joins its thread, and closes the
+Explorer process handle. Calling `stop()` repeatedly is safe.
+
 ## Verification
 
 The desktop tests cover ordered exit/restart transitions, duplicate suppression across rapid
@@ -54,3 +59,12 @@ recovery worker logged `event="wallpaper_window_recovered"`. UI Automation found
 `WallpaperLiteDesktopChild` owned by PID 30908 with a `Progman` parent; the Start button Toggle
 pattern worked and Escape dismissed the Start UI. The host remained alive until test cleanup; after
 shutdown there was no host process or child window left.
+
+For shutdown ordering, a Windows 11 Education 10.0.26300 smoke check started primary host PID 5072
+and duplicate host PID 2704. The duplicate exited through the IPC server error path with Windows
+error 231 (pipe busy). `EnumChildWindows` found exactly one wallpaper child, owned by the primary
+host, after the duplicate exited, confirming its child was released before the process exit. The
+primary was terminated after the measurement; no wallpaper host process or child window remained
+after test cleanup. The host unit test also queues shell exit/restart events before calling
+`stop()` twice, and both stops complete successfully. Windows 10 runtime verification and a live
+Explorer exit during host shutdown remain pending.
