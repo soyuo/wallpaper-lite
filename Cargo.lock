@@ -3796,6 +3796,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "wallpaper-media"
+version = "0.1.0"
+dependencies = [
+ "wallpaper-core",
+ "windows",
+]
+
+[[package]]
 name = "wallpaper-renderer"
 version = "0.1.0"
 dependencies = [
