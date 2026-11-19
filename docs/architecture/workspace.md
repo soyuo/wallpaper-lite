@@ -28,8 +28,9 @@ host -> media -> core
 host -> ipc -> core
 ```
 
-`crates/media` owns WIC still-image decoding. The renderer consumes its immutable
-RGBA8 result and does not access source files.
+`crates/media` owns WIC still-image decoding and Media Foundation video decoding.
+The renderer consumes decoded RGBA8 images or timestamped video frames and does
+not access source files.
 
 ## Windows host bootstrap
 
@@ -44,10 +45,11 @@ Initialization failures return typed crate errors, map to the shared
 `wallpaper_core::error::AppError` code, and log only the failed stage and
 numeric HRESULT. A failed bootstrap exits the host cleanly instead of panicking.
 The renderer test `creates_and_releases_hardware_device_and_immediate_context`
-smoke-checks creation and normal COM release on Windows. The static image
-presenter creates a swap chain and shader pipeline only when an initial image is
-supplied. See [`image-presentation.md`](image-presentation.md) for its resource
-lifetime, resize behavior, and startup input.
+smoke-checks creation and normal COM release on Windows. The image presenter
+creates a swap chain and shader pipeline once; successive same-sized video
+frames reuse the source texture, while a dimension change replaces only the
+source-sized resources. See [`image-presentation.md`](image-presentation.md)
+for its resource lifetime, resize behavior, and startup input.
 
 The host owns process startup and coordinates the desktop, renderer, and IPC
 crates. The UI does not own Win32 windows or D3D11 resources. Lower-level crates

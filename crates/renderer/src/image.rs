@@ -1,6 +1,6 @@
 use std::slice;
 
-use wallpaper_media::DecodedImage;
+use wallpaper_media::{DecodedImage, DecodedVideoFrame, VideoPixelFormat};
 use windows::{
     Win32::{
         Foundation::{HWND, RECT},
@@ -11,10 +11,9 @@ use windows::{
                 D3D11_CULL_NONE, D3D11_FILL_SOLID, D3D11_FILTER_MIN_MAG_MIP_LINEAR,
                 D3D11_RASTERIZER_DESC, D3D11_SAMPLER_DESC, D3D11_SUBRESOURCE_DATA,
                 D3D11_TEXTURE_ADDRESS_CLAMP, D3D11_TEXTURE2D_DESC, D3D11_USAGE_DEFAULT,
-                D3D11_USAGE_IMMUTABLE, D3D11_VIEWPORT, ID3D11Buffer, ID3D11DepthStencilView,
-                ID3D11DeviceContext, ID3D11PixelShader, ID3D11RasterizerState,
-                ID3D11RenderTargetView, ID3D11SamplerState, ID3D11ShaderResourceView,
-                ID3D11Texture2D, ID3D11VertexShader,
+                D3D11_VIEWPORT, ID3D11Buffer, ID3D11DepthStencilView, ID3D11DeviceContext,
+                ID3D11PixelShader, ID3D11RasterizerState, ID3D11RenderTargetView,
+                ID3D11SamplerState, ID3D11ShaderResourceView, ID3D11Texture2D, ID3D11VertexShader,
             },
             Dxgi::{
                 Common::{
@@ -154,6 +153,13 @@ pub struct D3d11ImagePresenter<'a> {
     presented_frames: u64,
 }
 
+struct Rgba8PixelBuffer<'pixels> {
+    width: u32,
+    height: u32,
+    stride: u32,
+    pixels: &'pixels [u8],
+}
+
 impl<'a> D3d11ImagePresenter<'a> {
     pub fn new(
         device: &'a D3d11Device,
@@ -222,12 +228,61 @@ impl<'a> D3d11ImagePresenter<'a> {
         transform: ImageTransform,
         color_adjustments: ColorAdjustments,
     ) -> Result<Self, RendererError> {
+        Self::new_with_pixels(
+            device,
+            window_handle,
+            Rgba8PixelBuffer {
+                width: image.width(),
+                height: image.height(),
+                stride: image.stride(),
+                pixels: image.rgba8(),
+            },
+            placement_mode,
+            transform,
+            color_adjustments,
+        )
+    }
+
+    /// Create a presenter from the first decoded video frame.
+    pub fn new_with_video_frame(
+        device: &'a D3d11Device,
+        window_handle: isize,
+        frame: &DecodedVideoFrame,
+    ) -> Result<Self, RendererError> {
+        if frame.pixel_format() != VideoPixelFormat::Rgba8 {
+            return Err(RendererError::InvalidVideoFrame);
+        }
+        Self::new_with_pixels(
+            device,
+            window_handle,
+            Rgba8PixelBuffer {
+                width: frame.width(),
+                height: frame.height(),
+                stride: frame.stride(),
+                pixels: frame.rgba8(),
+            },
+            PlacementMode::Cover,
+            ImageTransform::default(),
+            ColorAdjustments::default(),
+        )
+    }
+
+    fn new_with_pixels(
+        device: &'a D3d11Device,
+        window_handle: isize,
+        pixels: Rgba8PixelBuffer<'_>,
+        placement_mode: PlacementMode,
+        transform: ImageTransform,
+        color_adjustments: ColorAdjustments,
+    ) -> Result<Self, RendererError> {
+        validate_pixel_layout(pixels.width, pixels.height, pixels.stride, pixels.pixels)
+            .map_err(|_| RendererError::InvalidVideoFrame)?;
         let hwnd = hwnd_from_raw(window_handle);
         if !unsafe { IsWindow(Some(hwnd)) }.as_bool() {
             return Err(RendererError::WindowUnavailable);
         }
         let (width, height) = client_size(hwnd)?;
-        let source_dimensions = PlacementDimensions::new(image.width(), image.height())?;
+        let source_dimensions = PlacementDimensions::new(pixels.width, pixels.height)?;
         let output_dimensions = PlacementDimensions::new(width, height)?;
         let dxgi_device: IDXGIDevice =
             device
@@ -279,7 +334,13 @@ impl<'a> D3d11ImagePresenter<'a> {
             }
         })?;
 
-        let (image_texture, image_view) = create_image_texture(device, image)?;
+        let (image_texture, image_view) = create_rgba_texture(
+            device,
+            pixels.width,
+            pixels.height,
+            pixels.stride,
+            pixels.pixels,
+        )?;
         let placement_buffer = create_placement_buffer(
             device,
             source_dimensions,
@@ -318,23 +379,68 @@ impl<'a> D3d11ImagePresenter<'a> {
         Ok(presenter)
     }
 
-    /// Replace the current GPU texture and present the new image once.
+    /// Replace the current frame pixels and present once, reusing an equal-sized texture.
     pub fn set_image(&mut self, image: &DecodedImage) -> Result<(), RendererError> {
-        let (texture, view) = create_image_texture(self.device, image)?;
-        let source_dimensions = PlacementDimensions::new(image.width(), image.height())?;
-        let placement_buffer = create_placement_buffer(
-            self.device,
-            source_dimensions,
-            PlacementDimensions::new(self.width, self.height)?,
-            self.placement_mode,
-            self.transform,
-            self.color_adjustments,
-        )?;
-        self.unbind_resources();
-        self.image_texture = texture;
-        self.image_view = view;
-        self.source_dimensions = source_dimensions;
-        self.placement_buffer = placement_buffer;
+        self.set_rgba_frame(image.width(), image.height(), image.stride(), image.rgba8())
+    }
+
+    /// Upload and present a decoded video frame through this presenter's existing swapchain.
+    pub fn set_video_frame(&mut self, frame: &DecodedVideoFrame) -> Result<(), RendererError> {
+        if frame.pixel_format() != VideoPixelFormat::Rgba8 {
+            return Err(RendererError::InvalidVideoFrame);
+        }
+        self.set_rgba_frame(frame.width(), frame.height(), frame.stride(), frame.rgba8())
+    }
+
+    fn set_rgba_frame(
+        &mut self,
+        frame_width: u32,
+        frame_height: u32,
+        frame_stride: u32,
+        frame_pixels: &[u8],
+    ) -> Result<(), RendererError> {
+        validate_pixel_layout(frame_width, frame_height, frame_stride, frame_pixels)
+            .map_err(|_| RendererError::InvalidVideoFrame)?;
+        let new_dimensions = PlacementDimensions::new(frame_width, frame_height)
+            .map_err(|_| RendererError::InvalidVideoFrame)?;
+
+        if new_dimensions == self.source_dimensions {
+            self.unbind_resources();
+            let depth_pitch = frame_stride
+                .checked_mul(frame_height)
+                .ok_or(RendererError::InvalidVideoFrame)?;
+            unsafe {
+                self.device.immediate_context().UpdateSubresource(
+                    &self.image_texture,
+                    0,
+                    None,
+                    frame_pixels.as_ptr().cast(),
+                    frame_stride,
+                    depth_pitch,
+                );
+            }
+        } else {
+            let (texture, view) = create_rgba_texture(
+                self.device,
+                frame_width,
+                frame_height,
+                frame_stride,
+                frame_pixels,
+            )?;
+            let placement_buffer = create_placement_buffer(
+                self.device,
+                new_dimensions,
+                PlacementDimensions::new(self.width, self.height)?,
+                self.placement_mode,
+                self.transform,
+                self.color_adjustments,
+            )?;
+            self.unbind_resources();
+            self.image_texture = texture;
+            self.image_view = view;
+            self.source_dimensions = new_dimensions;
+            self.placement_buffer = placement_buffer;
+        }
         self.render_current_image()
     }
 
@@ -578,22 +684,52 @@ impl Drop for D3d11ImagePresenter<'_> {
     }
 }
 
-fn create_image_texture(
+fn validate_pixel_layout(
+    width: u32,
+    height: u32,
+    stride: u32,
+    pixels: &[u8],
+) -> Result<(), RendererError> {
+    if width == 0 || height == 0 {
+        return Err(RendererError::InvalidVideoFrame);
+    }
+    let row_bytes = width
+        .checked_mul(4)
+        .ok_or(RendererError::InvalidVideoFrame)?;
+    if stride < row_bytes {
+        return Err(RendererError::InvalidVideoFrame);
+    }
+    let required = usize::try_from(
+        stride
+            .checked_mul(height)
+            .ok_or(RendererError::InvalidVideoFrame)?,
+    )
+    .map_err(|_| RendererError::InvalidVideoFrame)?;
+    if pixels.len() < required {
+        return Err(RendererError::InvalidVideoFrame);
+    }
+    Ok(())
+}
+
+fn create_rgba_texture(
     device: &D3d11Device,
-    image: &DecodedImage,
+    width: u32,
+    height: u32,
+    stride: u32,
+    pixels: &[u8],
 ) -> Result<(ID3D11Texture2D, ID3D11ShaderResourceView), RendererError> {
-    let byte_len = image
-        .stride()
-        .checked_mul(image.height())
+    validate_pixel_layout(width, height, stride, pixels)?;
+    let byte_len = stride
+        .checked_mul(height)
         .ok_or(RendererError::ImageTextureCreation { hresult: 0 })?;
     let subresource = D3D11_SUBRESOURCE_DATA {
-        pSysMem: image.rgba8().as_ptr().cast(),
-        SysMemPitch: image.stride(),
+        pSysMem: pixels.as_ptr().cast(),
+        SysMemPitch: stride,
         SysMemSlicePitch: byte_len,
     };
     let description = D3D11_TEXTURE2D_DESC {
-        Width: image.width(),
-        Height: image.height(),
+        Width: width,
+        Height: height,
         MipLevels: 1,
         ArraySize: 1,
         Format: DXGI_FORMAT_R8G8B8A8_UNORM,
@@ -601,7 +737,7 @@ fn create_image_texture(
             Count: 1,
             Quality: 0,
         },
-        Usage: D3D11_USAGE_IMMUTABLE,
+        Usage: D3D11_USAGE_DEFAULT,
         BindFlags: D3D11_BIND_SHADER_RESOURCE.0 as u32,
         CPUAccessFlags: 0,
         MiscFlags: 0,
@@ -848,7 +984,9 @@ mod tests {
     use std::{thread, time::Duration};
 
     use wallpaper_desktop::discover_desktop_host;
-    use wallpaper_media::{DecodedImage, decode_image};
+    use wallpaper_media::{
+        DecodedImage, DecodedVideoFrame, VideoReadEvent, VideoSource, decode_image,
+    };
     use windows::Win32::Graphics::Direct3D11::{
         D3D11_CPU_ACCESS_READ, D3D11_MAP_READ, D3D11_MAPPED_SUBRESOURCE, D3D11_TEXTURE2D_DESC,
         D3D11_USAGE_STAGING, ID3D11Buffer, ID3D11DepthStencilView, ID3D11PixelShader,
@@ -1234,6 +1372,111 @@ mod tests {
             .join("tests")
             .join("fixtures")
             .join(name)
+    }
+
+    fn next_video_frame(source: &mut VideoSource, label: &str) -> DecodedVideoFrame {
+        loop {
+            let event = source
+                .read_next()
+                .unwrap_or_else(|error| panic!("{label} frame should decode: {error:?}"));
+            match event {
+                VideoReadEvent::Frame(frame) => return frame,
+                VideoReadEvent::StreamTick { .. } => continue,
+                VideoReadEvent::EndOfStream => panic!("fixture should contain another frame"),
+            }
+        }
+    }
+
+    #[test]
+    fn video_frames_reuse_texture_and_swapchain_until_dimensions_change() {
+        let host = discover_desktop_host().expect("an interactive Windows shell is required");
+        let window = host
+            .attach_wallpaper_window()
+            .expect("the wallpaper child should attach to the desktop host");
+        let device = D3d11Device::create_hardware().expect("hardware D3D11 is required");
+
+        let mut same_size_source = VideoSource::open(fixture_path("distinct-h264.mp4"))
+            .expect("the 64x48 distinct-color H.264 fixture should open");
+        let first = next_video_frame(&mut same_size_source, "first");
+        let second = next_video_frame(&mut same_size_source, "second");
+        assert_ne!(
+            first.rgba8(),
+            second.rgba8(),
+            "fixture frames should differ"
+        );
+        let resized = next_video_frame(
+            &mut VideoSource::open(fixture_path("short-h264-80x64.mp4"))
+                .expect("the 80x64 H.264 fixture should open"),
+            "resized",
+        );
+        assert_eq!((first.width(), first.height()), (64, 48));
+        assert_eq!((resized.width(), resized.height()), (80, 64));
+
+        let mut presenter =
+            D3d11ImagePresenter::new_with_video_frame(&device, window.raw_handle(), &first)
+                .expect("the first frame should initialize the existing child presenter");
+        let swap_chain = presenter.swap_chain.as_raw();
+        let same_size_texture = presenter.image_texture.as_raw();
+        let center = (presenter.width / 2, presenter.height / 2);
+        let placement_mode = PlacementMode::Fit;
+        let transform = ImageTransform::new(
+            (0.0, 0.0),
+            (0.9, 0.9),
+            5.0,
+            (0.5, 0.5),
+            crate::NormalizedCrop::default(),
+        )
+        .expect("video transform should be valid");
+        let color_adjustments =
+            ColorAdjustments::new(1.2, 1.0, 1.0, 1.0, 1.0, 0.0, (1.0, 1.0, 1.0))
+                .expect("video color adjustments should be valid");
+        presenter
+            .set_placement_mode(placement_mode)
+            .expect("placement mode should update");
+        presenter
+            .set_transform(transform)
+            .expect("transform should update");
+        presenter
+            .set_color_adjustments(color_adjustments)
+            .expect("color adjustments should update");
+        let first_output = read_render_target_pixel(&presenter, center.0, center.1);
+        let frames_before_update = presenter.presented_frames();
+
+        presenter
+            .set_video_frame(&second)
+            .expect("the next frame should update the existing texture");
+        let second_output = read_render_target_pixel(&presenter, center.0, center.1);
+        assert_ne!(
+            first_output, second_output,
+            "the new frame should change GPU output"
+        );
+        assert_eq!(presenter.image_texture.as_raw(), same_size_texture);
+        assert_eq!(presenter.swap_chain.as_raw(), swap_chain);
+        assert_eq!(presenter.placement_mode, placement_mode);
+        assert_eq!(presenter.transform, transform);
+        assert_eq!(presenter.color_adjustments(), color_adjustments);
+        assert_eq!(presenter.presented_frames(), frames_before_update + 1);
+
+        presenter
+            .set_video_frame(&resized)
+            .expect("a dimension change should replace only source-sized resources");
+        assert_ne!(presenter.image_texture.as_raw(), same_size_texture);
+        assert_eq!(presenter.swap_chain.as_raw(), swap_chain);
+        assert_eq!(presenter.placement_mode, placement_mode);
+        assert_eq!(presenter.transform, transform);
+        assert_eq!(presenter.color_adjustments(), color_adjustments);
+        assert_eq!(presenter.source_dimensions.width(), 80);
+        assert_eq!(presenter.source_dimensions.height(), 64);
+        assert_eq!(presenter.presented_frames(), frames_before_update + 2);
+
+        let attached_hwnd = window.raw_handle();
+        drop(presenter);
+        assert_presenter_resources_are_unbound(&device);
+        drop(window);
+        assert!(
+            !unsafe { IsWindow(Some(hwnd_from_raw(attached_hwnd))) }.as_bool(),
+            "the video presenter should release before its owned child window"
+        );
     }
 
     #[test]

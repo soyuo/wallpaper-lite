@@ -1,10 +1,10 @@
-# Static image presentation
+# D3D11 image and video-frame presentation
 
 ## Data and ownership
 
-`wallpaper-media::DecodedImage` supplies tightly packed, top-to-bottom RGBA8
-pixels. `wallpaper-renderer::D3d11ImagePresenter` uploads those pixels into an
-immutable D3D11 texture and samples it in a rectangle shader. The renderer
+`wallpaper-media::DecodedImage` and `DecodedVideoFrame` supply top-to-bottom
+RGBA8 pixels. `wallpaper-renderer::D3d11ImagePresenter` uploads them into a
+default-usage D3D11 texture and samples it in a rectangle shader. The renderer
 exposes validated physical-pixel dimensions and four placement modes:
 `Cover` preserves aspect ratio and crops the source, `Fit` preserves aspect
 ratio and clears unused output to black, `Stretch` fills the output and may
@@ -14,6 +14,22 @@ default to `Cover`, preserving aspect ratio unless a caller explicitly selects
 `Stretch`. Renderer callers can choose a mode with `new_with_placement` or
 `set_placement_mode`, and supply transforms with `new_with_transform` or
 `set_transform`. UI selection and persistent settings are later work.
+
+Video playback uses `new_with_video_frame` for the first decoded frame and
+`set_video_frame` for subsequent RGBA8 frames. Equal-sized frames update the
+existing texture with `UpdateSubresource`; a dimension change creates a new
+source texture/view and placement buffer while retaining the HWND swapchain and
+shader pipeline. Each frame call presents once, with no per-frame swapchain,
+window, or background redraw loop. Media Foundation output is normalized to
+RGBA8, so source decoder-format changes do not change the renderer texture
+format.
+
+The Windows GPU update test decodes `distinct-h264.mp4` (red then blue at
+64×48) and `short-h264-80x64.mp4`. It verifies a same-size frame changes the
+render-target pixel without replacing the source texture or swapchain, then
+checks that the larger frame replaces source-sized resources while preserving
+the swapchain and current placement, transform, and color settings. Presenter
+drop is checked for unbound D3D11 references before the child window is closed.
 
 `ImageTransform` adds runtime-only position, scale, rotation, anchor, and crop
 parameters. Position is a physical-pixel translation applied after the

@@ -22,7 +22,7 @@ Width and height must be nonzero, no axis may exceed 16,384 pixels, and the tota
 
 The Windows integration fixture decodes all 30 timestamped frames through both software and D3D11-device-backed paths. Hardware selection remains a Media Foundation policy decision; the API reports `HardwarePreferred` when configured and never claims hardware-only decoding.
 
-Windows-target fixtures under `crates/media/tests/fixtures` include a one-second 64×48 H.264 MP4 at 30 FPS, an audio-only MP4, and a non-H.264 MPEG-4 MP4. They were generated with FFmpeg from deterministic `testsrc2` and `sine` sources.
+Windows-target fixtures under `crates/media/tests/fixtures` include a one-second 64×48 H.264 MP4 at 30 FPS, a red-to-blue 64×48 H.264 clip for renderer update checks, an 80×64 H.264 clip for texture-dimension changes, an audio-only MP4, and a non-H.264 MPEG-4 MP4. They were generated with FFmpeg from deterministic color, `testsrc2`, and `sine` sources.
 
 ## References
 
