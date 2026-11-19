@@ -5,18 +5,22 @@ use std::{
 };
 
 use wallpaper_desktop::{AttachedDesktopWindow, discover_desktop_host};
-use wallpaper_media::DecodedImage;
+use wallpaper_media::{DecodedImage, DecodedVideoFrame};
 use wallpaper_renderer::{D3d11Device, D3d11ImagePresenter, RendererError};
 
 const INITIAL_RETRY_DELAY: Duration = Duration::from_millis(100);
 const MAX_RETRY_DELAY: Duration = Duration::from_secs(1);
 const RESIZE_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
-enum RecoveryCommand {
+pub(crate) enum RecoveryCommand {
     ExplorerExited,
     ExplorerRestarted,
     PresentImage {
         image: DecodedImage,
+        response: Sender<Result<(), RendererError>>,
+    },
+    PresentVideoFrame {
+        frame: DecodedVideoFrame,
         response: Sender<Result<(), RendererError>>,
     },
     Shutdown,
@@ -27,7 +31,29 @@ pub(crate) struct DesktopRecoveryWorker {
     thread: Option<JoinHandle<()>>,
 }
 
+#[derive(Clone)]
+pub(crate) struct RecoveryFrameSender(Sender<RecoveryCommand>);
+
+impl RecoveryFrameSender {
+    pub(crate) fn present_video_frame(
+        &self,
+        frame: DecodedVideoFrame,
+    ) -> Result<(), RendererError> {
+        let (response, result) = mpsc::channel();
+        self.0
+            .send(RecoveryCommand::PresentVideoFrame { frame, response })
+            .map_err(|_| RendererError::WindowUnavailable)?;
+        result
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap_or(Err(RendererError::WindowUnavailable))
+    }
+}
+
 impl DesktopRecoveryWorker {
+    pub(crate) fn frame_sender(&self) -> RecoveryFrameSender {
+        RecoveryFrameSender(self.commands.clone())
+    }
+
     pub(crate) fn start(
         window: AttachedDesktopWindow,
         device: D3d11Device,
@@ -87,6 +113,7 @@ fn recovery_loop(
     let mut window = Some(initial_window);
     let mut presenter = None;
     let mut current_image: Option<DecodedImage> = None;
+    let mut current_video_frame: Option<DecodedVideoFrame> = None;
     let mut recovery_pending = false;
     let mut retry_delay = INITIAL_RETRY_DELAY;
     let mut next_retry: Option<Instant> = None;
@@ -133,6 +160,7 @@ fn recovery_loop(
                         Ok(next_presenter) => {
                             presenter = Some(next_presenter);
                             current_image = Some(image);
+                            current_video_frame = None;
                             Ok(())
                         }
                         Err(error) => Err(error),
@@ -141,6 +169,25 @@ fn recovery_loop(
                     current_image = Some(image);
                     Ok(())
                 };
+                let _ = response.send(result);
+            }
+            Some(RecoveryCommand::PresentVideoFrame { frame, response }) => {
+                let result = if let Some(active_presenter) = presenter.as_mut() {
+                    active_presenter.set_video_frame(&frame)
+                } else if let Some(attached_window) = window.as_ref() {
+                    D3d11ImagePresenter::new_with_video_frame(
+                        &device,
+                        attached_window.raw_handle(),
+                        &frame,
+                    )
+                    .map(|next_presenter| presenter = Some(next_presenter))
+                } else {
+                    Err(RendererError::WindowUnavailable)
+                };
+                if result.is_ok() {
+                    current_image = None;
+                    current_video_frame = Some(frame);
+                }
                 let _ = response.send(result);
             }
             Some(RecoveryCommand::Shutdown) => break,
@@ -164,14 +211,23 @@ fn recovery_loop(
                             host_kind = host_kind.as_str(),
                             "Wallpaper window reattached to the current shell"
                         );
-                        if let (Some(image), Some(attached_window)) =
-                            (current_image.as_ref(), window.as_ref())
-                        {
-                            match D3d11ImagePresenter::new(
-                                &device,
-                                attached_window.raw_handle(),
-                                image,
-                            ) {
+                        if let Some(attached_window) = window.as_ref() {
+                            let restored = if let Some(frame) = current_video_frame.as_ref() {
+                                D3d11ImagePresenter::new_with_video_frame(
+                                    &device,
+                                    attached_window.raw_handle(),
+                                    frame,
+                                )
+                            } else if let Some(image) = current_image.as_ref() {
+                                D3d11ImagePresenter::new(
+                                    &device,
+                                    attached_window.raw_handle(),
+                                    image,
+                                )
+                            } else {
+                                continue;
+                            };
+                            match restored {
                                 Ok(next_presenter) => {
                                     presenter = Some(next_presenter);
                                     tracing::info!(

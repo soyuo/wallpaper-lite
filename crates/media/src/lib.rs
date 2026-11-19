@@ -69,6 +69,8 @@ pub enum MediaError {
     VideoSampleBufferAccess { hresult: i32 },
     VideoFormatChanged,
     VideoDecoderReportedError,
+    InvalidVideoSeekPosition,
+    VideoSeekFailed { hresult: i32 },
     UnsupportedVideoPixelFormat,
     InvalidVideoSample,
     InvalidVideoTimestamp,
@@ -112,6 +114,8 @@ impl MediaError {
             | Self::VideoSampleBufferAccess { .. }
             | Self::VideoFormatChanged
             | Self::VideoDecoderReportedError
+            | Self::InvalidVideoSeekPosition
+            | Self::VideoSeekFailed { .. }
             | Self::UnsupportedVideoPixelFormat
             | Self::InvalidVideoSample
             | Self::InvalidVideoTimestamp
@@ -167,6 +171,12 @@ impl MediaError {
             Self::VideoFormatChanged => "stage=video_decode reason=unexpected_format_change".into(),
             Self::VideoDecoderReportedError => {
                 "stage=video_decode reason=reader_reported_error".into()
+            }
+            Self::InvalidVideoSeekPosition => {
+                "stage=video_seek reason=position_out_of_range".into()
+            }
+            Self::VideoSeekFailed { hresult } => {
+                format!("stage=video_seek hresult=0x{:08X}", hresult as u32)
             }
             Self::UnsupportedVideoPixelFormat => {
                 "stage=video_decode reason=unsupported_pixel_format".into()
@@ -357,6 +367,22 @@ impl VideoSource {
         }
         #[cfg(not(target_os = "windows"))]
         {
+            Err(MediaError::UnsupportedVideoPlatform)
+        }
+    }
+
+    /// Seeks the source reader in 100 ns media-time units and resets timestamp validation.
+    pub fn seek(&mut self, position_100ns: i64) -> Result<(), MediaError> {
+        if position_100ns < 0 || position_100ns > self.metadata.duration_100ns() {
+            return Err(MediaError::InvalidVideoSeekPosition);
+        }
+        #[cfg(target_os = "windows")]
+        {
+            video::seek(&mut self._platform, position_100ns)
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = position_100ns;
             Err(MediaError::UnsupportedVideoPlatform)
         }
     }

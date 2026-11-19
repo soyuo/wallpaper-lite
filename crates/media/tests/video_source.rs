@@ -146,6 +146,30 @@ fn decodes_timestamped_rgba_frames_in_presentation_order_and_reports_eos() {
 
 #[cfg(target_os = "windows")]
 #[test]
+fn seek_restarts_source_reader_and_rejects_positions_past_duration() {
+    let mut source = VideoSource::open(fixture("short-h264.mp4")).unwrap();
+    let duration = source.metadata().duration_100ns();
+    assert_eq!(
+        source.seek(duration + 1),
+        Err(MediaError::InvalidVideoSeekPosition)
+    );
+
+    while source.read_next().unwrap() != VideoReadEvent::EndOfStream {}
+    source.seek(0).unwrap();
+    loop {
+        match source.read_next().unwrap() {
+            VideoReadEvent::Frame(frame) => {
+                assert_eq!(frame.pts_100ns(), 0);
+                break;
+            }
+            VideoReadEvent::StreamTick { .. } => continue,
+            VideoReadEvent::EndOfStream => panic!("seeked source ended before returning a frame"),
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+#[test]
 fn d3d11_device_enables_dxva_preference_without_forcing_hardware_only_decode() {
     use windows::Win32::{
         Foundation::HMODULE,

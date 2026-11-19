@@ -8,8 +8,10 @@ use tracing_subscriber::filter::LevelFilter;
 use wallpaper_desktop::{ShellLifecycleEvent, ShellLifecycleMonitor};
 use wallpaper_media::{DecodedImage, MediaError, decode_image};
 
+mod playback;
 mod recovery;
 
+use playback::PlaybackWorker;
 use recovery::DesktopRecoveryWorker;
 
 const APP_LOG_DIRECTORY: &str = "com.soyuo.wallpaper-lite";
@@ -194,6 +196,7 @@ fn main() -> process::ExitCode {
         "Explorer lifecycle monitoring started"
     );
 
+    let media_device = graphics_device.device().clone();
     let mut desktop_recovery = match DesktopRecoveryWorker::start(wallpaper_window, graphics_device)
     {
         Ok(recovery) => recovery,
@@ -213,6 +216,24 @@ fn main() -> process::ExitCode {
         event = "desktop_recovery_started",
         "Desktop host recovery worker started"
     );
+    let (command_sender, command_receiver) = wallpaper_ipc::protocol::playback_command_channel();
+    let (mut playback_worker, playback_events) =
+        match PlaybackWorker::start(command_receiver, media_device, &desktop_recovery) {
+            Ok(worker) => worker,
+            Err(error) => {
+                tracing::error!(
+                    component = "media",
+                    event = "playback_worker_start_failed",
+                    error_kind = ?error.kind(),
+                    os_error_code = ?error.raw_os_error(),
+                    "Video playback worker could not start"
+                );
+                stop_desktop_recovery(&mut desktop_recovery);
+                drop(desktop_recovery);
+                drop(shell_lifecycle_monitor);
+                return process::ExitCode::FAILURE;
+            }
+        };
     if let Some(image) = initial_image {
         match desktop_recovery.present_image(image) {
             Ok(()) => tracing::info!(
@@ -243,15 +264,29 @@ fn main() -> process::ExitCode {
                 os_error_code = ?error.raw_os_error(),
                 "Wallpaper host runtime initialization failed"
             );
-            stop_desktop_recovery(&mut desktop_recovery);
-            drop(desktop_recovery);
+            drop(command_sender);
+            if !playback_worker.stop() {
+                tracing::error!(
+                    component = "media",
+                    event = "playback_worker_join_failed",
+                    "Playback worker is still using recovery resources; retaining them until process exit"
+                );
+                std::mem::forget(playback_worker);
+                std::mem::forget(desktop_recovery);
+            } else {
+                stop_desktop_recovery(&mut desktop_recovery);
+                drop(desktop_recovery);
+            }
             drop(shell_lifecycle_monitor);
             return process::ExitCode::FAILURE;
         }
     };
 
     let run_result = runtime.block_on(async {
-        let server = wallpaper_ipc::server::run();
+        let server = wallpaper_ipc::server::run_with_commands_and_events(
+            command_sender,
+            playback_events,
+        );
         tokio::pin!(server);
         let mut lifecycle_poll = tokio::time::interval(Duration::from_millis(100));
 
@@ -318,8 +353,20 @@ fn main() -> process::ExitCode {
             }
         }
     });
-    stop_desktop_recovery(&mut desktop_recovery);
-    drop(desktop_recovery);
+    if !playback_worker.stop() {
+        tracing::error!(
+            component = "media",
+            event = "playback_worker_join_failed",
+            "Playback worker is still using recovery resources; retaining them until process exit"
+        );
+        // A timed-out worker may still send frames, so keep its recovery channel and window alive
+        // until process termination rather than closing resources underneath it.
+        std::mem::forget(playback_worker);
+        std::mem::forget(desktop_recovery);
+    } else {
+        stop_desktop_recovery(&mut desktop_recovery);
+        drop(desktop_recovery);
+    }
     drop(shell_lifecycle_monitor);
 
     match run_result {

@@ -400,6 +400,23 @@ pub(super) fn read_next(handle: &mut VideoSourceHandle) -> Result<VideoReadEvent
     Err(MediaError::VideoDecoderReportedError)
 }
 
+pub(super) fn seek(handle: &mut VideoSourceHandle, position_100ns: i64) -> Result<(), MediaError> {
+    let position = PROPVARIANT::from(position_100ns);
+    let time_format = GUID::zeroed();
+    unsafe {
+        handle
+            .reader
+            .SetCurrentPosition(&time_format, &position)
+            .map_err(|error| MediaError::VideoSeekFailed {
+                hresult: error.code().0,
+            })?;
+    }
+    handle.last_pts_100ns = None;
+    handle.pending_end_of_stream = false;
+    handle.ended = false;
+    Ok(())
+}
+
 fn validate_current_output_type(handle: &VideoSourceHandle) -> Result<(), MediaError> {
     let stream = MF_SOURCE_READER_FIRST_VIDEO_STREAM.0 as u32;
     let media_type = unsafe { handle.reader.GetCurrentMediaType(stream) }.map_err(|error| {
