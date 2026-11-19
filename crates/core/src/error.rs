@@ -16,6 +16,7 @@ pub enum ErrorCode {
     TransportError,
     WindowsInitializationFailed,
     GraphicsInitializationFailed,
+    DesktopHostUnavailable,
     Internal,
 }
 
@@ -34,6 +35,7 @@ impl ErrorCode {
             Self::TransportError => "transport_error",
             Self::WindowsInitializationFailed => "windows_initialization_failed",
             Self::GraphicsInitializationFailed => "graphics_initialization_failed",
+            Self::DesktopHostUnavailable => "desktop_host_unavailable",
             Self::Internal => "internal",
         }
     }

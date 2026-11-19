@@ -88,6 +88,26 @@ fn main() -> process::ExitCode {
         "Windows desktop process initialized"
     );
 
+    let desktop_host = match wallpaper_desktop::discover_desktop_host() {
+        Ok(desktop_host) => desktop_host,
+        Err(error) => {
+            tracing::error!(
+                component = "desktop",
+                event = "desktop_host_discovery_failed",
+                error_code = error.to_app_error().code.as_str(),
+                diagnostic = %error.diagnostic_summary(),
+                "Windows desktop host discovery failed"
+            );
+            return process::ExitCode::FAILURE;
+        }
+    };
+    tracing::info!(
+        component = "desktop",
+        event = "desktop_host_discovered",
+        host_kind = desktop_host.kind().as_str(),
+        "Windows desktop host discovered"
+    );
+
     let graphics_device = match wallpaper_renderer::D3d11Device::create_hardware() {
         Ok(device) => device,
         Err(error) => {
