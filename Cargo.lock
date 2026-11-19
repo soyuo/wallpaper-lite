@@ -3780,6 +3780,7 @@ dependencies = [
  "wallpaper-core",
  "wallpaper-desktop",
  "wallpaper-ipc",
+ "wallpaper-media",
  "wallpaper-renderer",
 ]
 
@@ -3808,6 +3809,8 @@ name = "wallpaper-renderer"
 version = "0.1.0"
 dependencies = [
  "wallpaper-core",
+ "wallpaper-desktop",
+ "wallpaper-media",
  "windows",
 ]
 

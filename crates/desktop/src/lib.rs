@@ -29,6 +29,7 @@ pub enum DesktopError {
     WindowClassRegistrationFailed { win32_error: u32 },
     WindowCreationFailed { hresult: i32 },
     WindowPositionFailed { hresult: i32 },
+    DesktopBackgroundLayerUnavailable,
     DesktopWindowThreadFailed { os_error_code: Option<i32> },
     DesktopWindowDpiContextUnavailable,
     DesktopWindowDpiContextFailed,
@@ -100,7 +101,7 @@ impl DesktopHost {
         }
     }
 
-    /// Create an owned child window at the bottom of the desktop icon host's child z-order.
+    /// Create an owned child window in the validated shell background layer below desktop icons.
     pub fn attach_wallpaper_window(self) -> Result<AttachedDesktopWindow, DesktopError> {
         #[cfg(target_os = "windows")]
         {
@@ -145,6 +146,7 @@ impl DesktopError {
             | Self::WindowClassRegistrationFailed { .. }
             | Self::WindowCreationFailed { .. }
             | Self::WindowPositionFailed { .. }
+            | Self::DesktopBackgroundLayerUnavailable
             | Self::DesktopWindowThreadFailed { .. }
             | Self::DesktopWindowDpiContextUnavailable
             | Self::DesktopWindowDpiContextFailed
@@ -193,6 +195,9 @@ impl DesktopError {
                 "stage=desktop_window_attach reason=position_window_failed hresult=0x{:08X}",
                 hresult as u32
             ),
+            Self::DesktopBackgroundLayerUnavailable => {
+                "stage=desktop_window_attach reason=background_layer_unavailable".into()
+            }
             Self::DesktopWindowThreadFailed { os_error_code } => format!(
                 "stage=desktop_window_attach reason=window_thread_failed os_error_code={os_error_code:?}"
             ),

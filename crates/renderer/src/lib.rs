@@ -1,6 +1,12 @@
-//! Direct3D device ownership. Rendering pipelines are implemented in later phases.
+//! Direct3D device ownership and static-image presentation.
 
 use wallpaper_core::error::{AppError, ErrorCode};
+
+#[cfg(target_os = "windows")]
+mod image;
+
+#[cfg(target_os = "windows")]
+pub use image::D3d11ImagePresenter;
 
 /// Failure while creating the rendering device.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -9,6 +15,19 @@ pub enum RendererError {
     DeviceCreation { hresult: i32 },
     MissingDeviceInterface,
     MissingImmediateContext,
+    WindowUnavailable,
+    WindowSizeUnavailable,
+    SwapChainCreation { hresult: i32 },
+    SwapChainResize { hresult: i32 },
+    BackBufferAccess { hresult: i32 },
+    RenderTargetCreation { hresult: i32 },
+    ImageTextureCreation { hresult: i32 },
+    ImageViewCreation { hresult: i32 },
+    ShaderCompilation { hresult: i32 },
+    ShaderCreation { hresult: i32 },
+    SamplerCreation { hresult: i32 },
+    RasterizerCreation { hresult: i32 },
+    Present { hresult: i32 },
 }
 
 impl RendererError {
@@ -20,7 +39,7 @@ impl RendererError {
             ),
             _ => AppError::new(
                 ErrorCode::GraphicsInitializationFailed,
-                "The graphics device could not be initialized.",
+                "The graphics renderer could not initialize or present the image.",
             ),
         }
     }
@@ -38,8 +57,27 @@ impl RendererError {
             Self::MissingImmediateContext => {
                 "stage=d3d11_create_device detail=missing_immediate_context".into()
             }
+            Self::WindowUnavailable => "stage=d3d11_present detail=window_unavailable".into(),
+            Self::WindowSizeUnavailable => {
+                "stage=d3d11_present detail=window_size_unavailable".into()
+            }
+            Self::SwapChainCreation { hresult } => diagnostic("swap_chain_create", hresult),
+            Self::SwapChainResize { hresult } => diagnostic("swap_chain_resize", hresult),
+            Self::BackBufferAccess { hresult } => diagnostic("back_buffer_access", hresult),
+            Self::RenderTargetCreation { hresult } => diagnostic("render_target_create", hresult),
+            Self::ImageTextureCreation { hresult } => diagnostic("image_texture_create", hresult),
+            Self::ImageViewCreation { hresult } => diagnostic("image_view_create", hresult),
+            Self::ShaderCompilation { hresult } => diagnostic("shader_compile", hresult),
+            Self::ShaderCreation { hresult } => diagnostic("shader_create", hresult),
+            Self::SamplerCreation { hresult } => diagnostic("sampler_create", hresult),
+            Self::RasterizerCreation { hresult } => diagnostic("rasterizer_create", hresult),
+            Self::Present { hresult } => diagnostic("present", hresult),
         }
     }
+}
+
+fn diagnostic(stage: &str, hresult: i32) -> String {
+    format!("stage=d3d11_{stage} hresult=0x{:08X}", hresult as u32)
 }
 
 /// Owns the D3D11 device and immediate context through their COM lifetimes.
@@ -49,6 +87,38 @@ pub struct D3d11Device {
     #[cfg(target_os = "windows")]
     immediate_context: windows::Win32::Graphics::Direct3D11::ID3D11DeviceContext,
     feature_level: u32,
+}
+
+/// D3D11 static-image presenter is implemented on Windows only.
+#[cfg(not(target_os = "windows"))]
+pub struct D3d11ImagePresenter<'a> {
+    _device: std::marker::PhantomData<&'a D3d11Device>,
+}
+
+#[cfg(not(target_os = "windows"))]
+impl<'a> D3d11ImagePresenter<'a> {
+    pub fn new(
+        _device: &'a D3d11Device,
+        _window_handle: isize,
+        _image: &wallpaper_media::DecodedImage,
+    ) -> Result<Self, RendererError> {
+        Err(RendererError::UnsupportedPlatform)
+    }
+
+    pub fn set_image(
+        &mut self,
+        _image: &wallpaper_media::DecodedImage,
+    ) -> Result<(), RendererError> {
+        Err(RendererError::UnsupportedPlatform)
+    }
+
+    pub fn refresh_if_resized(&mut self) -> Result<bool, RendererError> {
+        Err(RendererError::UnsupportedPlatform)
+    }
+
+    pub const fn presented_frames(&self) -> u64 {
+        0
+    }
 }
 
 impl D3d11Device {

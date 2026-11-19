@@ -1,4 +1,4 @@
-use std::{env, fs, path::PathBuf, process, sync::mpsc::TryRecvError, time::Duration};
+use std::{env, ffi::OsStr, fs, path::PathBuf, process, sync::mpsc::TryRecvError, time::Duration};
 
 use tracing_appender::{
     non_blocking::WorkerGuard,
@@ -6,6 +6,7 @@ use tracing_appender::{
 };
 use tracing_subscriber::filter::LevelFilter;
 use wallpaper_desktop::{ShellLifecycleEvent, ShellLifecycleMonitor};
+use wallpaper_media::{DecodedImage, MediaError, decode_image};
 
 mod recovery;
 
@@ -77,6 +78,28 @@ fn main() -> process::ExitCode {
         "Wallpaper host starting"
     );
 
+    let initial_image = match load_startup_image() {
+        Ok(image) => image,
+        Err(StartupImageError::Arguments) => {
+            tracing::error!(
+                component = "host",
+                event = "startup_arguments_invalid",
+                "Expected optional arguments in the form --image <path>"
+            );
+            return process::ExitCode::FAILURE;
+        }
+        Err(StartupImageError::Decode(error)) => {
+            tracing::error!(
+                component = "media",
+                event = "startup_image_decode_failed",
+                error_code = error.to_app_error().code.as_str(),
+                diagnostic = %error.diagnostic_summary(),
+                "Startup image could not be decoded"
+            );
+            return process::ExitCode::FAILURE;
+        }
+    };
+
     if let Err(error) = wallpaper_desktop::initialize_windows() {
         tracing::error!(
             component = "desktop",
@@ -132,9 +155,6 @@ fn main() -> process::ExitCode {
         feature_level = format!("0x{:04X}", graphics_device.feature_level()),
         "D3D11 device and immediate context initialized"
     );
-    // Keep the device and immediate context alive for the host process lifetime.
-    let _graphics_device = graphics_device;
-
     let wallpaper_window = match desktop_host.attach_wallpaper_window() {
         Ok(window) => window,
         Err(error) => {
@@ -151,7 +171,8 @@ fn main() -> process::ExitCode {
     tracing::info!(
         component = "desktop",
         event = "wallpaper_window_attached",
-        parent_kind = desktop_host.kind().as_str(),
+        host_kind = desktop_host.kind().as_str(),
+        wallpaper_layer_kind = "workerw",
         "Wallpaper window attached below desktop icons"
     );
     let shell_lifecycle_monitor = match ShellLifecycleMonitor::start(desktop_host) {
@@ -173,7 +194,8 @@ fn main() -> process::ExitCode {
         "Explorer lifecycle monitoring started"
     );
 
-    let mut desktop_recovery = match DesktopRecoveryWorker::start(wallpaper_window) {
+    let mut desktop_recovery = match DesktopRecoveryWorker::start(wallpaper_window, graphics_device)
+    {
         Ok(recovery) => recovery,
         Err(error) => {
             tracing::error!(
@@ -191,6 +213,22 @@ fn main() -> process::ExitCode {
         event = "desktop_recovery_started",
         "Desktop host recovery worker started"
     );
+    if let Some(image) = initial_image {
+        match desktop_recovery.present_image(image) {
+            Ok(()) => tracing::info!(
+                component = "renderer",
+                event = "wallpaper_image_presented",
+                "Startup image presented in the desktop child"
+            ),
+            Err(error) => tracing::error!(
+                component = "renderer",
+                event = "wallpaper_image_presentation_failed",
+                error_code = error.to_app_error().code.as_str(),
+                diagnostic = %error.diagnostic_summary(),
+                "Startup image could not be presented"
+            ),
+        }
+    }
 
     let runtime = match tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -308,4 +346,29 @@ fn stop_desktop_recovery(recovery: &mut DesktopRecoveryWorker) {
             "Desktop recovery worker did not stop cleanly"
         );
     }
+}
+
+enum StartupImageError {
+    Arguments,
+    Decode(MediaError),
+}
+
+fn load_startup_image() -> Result<Option<DecodedImage>, StartupImageError> {
+    let mut arguments = env::args_os().skip(1);
+    let Some(option) = arguments.next() else {
+        return Ok(None);
+    };
+    if option != OsStr::new("--image") {
+        return Err(StartupImageError::Arguments);
+    }
+    let Some(path) = arguments.next() else {
+        return Err(StartupImageError::Arguments);
+    };
+    if arguments.next().is_some() {
+        return Err(StartupImageError::Arguments);
+    }
+
+    decode_image(PathBuf::from(path))
+        .map(Some)
+        .map_err(StartupImageError::Decode)
 }

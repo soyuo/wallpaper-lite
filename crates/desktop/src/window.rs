@@ -24,7 +24,7 @@ use windows::{
                 RegisterClassW, SWP_NOACTIVATE, SWP_SHOWWINDOW, SetWindowPos, TranslateMessage,
                 WINDOW_EX_STYLE, WINDOW_STYLE, WM_CLOSE, WM_DESTROY, WM_ERASEBKGND,
                 WM_MOUSEACTIVATE, WM_PAINT, WM_QUIT, WNDCLASSW, WS_CHILD, WS_CLIPSIBLINGS,
-                WS_EX_NOACTIVATE, WS_EX_TRANSPARENT,
+                WS_EX_NOACTIVATE,
             },
         },
     },
@@ -100,11 +100,11 @@ impl AttachedDesktopWindow {
         let mut process_id = 0;
         unsafe { GetWindowThreadProcessId(hwnd, Some(&mut process_id)) };
 
-        if parent != hwnd_from_raw(self.parent.raw_handle())
-            || process_id != unsafe { GetCurrentProcessId() }
-        {
+        if process_id != unsafe { GetCurrentProcessId() } {
             return Err(DesktopError::WallpaperWindowUnavailable);
         }
+
+        crate::shell::validate_wallpaper_layer(self.parent, parent.0 as isize)?;
 
         Ok(())
     }
@@ -169,7 +169,7 @@ fn create_and_attach_window(parent: DesktopHost) -> Result<HWND, DesktopError> {
     parent.validate_current()?;
     register_window_class()?;
 
-    let parent_hwnd = hwnd_from_raw(parent.raw_handle());
+    let parent_hwnd = crate::shell::wallpaper_layer(parent)?;
     let previous_dpi_context = set_parent_dpi_context(parent_hwnd)?;
     let result = create_positioned_window(parent, parent_hwnd);
     let restore_result = restore_dpi_context(previous_dpi_context);
@@ -187,6 +187,7 @@ fn create_and_attach_window(parent: DesktopHost) -> Result<HWND, DesktopError> {
 }
 
 fn create_positioned_window(parent: DesktopHost, parent_hwnd: HWND) -> Result<HWND, DesktopError> {
+    crate::shell::validate_wallpaper_layer(parent, parent_hwnd.0 as isize)?;
     let mut bounds = RECT::default();
     unsafe { GetClientRect(parent_hwnd, &mut bounds) }.map_err(|error| {
         DesktopError::WindowPositionFailed {
@@ -206,7 +207,7 @@ fn create_positioned_window(parent: DesktopHost, parent_hwnd: HWND) -> Result<HW
     })?;
     let hwnd = unsafe {
         CreateWindowExW(
-            WINDOW_EX_STYLE(WS_EX_NOACTIVATE.0 | WS_EX_TRANSPARENT.0),
+            WINDOW_EX_STYLE(WS_EX_NOACTIVATE.0),
             WINDOW_CLASS_NAME,
             w!(""),
             WINDOW_STYLE(WS_CHILD.0 | WS_CLIPSIBLINGS.0),
@@ -224,7 +225,7 @@ fn create_positioned_window(parent: DesktopHost, parent_hwnd: HWND) -> Result<HW
         hresult: error.code().0,
     })?;
 
-    if let Err(error) = parent.validate_current() {
+    if let Err(error) = crate::shell::validate_wallpaper_layer(parent, parent_hwnd.0 as isize) {
         unsafe {
             let _ = DestroyWindow(hwnd);
         }
@@ -250,7 +251,7 @@ fn create_positioned_window(parent: DesktopHost, parent_hwnd: HWND) -> Result<HW
         });
     }
 
-    if let Err(error) = parent.validate_current() {
+    if let Err(error) = crate::shell::validate_wallpaper_layer(parent, parent_hwnd.0 as isize) {
         unsafe {
             let _ = DestroyWindow(hwnd);
         }
@@ -364,7 +365,7 @@ fn hwnd_from_raw(raw_handle: isize) -> HWND {
 #[cfg(test)]
 mod tests {
     use windows::Win32::UI::WindowsAndMessaging::{
-        GW_HWNDNEXT, GetForegroundWindow, GetWindow, IsWindow,
+        GW_HWNDNEXT, GetForegroundWindow, GetParent, GetWindow, IsWindow,
     };
 
     use super::hwnd_from_raw;
@@ -380,10 +381,18 @@ mod tests {
                 .attach_wallpaper_window()
                 .expect("the wallpaper child should attach to the desktop host");
             let hwnd = hwnd_from_raw(window.raw_handle());
+            let layer = unsafe { GetParent(hwnd) }
+                .expect("the desktop child should have a parent background layer");
 
             window
                 .validate_current()
                 .expect("the attached window should remain current");
+            assert_eq!(
+                layer.0 as isize,
+                crate::shell::wallpaper_layer(host)
+                    .expect("the shell should expose its background layer")
+                    .0 as isize
+            );
             assert!(unsafe { GetWindow(hwnd, GW_HWNDNEXT) }.is_err());
             assert_eq!(unsafe { GetForegroundWindow() }, foreground_before);
 
