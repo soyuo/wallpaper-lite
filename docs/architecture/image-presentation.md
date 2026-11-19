@@ -37,6 +37,29 @@ reparents or destroys the window. `DesktopRecoveryWorker` retains
 replacing that owner. The worker also retains the decoded CPU image so it can
 restore presentation after Explorer recreates the child.
 
+## Color adjustments
+
+`ColorAdjustments` applies runtime-only GPU controls in linear sRGB, in this
+order: decode sRGB; multiply red/blue by the normalized temperature factors
+`1 + temperature * 0.1` and `1 - temperature * 0.1`, then multiply all channels
+by their RGB balance; apply brightness and contrast around linear value `0.18`;
+mix saturation around Rec. 709 luminance `(0.2126, 0.7152, 0.0722)`; apply gamma
+as `pow(channel, 1 / gamma)`; multiply by opacity; clamp and encode to sRGB.
+Brightness, contrast, saturation and each RGB balance accept `0..=4`; gamma
+accepts `0.1..=4`; opacity accepts `0..=1`; temperature accepts `-1..=1`.
+Non-finite or out-of-range input returns `InvalidColorAdjustments`. Neutral
+defaults are brightness/contrast/saturation/gamma/opacity/RGB balance `1`, and
+temperature `0`.
+
+The HWND swap chain uses `DXGI_ALPHA_MODE_IGNORE`, so the opacity control fades
+RGB toward black; it does not reveal the desktop beneath the child. Source PNG
+alpha is ignored consistently with that opaque presentation path. A future
+transparent composition path would be needed for true per-pixel blending. See
+[Microsoft's DXGI alpha mode reference](https://learn.microsoft.com/en-us/windows/win32/api/dxgi1_2/ne-dxgi1_2-dxgi_alpha_mode).
+Changing color controls presents one frame only after a changed value is
+successfully prepared; unchanged settings do not redraw, and a failed present
+leaves the prior settings active so the caller can retry.
+
 ## Invalidation and resize
 
 Construction, image replacement, placement-mode changes, and transform changes
@@ -76,6 +99,11 @@ translation, scale, rotation around a normalized anchor, normalized crop
 composition, and typed errors for invalid crop/transform values or
 unrepresentable geometry. The transform GPU smoke test checks one redraw per
 change and confirms the PNG source bytes remain unchanged after transformation.
+Color reference tests verify neutral exactness, each adjustment, opacity fading
+to black independent of ignored source alpha, and typed rejection of invalid
+values. The GPU color smoke test verifies runtime shader compilation, redraw
+after a changed setting only, retry after a failed update, and unchanged PNG
+source bytes.
 Windows test `placement_changes_present_once_and_reselecting_the_mode_stays_idle`
 checks that mode changes present one frame and selecting the current mode does
 not redraw. `presents_once_and_stays_idle_until_image_or_size_changes` checks
