@@ -2,8 +2,10 @@
 
 use wallpaper_core::error::{AppError, ErrorCode};
 
+mod color;
 mod placement;
 
+pub use color::ColorAdjustments;
 pub use placement::{
     ImagePlacement, ImageTransform, NormalizedCrop, PlacementDimensions, PlacementMode,
     PlacementPoint, PlacementRect, calculate_image_placement,
@@ -28,6 +30,7 @@ pub enum RendererError {
     InvalidPlacementDimensions,
     InvalidTransformParameters,
     InvalidCropBounds,
+    InvalidColorAdjustments,
     PlacementBufferCreation { hresult: i32 },
     SwapChainCreation { hresult: i32 },
     SwapChainResize { hresult: i32 },
@@ -80,6 +83,7 @@ impl RendererError {
                 "stage=image_transform detail=invalid_parameters".into()
             }
             Self::InvalidCropBounds => "stage=image_transform detail=invalid_crop_bounds".into(),
+            Self::InvalidColorAdjustments => "stage=image_color detail=invalid_adjustments".into(),
             Self::PlacementBufferCreation { hresult } => {
                 diagnostic("placement_buffer_create", hresult)
             }
@@ -146,6 +150,15 @@ impl<'a> D3d11ImagePresenter<'a> {
         Err(RendererError::UnsupportedPlatform)
     }
 
+    pub fn new_with_color_adjustments(
+        _device: &'a D3d11Device,
+        _window_handle: isize,
+        _image: &wallpaper_media::DecodedImage,
+        _color_adjustments: ColorAdjustments,
+    ) -> Result<Self, RendererError> {
+        Err(RendererError::UnsupportedPlatform)
+    }
+
     pub fn set_image(
         &mut self,
         _image: &wallpaper_media::DecodedImage,
@@ -168,12 +181,23 @@ impl<'a> D3d11ImagePresenter<'a> {
         Err(RendererError::UnsupportedPlatform)
     }
 
-    pub const fn transform(&self) -> ImageTransform {
+    pub fn set_color_adjustments(
+        &mut self,
+        _color_adjustments: ColorAdjustments,
+    ) -> Result<(), RendererError> {
+        Err(RendererError::UnsupportedPlatform)
+    }
+
+    pub fn transform(&self) -> ImageTransform {
         ImageTransform::default()
     }
 
     pub const fn placement_mode(&self) -> PlacementMode {
         PlacementMode::Cover
+    }
+
+    pub fn color_adjustments(&self) -> ColorAdjustments {
+        ColorAdjustments::default()
     }
 
     pub const fn presented_frames(&self) -> u64 {

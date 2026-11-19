@@ -32,8 +32,8 @@ use windows::{
 };
 
 use crate::{
-    D3d11Device, ImageTransform, PlacementDimensions, PlacementMode, RendererError,
-    calculate_transformed_image_placement,
+    ColorAdjustments, D3d11Device, ImageTransform, PlacementDimensions, PlacementMode,
+    RendererError, calculate_transformed_image_placement,
 };
 
 const VERTEX_SHADER: &str = r#"
@@ -48,6 +48,9 @@ cbuffer PlacementData : register(b0) {
     float4 destination_bottom_right;
     float4 destination_bottom_left;
     float4 source_uv_rect;
+    float4 color_controls;
+    float4 color_mix;
+    float4 color_balance;
 };
 
 VertexOutput vs_main(uint vertex_id : SV_VertexID) {
@@ -75,8 +78,53 @@ const PIXEL_SHADER: &str = r#"
 Texture2D source_image : register(t0);
 SamplerState image_sampler : register(s0);
 
+cbuffer ColorData : register(b0) {
+    float4 destination_top_left;
+    float4 destination_top_right;
+    float4 destination_bottom_right;
+    float4 destination_bottom_left;
+    float4 source_uv_rect;
+    float4 color_controls;
+    float4 color_mix;
+    float4 color_balance;
+};
+
+float3 srgb_to_linear(float3 color) {
+    float3 low = color / 12.92;
+    float3 high = pow(max((color + 0.055) / 1.055, 0.0), 2.4);
+    return lerp(low, high, step(0.04045, color));
+}
+
+float3 linear_to_srgb(float3 color) {
+    color = saturate(color);
+    float3 low = color * 12.92;
+    float3 high = 1.055 * pow(color, 1.0 / 2.4) - 0.055;
+    return saturate(lerp(low, high, step(0.0031308, color)));
+}
+
 float4 ps_main(float4 position : SV_POSITION, float2 uv : TEXCOORD0) : SV_TARGET {
-    return source_image.Sample(image_sampler, uv);
+    float4 sampled_color = source_image.Sample(image_sampler, uv);
+    if (all(color_controls == float4(1.0, 1.0, 1.0, 1.0))
+        && all(color_mix == float4(1.0, 0.0, 1.0, 1.0))
+        && color_balance.x == 1.0) {
+        return sampled_color;
+    }
+
+    float3 rgb = srgb_to_linear(sampled_color.rgb);
+    float warm = color_mix.y * 0.1;
+    rgb *= float3(
+        color_mix.z * (1.0 + warm),
+        color_mix.w,
+        color_balance.x * (1.0 - warm)
+    );
+    rgb *= color_controls.x;
+    rgb = (rgb - 0.18) * color_controls.y + 0.18;
+    rgb = saturate(rgb);
+    float luminance = dot(rgb, float3(0.2126, 0.7152, 0.0722));
+    rgb = saturate(lerp(luminance.xxx, rgb, color_controls.z));
+    rgb = pow(rgb, 1.0 / color_controls.w);
+    rgb *= color_mix.x;
+    return float4(linear_to_srgb(rgb), 1.0);
 }
 "#;
 
@@ -102,6 +150,7 @@ pub struct D3d11ImagePresenter<'a> {
     source_dimensions: PlacementDimensions,
     placement_mode: PlacementMode,
     transform: ImageTransform,
+    color_adjustments: ColorAdjustments,
     presented_frames: u64,
 }
 
@@ -137,6 +186,41 @@ impl<'a> D3d11ImagePresenter<'a> {
         image: &DecodedImage,
         placement_mode: PlacementMode,
         transform: ImageTransform,
+    ) -> Result<Self, RendererError> {
+        Self::new_with_settings(
+            device,
+            window_handle,
+            image,
+            placement_mode,
+            transform,
+            ColorAdjustments::default(),
+        )
+    }
+
+    /// Create a presenter with runtime color adjustments and neutral transform settings.
+    pub fn new_with_color_adjustments(
+        device: &'a D3d11Device,
+        window_handle: isize,
+        image: &DecodedImage,
+        color_adjustments: ColorAdjustments,
+    ) -> Result<Self, RendererError> {
+        Self::new_with_settings(
+            device,
+            window_handle,
+            image,
+            PlacementMode::Cover,
+            ImageTransform::default(),
+            color_adjustments,
+        )
+    }
+
+    fn new_with_settings(
+        device: &'a D3d11Device,
+        window_handle: isize,
+        image: &DecodedImage,
+        placement_mode: PlacementMode,
+        transform: ImageTransform,
+        color_adjustments: ColorAdjustments,
     ) -> Result<Self, RendererError> {
         let hwnd = hwnd_from_raw(window_handle);
         if !unsafe { IsWindow(Some(hwnd)) }.as_bool() {
@@ -202,6 +286,7 @@ impl<'a> D3d11ImagePresenter<'a> {
             output_dimensions,
             placement_mode,
             transform,
+            color_adjustments,
         )?;
         let vertex_shader = create_vertex_shader(device, VERTEX_SHADER)?;
         let pixel_shader = create_pixel_shader(device, PIXEL_SHADER)?;
@@ -225,6 +310,7 @@ impl<'a> D3d11ImagePresenter<'a> {
             source_dimensions,
             placement_mode,
             transform,
+            color_adjustments,
             presented_frames: 0,
         };
         presenter.create_render_target()?;
@@ -242,6 +328,7 @@ impl<'a> D3d11ImagePresenter<'a> {
             PlacementDimensions::new(self.width, self.height)?,
             self.placement_mode,
             self.transform,
+            self.color_adjustments,
         )?;
         self.unbind_resources();
         self.image_texture = texture;
@@ -265,6 +352,7 @@ impl<'a> D3d11ImagePresenter<'a> {
             PlacementDimensions::new(self.width, self.height)?,
             placement_mode,
             self.transform,
+            self.color_adjustments,
         )?;
         self.render_with_placement_buffer(&placement_buffer)?;
         self.placement_buffer = placement_buffer;
@@ -283,6 +371,7 @@ impl<'a> D3d11ImagePresenter<'a> {
             PlacementDimensions::new(self.width, self.height)?,
             self.placement_mode,
             transform,
+            self.color_adjustments,
         )?;
         self.render_with_placement_buffer(&placement_buffer)?;
         self.placement_buffer = placement_buffer;
@@ -296,6 +385,32 @@ impl<'a> D3d11ImagePresenter<'a> {
 
     pub const fn placement_mode(&self) -> PlacementMode {
         self.placement_mode
+    }
+
+    /// Apply runtime color parameters and present one frame only when they changed.
+    pub fn set_color_adjustments(
+        &mut self,
+        color_adjustments: ColorAdjustments,
+    ) -> Result<(), RendererError> {
+        if color_adjustments == self.color_adjustments {
+            return Ok(());
+        }
+        let placement_buffer = create_placement_buffer(
+            self.device,
+            self.source_dimensions,
+            PlacementDimensions::new(self.width, self.height)?,
+            self.placement_mode,
+            self.transform,
+            color_adjustments,
+        )?;
+        self.render_with_placement_buffer(&placement_buffer)?;
+        self.placement_buffer = placement_buffer;
+        self.color_adjustments = color_adjustments;
+        Ok(())
+    }
+
+    pub const fn color_adjustments(&self) -> ColorAdjustments {
+        self.color_adjustments
     }
 
     /// Resize swap-chain buffers and present only when the child client size changed.
@@ -313,6 +428,7 @@ impl<'a> D3d11ImagePresenter<'a> {
             PlacementDimensions::new(width, height)?,
             self.placement_mode,
             self.transform,
+            self.color_adjustments,
         )?;
 
         unsafe {
@@ -410,11 +526,13 @@ impl<'a> D3d11ImagePresenter<'a> {
             context.VSSetShader(&self.vertex_shader, None);
             context.VSSetConstantBuffers(0, Some(&placement_buffers));
             context.PSSetShader(&self.pixel_shader, None);
+            context.PSSetConstantBuffers(0, Some(&placement_buffers));
             context.PSSetShaderResources(0, Some(&image_views));
             context.PSSetSamplers(0, Some(&samplers));
             context.Draw(6, 0);
             context.PSSetShaderResources(0, Some(&[None]));
             context.VSSetConstantBuffers(0, Some(&[None]));
+            context.PSSetConstantBuffers(0, Some(&[None]));
             context.OMSetRenderTargets(None, None::<&ID3D11DepthStencilView>);
         }
 
@@ -435,6 +553,9 @@ impl<'a> D3d11ImagePresenter<'a> {
             self.device
                 .immediate_context()
                 .VSSetConstantBuffers(0, Some(&[None]));
+            self.device
+                .immediate_context()
+                .PSSetConstantBuffers(0, Some(&[None]));
             self.device
                 .immediate_context()
                 .OMSetRenderTargets(None, None::<&ID3D11DepthStencilView>);
@@ -506,6 +627,9 @@ struct PlacementConstants {
     destination_bottom_right: [f32; 4],
     destination_bottom_left: [f32; 4],
     source_uv: [f32; 4],
+    color_controls: [f32; 4],
+    color_mix: [f32; 4],
+    color_balance: [f32; 4],
 }
 
 fn create_placement_buffer(
@@ -514,6 +638,7 @@ fn create_placement_buffer(
     output: PlacementDimensions,
     mode: PlacementMode,
     transform: ImageTransform,
+    color_adjustments: ColorAdjustments,
 ) -> Result<ID3D11Buffer, RendererError> {
     let placement = calculate_transformed_image_placement(source, output, mode, transform)?;
     let corners = placement.destination_corners();
@@ -535,6 +660,19 @@ fn create_placement_buffer(
             source_uv.right(),
             source_uv.bottom(),
         ],
+        color_controls: [
+            color_adjustments.brightness(),
+            color_adjustments.contrast(),
+            color_adjustments.saturation(),
+            color_adjustments.gamma(),
+        ],
+        color_mix: [
+            color_adjustments.opacity(),
+            color_adjustments.temperature(),
+            color_adjustments.rgb_balance().0,
+            color_adjustments.rgb_balance().1,
+        ],
+        color_balance: [color_adjustments.rgb_balance().2, 0.0, 0.0, 0.0],
     };
     let subresource = D3D11_SUBRESOURCE_DATA {
         pSysMem: (&constants as *const PlacementConstants).cast(),
@@ -706,7 +844,7 @@ mod tests {
 
     use super::{D3d11ImagePresenter, hwnd_from_raw};
     use crate::D3d11Device;
-    use crate::{ImageTransform, NormalizedCrop, PlacementMode};
+    use crate::{ColorAdjustments, ImageTransform, NormalizedCrop, PlacementMode};
     use windows::Win32::UI::WindowsAndMessaging::SWP_NOACTIVATE;
 
     #[test]
@@ -758,6 +896,44 @@ mod tests {
             .set_placement_mode(PlacementMode::Fit)
             .expect("same mode should retry after the window is restored");
         assert_eq!(presenter.presented_frames(), 3);
+    }
+
+    #[test]
+    fn color_adjustments_redraw_only_after_success_and_leave_source_unchanged() {
+        let host = discover_desktop_host().expect("an interactive Windows shell is required");
+        let window = host
+            .attach_wallpaper_window()
+            .expect("the wallpaper child should attach to the desktop host");
+        let device = D3d11Device::create_hardware().expect("hardware D3D11 is required");
+        let path = fixture_path("pixels.png");
+        let source_before = std::fs::read(&path).expect("source fixture should be readable");
+        let image = decode_image(&path).expect("fixture should decode");
+        let mut presenter = D3d11ImagePresenter::new(&device, window.raw_handle(), &image)
+            .expect("image should present");
+        let color = ColorAdjustments::new(1.25, 1.1, 0.8, 1.2, 0.9, 0.25, (1.0, 0.95, 1.05))
+            .expect("color adjustments should be valid");
+        let original_hwnd = presenter.hwnd;
+
+        presenter.hwnd = hwnd_from_raw(0);
+        assert!(matches!(
+            presenter.set_color_adjustments(color),
+            Err(crate::RendererError::WindowUnavailable)
+        ));
+        assert_eq!(presenter.color_adjustments(), ColorAdjustments::default());
+        presenter.hwnd = original_hwnd;
+        presenter
+            .set_color_adjustments(color)
+            .expect("color settings should retry after the window is restored");
+        assert_eq!(presenter.presented_frames(), 2);
+        assert_eq!(presenter.color_adjustments(), color);
+        presenter
+            .set_color_adjustments(color)
+            .expect("unchanged color settings should be a no-op");
+        assert_eq!(presenter.presented_frames(), 2);
+        assert_eq!(
+            std::fs::read(&path).expect("source fixture should remain readable"),
+            source_before
+        );
     }
 
     fn fixture_path(name: &str) -> std::path::PathBuf {
