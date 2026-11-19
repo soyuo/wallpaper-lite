@@ -2,11 +2,80 @@
 
 use wallpaper_core::error::{AppError, ErrorCode};
 
+#[cfg(target_os = "windows")]
+mod shell;
+
+#[cfg(target_os = "windows")]
+pub use shell::discover_desktop_host;
+
 /// Failure while preparing the Windows desktop process.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DesktopError {
     UnsupportedPlatform,
     DpiAwareness { hresult: i32 },
+    ShellUnavailable,
+    DesktopHostNotFound,
+    AmbiguousDesktopHost { candidate_count: usize },
+    StaleDesktopHost,
+    WindowEnumerationFailed { hresult: i32 },
+}
+
+/// The class of a validated Windows shell desktop window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DesktopHostKind {
+    Progman,
+    WorkerW,
+}
+
+impl DesktopHostKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Progman => "progman",
+            Self::WorkerW => "workerw",
+        }
+    }
+}
+
+/// A freshly validated shell window handle. It is borrowed from Explorer and may become stale
+/// when the shell changes; call `validate_current` before using it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DesktopHost {
+    raw_handle: isize,
+    shell_process_id: u32,
+    kind: DesktopHostKind,
+}
+
+impl DesktopHost {
+    pub const fn raw_handle(self) -> isize {
+        self.raw_handle
+    }
+
+    pub const fn kind(self) -> DesktopHostKind {
+        self.kind
+    }
+
+    pub fn validate_current(self) -> Result<(), DesktopError> {
+        #[cfg(target_os = "windows")]
+        {
+            shell::validate_current(self)
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            Err(DesktopError::UnsupportedPlatform)
+        }
+    }
+
+    pub(crate) const fn new(
+        raw_handle: isize,
+        shell_process_id: u32,
+        kind: DesktopHostKind,
+    ) -> Self {
+        Self {
+            raw_handle,
+            shell_process_id,
+            kind,
+        }
+    }
 }
 
 impl DesktopError {
@@ -19,6 +88,14 @@ impl DesktopError {
             Self::DpiAwareness { .. } => AppError::new(
                 ErrorCode::WindowsInitializationFailed,
                 "Windows desktop initialization failed.",
+            ),
+            Self::ShellUnavailable
+            | Self::DesktopHostNotFound
+            | Self::AmbiguousDesktopHost { .. }
+            | Self::StaleDesktopHost
+            | Self::WindowEnumerationFailed { .. } => AppError::new(
+                ErrorCode::DesktopHostUnavailable,
+                "The Windows desktop host is not available.",
             ),
         }
     }
@@ -33,6 +110,20 @@ impl DesktopError {
                     hresult as u32
                 )
             }
+            Self::ShellUnavailable => {
+                "stage=desktop_host_discovery reason=shell_unavailable".into()
+            }
+            Self::DesktopHostNotFound => {
+                "stage=desktop_host_discovery reason=desktop_view_not_found".into()
+            }
+            Self::AmbiguousDesktopHost { candidate_count } => format!(
+                "stage=desktop_host_discovery reason=ambiguous_candidates candidate_count={candidate_count}"
+            ),
+            Self::StaleDesktopHost => "stage=desktop_host_discovery reason=stale_window".into(),
+            Self::WindowEnumerationFailed { hresult } => format!(
+                "stage=desktop_host_discovery reason=window_enumeration_failed hresult=0x{:08X}",
+                hresult as u32
+            ),
         }
     }
 }
@@ -48,6 +139,12 @@ pub fn initialize_windows() -> Result<(), DesktopError> {
             hresult: error.code().0,
         }
     })
+}
+
+/// Return a typed error on non-Windows targets instead of silently skipping shell discovery.
+#[cfg(not(target_os = "windows"))]
+pub fn discover_desktop_host() -> Result<DesktopHost, DesktopError> {
+    Err(DesktopError::UnsupportedPlatform)
 }
 
 /// Return a typed error on non-Windows targets instead of silently skipping setup.

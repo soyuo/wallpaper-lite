@@ -48,6 +48,9 @@ must not depend on `host`, and the dependency graph must not contain cycles.
 The current UI-to-host named-pipe protocol is documented in
 [`ipc.md`](ipc.md).
 
+`crates/desktop` validates the shell window before the host starts its IPC server. See
+[`desktop-host-discovery.md`](desktop-host-discovery.md) for the candidate checks and retry behavior.
+
 ## Deferred boundaries
 
 Media decoding, display topology, performance policy, shaders, and product
