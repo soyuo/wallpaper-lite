@@ -1,0 +1,53 @@
+name: Pull request conventions
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  validate:
+    name: Validate branch, title, and commit subjects
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check naming conventions
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const branchPattern = /^(feature|refactor|fix|docs|test|chore)\/[1-9][0-9]*-[a-z0-9]+(?:-[a-z0-9]+)*$/;
+            const types = '(feat|fix|refactor|docs|test|chore)';
+            const scopes = '(project|host|renderer|media|editor|playback|display|performance|ipc|config|ui|test|ci|release|docs)';
+            const pattern = new RegExp(`^${types}\\(${scopes}\\): [^\\s].*$`);
+            const pullRequest = context.payload.pull_request;
+            const errors = [];
+
+            if (!branchPattern.test(pullRequest.head.ref)) {
+              errors.push(`Branch "${pullRequest.head.ref}" must match type/<issue-number>-<short-kebab-case-description>.`);
+            }
+
+            if (!pattern.test(pullRequest.title)) {
+              errors.push(`PR title "${pullRequest.title}" must match type(scope): Summary with an allowed type and scope.`);
+            }
+
+            const commits = await github.paginate(github.rest.pulls.listCommits, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: pullRequest.number,
+              per_page: 100,
+            });
+
+            for (const commit of commits) {
+              const subject = commit.commit.message.split('\n', 1)[0];
+              if (!pattern.test(subject)) {
+                errors.push(`Commit "${subject}" must match type(scope): Summary with an allowed type and scope.`);
+              }
+            }
+
+            if (errors.length > 0) {
+              core.setFailed(errors.join('\n'));
+            } else {
+              core.info(`Validated branch, pull request title, and ${commits.length} commit(s).`);
+            }
