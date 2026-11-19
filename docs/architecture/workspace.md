@@ -53,7 +53,8 @@ The current UI-to-host named-pipe protocol is documented in
 The host then owns a message-pumped child window below the shell icon view; see
 [`desktop-window-attachment.md`](desktop-window-attachment.md) for z-order, DPI, and cleanup behavior.
 The host monitors the shell process and desktop-host handle for exit/restart transitions; see
-[`shell-lifecycle-monitor.md`](shell-lifecycle-monitor.md). Reattachment remains issue #4 scope.
+[`shell-lifecycle-monitor.md`](shell-lifecycle-monitor.md). The recovery worker reattaches the
+child window after shell restart without restarting the host process.
 
 ## Deferred boundaries
 

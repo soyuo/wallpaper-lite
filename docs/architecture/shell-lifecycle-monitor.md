@@ -22,8 +22,20 @@ The host polls the event queue while the named-pipe server continues running. It
 cannot silently continue without shell lifecycle visibility. Dropping the monitor sets its stop
 flag, joins its worker within the 250 ms wait bound, and closes the process handle through RAII.
 
-This monitor reports shell state only. Reattaching the wallpaper window and preserving playback
-state remain issue #4 scope.
+## Recovery
+
+`host/src/recovery.rs` owns the current `AttachedDesktopWindow` on a dedicated worker thread. On a
+shell-exit event it drops the old child window before attempting rediscovery. On restart it uses
+the existing validated discovery and attachment APIs; if the shell is not ready or attachment
+races with another restart, it retries after 100 ms with exponential backoff capped at 1 second.
+The worker waits on its command channel during backoff, so shutdown and newer lifecycle events
+interrupt the delay. It keeps only one attached-window owner, which prevents duplicate wallpaper
+children.
+
+Recovery replaces the shell child window without restarting the host process, IPC server, or D3D11
+device. The Phase 1 host has no media selection or playback state yet, so content continuity cannot
+be exercised until the media and playback phases; recovery leaves those future host-owned states
+outside the window lifecycle.
 
 ## Verification
 
@@ -35,3 +47,10 @@ shell process (PID 11436) while the host monitor was running. The same host logg
 logged `event="shell_restarted" shell_process_id=6616`. The host remained running through both
 events; stopping it left no wallpaper child window in the shell tree. Windows 10 runtime
 verification is pending.
+
+For recovery, a live Windows 11 Education 10.0.26300 smoke check terminated Explorer PID 8964
+while host PID 30908 was active. The monitor reported replacement shell PID 28784, and the
+recovery worker logged `event="wallpaper_window_recovered"`. UI Automation found exactly one
+`WallpaperLiteDesktopChild` owned by PID 30908 with a `Progman` parent; the Start button Toggle
+pattern worked and Escape dismissed the Start UI. The host remained alive until test cleanup; after
+shutdown there was no host process or child window left.
