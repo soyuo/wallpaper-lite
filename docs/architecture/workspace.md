@@ -29,6 +29,9 @@ The host owns process startup and coordinates the desktop, renderer, and IPC
 crates. The UI does not own Win32 windows or D3D11 resources. Lower-level crates
 must not depend on `host`, and the dependency graph must not contain cycles.
 
+The current UI-to-host named-pipe protocol is documented in
+[`ipc.md`](ipc.md).
+
 ## Deferred boundaries
 
 Media decoding, display topology, performance policy, shaders, and product
