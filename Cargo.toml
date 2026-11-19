@@ -1,0 +1,22 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/core",
+    "crates/desktop",
+    "crates/renderer",
+    "crates/ipc",
+    "host",
+]
+default-members = ["host"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "BSD-2-Clause"
+rust-version = "1.85"
+
+[workspace.dependencies]
+wallpaper-core = { path = "crates/core" }
+wallpaper-desktop = { path = "crates/desktop" }
+wallpaper-renderer = { path = "crates/renderer" }
+wallpaper-ipc = { path = "crates/ipc" }
