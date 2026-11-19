@@ -13,7 +13,8 @@ owned by the narrowest crate that can enforce its lifecycle and safety rules.
 | `crates/renderer` | D3D11 device and rendering boundary | `core` |
 | `crates/ipc` | UI-to-host protocol and named-pipe transport | `core` |
 | `host` | `wallpaper-host.exe` composition root and process lifecycle | `core`, `desktop`, `renderer`, `ipc` |
-| `apps/ui` | Tauri 2 + React/TypeScript application; added in issue #8 | Tauri backend and host through IPC |
+| `apps/ui` | React/TypeScript frontend | Tauri commands through the host adapter |
+| `apps/ui/src-tauri` | Tauri desktop backend and UI process entry point | `ipc` |
 
 The intended dependency direction is:
 

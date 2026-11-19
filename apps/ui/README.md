@@ -1,4 +1,34 @@
-# UI application
+# wallpaper-lite UI
 
-The Tauri 2 + React/TypeScript application lives in this directory. Issue #8
-adds the runnable UI scaffold and its frontend toolchain configuration.
+The desktop UI uses Tauri 2, React, TypeScript, and Vite. The React app lives in
+`src`; the Rust/Tauri backend lives in `src-tauri` and is a member of the root
+Cargo workspace. `src/host-adapter.ts` is the frontend boundary for host calls.
+Issue #9 implements the `host_ping` Tauri command and its named-pipe round trip.
+
+## Requirements
+
+- Windows 10 or Windows 11, x64.
+- Rust stable with the `x86_64-pc-windows-msvc` target.
+- Visual Studio 2022 Build Tools with the Desktop development with C++ workload
+  and a Windows SDK.
+- Microsoft Edge WebView2 Runtime.
+- Node.js LTS and npm.
+
+See the repository's [Windows development setup](../../docs/development/setup.md)
+for the Rust and MSVC toolchain setup. Tauri's Windows prerequisites and
+WebView2 details are in the [official Tauri prerequisites](https://v2.tauri.app/start/prerequisites/).
+
+## Build and run
+
+Run these commands from `apps/ui`:
+
+```powershell
+npm ci
+npm run build
+npm run tauri dev
+```
+
+`npm run build` checks the TypeScript app and builds its Vite assets. The
+`npm run tauri dev` command starts the frontend development server, builds the
+Tauri backend, and opens the desktop window. Close the window to exit the
+development app. Installer bundling is disabled until the release phase.
