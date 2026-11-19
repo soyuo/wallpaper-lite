@@ -5,12 +5,14 @@ use std::path::Path;
 use wallpaper_core::error::{AppError, ErrorCode};
 
 mod frame_queue;
+mod playback;
 #[cfg(target_os = "windows")]
 mod video;
 #[cfg(target_os = "windows")]
 mod wic;
 
 pub use frame_queue::{FrameEnqueueOutcome, FrameQueueError, VideoFrameQueue};
+pub use playback::{PlaybackError, PlaybackScheduler, PlaybackState};
 
 #[cfg(any(target_os = "windows", test))]
 const MAX_IMAGE_DIMENSION: u32 = 16_384;
