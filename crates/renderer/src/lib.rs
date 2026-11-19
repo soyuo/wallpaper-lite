@@ -25,6 +25,7 @@ pub enum RendererError {
     DeviceCreation { hresult: i32 },
     MissingDeviceInterface,
     MissingImmediateContext,
+    MultithreadProtectionUnavailable,
     WindowUnavailable,
     WindowSizeUnavailable,
     InvalidPlacementDimensions,
@@ -71,6 +72,9 @@ impl RendererError {
             }
             Self::MissingImmediateContext => {
                 "stage=d3d11_create_device detail=missing_immediate_context".into()
+            }
+            Self::MultithreadProtectionUnavailable => {
+                "stage=d3d11_create_device detail=multithread_protection_unavailable".into()
             }
             Self::WindowUnavailable => "stage=d3d11_present detail=window_unavailable".into(),
             Self::WindowSizeUnavailable => {
@@ -215,10 +219,11 @@ impl D3d11Device {
             D3D_FEATURE_LEVEL_10_1, D3D_FEATURE_LEVEL_11_0,
         };
         use windows::Win32::Graphics::Direct3D11::{
-            D3D11_CREATE_DEVICE_FLAG, D3D11_SDK_VERSION, D3D11CreateDevice, ID3D11Device,
-            ID3D11DeviceContext,
+            D3D11_CREATE_DEVICE_VIDEO_SUPPORT, D3D11_SDK_VERSION, D3D11CreateDevice, ID3D11Device,
+            ID3D11DeviceContext, ID3D11Multithread,
         };
         use windows::Win32::Graphics::Dxgi::IDXGIAdapter;
+        use windows::core::Interface;
 
         let feature_levels = [
             D3D_FEATURE_LEVEL_11_0,
@@ -236,7 +241,7 @@ impl D3d11Device {
                 None::<&IDXGIAdapter>,
                 D3D_DRIVER_TYPE_HARDWARE,
                 HMODULE::default(),
-                D3D11_CREATE_DEVICE_FLAG(0),
+                D3D11_CREATE_DEVICE_VIDEO_SUPPORT,
                 Some(&feature_levels),
                 D3D11_SDK_VERSION,
                 Some(&mut device),
@@ -250,6 +255,17 @@ impl D3d11Device {
 
         let device = device.ok_or(RendererError::MissingDeviceInterface)?;
         let immediate_context = immediate_context.ok_or(RendererError::MissingImmediateContext)?;
+
+        // The Source Reader's DXVA readback shares this device's immediate context.
+        let multithread = immediate_context
+            .cast::<ID3D11Multithread>()
+            .map_err(|error| RendererError::DeviceCreation {
+                hresult: error.code().0,
+            })?;
+        let _previous_protection = unsafe { multithread.SetMultithreadProtected(true) };
+        if !unsafe { multithread.GetMultithreadProtected() }.as_bool() {
+            return Err(RendererError::MultithreadProtectionUnavailable);
+        }
 
         Ok(Self {
             device,
@@ -282,6 +298,7 @@ impl D3d11Device {
 #[cfg(all(test, target_os = "windows"))]
 mod tests {
     use super::D3d11Device;
+    use windows::Win32::Graphics::Direct3D11::ID3D11Multithread;
     use windows::core::Interface;
 
     #[test]
@@ -292,6 +309,11 @@ mod tests {
         assert_ne!(device.feature_level(), 0);
         assert!(!device.device().as_raw().is_null());
         assert!(!device.immediate_context().as_raw().is_null());
+        let multithread = device
+            .immediate_context()
+            .cast::<ID3D11Multithread>()
+            .expect("D3D11 immediate context should expose multithread controls");
+        assert!(unsafe { multithread.GetMultithreadProtected() }.as_bool());
 
         drop(device);
     }

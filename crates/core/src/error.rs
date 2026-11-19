@@ -18,6 +18,7 @@ pub enum ErrorCode {
     GraphicsInitializationFailed,
     ImageDecodeFailed,
     VideoSourceOpenFailed,
+    VideoDecodeFailed,
     DesktopHostUnavailable,
     Internal,
 }
@@ -39,6 +40,7 @@ impl ErrorCode {
             Self::GraphicsInitializationFailed => "graphics_initialization_failed",
             Self::ImageDecodeFailed => "image_decode_failed",
             Self::VideoSourceOpenFailed => "video_source_open_failed",
+            Self::VideoDecodeFailed => "video_decode_failed",
             Self::DesktopHostUnavailable => "desktop_host_unavailable",
             Self::Internal => "internal",
         }
