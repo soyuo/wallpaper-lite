@@ -14,7 +14,7 @@ mod wic;
 pub use frame_queue::{FrameEnqueueOutcome, FrameQueueError, VideoFrameQueue};
 pub use playback::{
     PlaybackError, PlaybackScheduler, PlaybackState, VideoFpsLimit, VideoFpsLimitError,
-    VideoFpsPreset,
+    VideoFpsPreset, VideoPlaybackSpeed, VideoPlaybackSpeedError,
 };
 
 #[cfg(any(target_os = "windows", test))]

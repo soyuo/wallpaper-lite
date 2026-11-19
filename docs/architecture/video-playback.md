@@ -28,6 +28,19 @@ the queue supplies the newest due frame at each available output slot.
 Expired frames are pruned on every scheduler sample, and EOS completion is
 evaluated independently of the presentation gate.
 
+## Playback speed
+
+`VideoPlaybackSpeed` accepts the documented 25%, 50%, 75%, 100%, 125%, 150%,
+and 200% rates. Unsupported percentages return `VideoPlaybackSpeedError`.
+`set_speed` captures the current media position before changing the rate, so
+the timeline remains continuous. The media clock uses exact rational scaling
+with a wide intermediate; frame PTS values are not rewritten. FPS limiting
+continues to use monotonic wall time and is unchanged by speed updates.
+
+This Phase 3 path is video-only. It decodes or outputs no audio and makes no
+A/V synchronization claim. If audio is added later, it must remain synchronized
+with video or be muted at non-1.0× speed.
+
 ## Transport behavior
 
 - `play` starts from the stored media position; from `Paused` it re-anchors the
@@ -44,5 +57,4 @@ evaluated independently of the presentation gate.
 
 The API accepts a clock sample on each operation, so tests use integer fake
 clock values and do not sleep. This module does not control the decoder's seek
-operation, playback-speed mapping, audio, IPC, or UI; those are later Phase 3
-work items.
+operation, audio, IPC, or UI.
