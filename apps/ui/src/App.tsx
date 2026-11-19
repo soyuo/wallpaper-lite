@@ -15,7 +15,11 @@ function App() {
       await hostAdapter.ping();
       setHostStatus("Wallpaper host connected.");
     } catch (error) {
-      setHostStatus(String(error));
+      setHostStatus(
+        error instanceof Error
+          ? error.message
+          : "Could not check the wallpaper host.",
+      );
     } finally {
       setCheckingHost(false);
     }
