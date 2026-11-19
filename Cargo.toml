@@ -6,8 +6,8 @@ members = [
     "crates/renderer",
     "crates/ipc",
     "host",
+    "apps/ui/src-tauri",
 ]
-default-members = ["host"]
 
 [workspace.package]
 version = "0.1.0"

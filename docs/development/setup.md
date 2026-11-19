@@ -24,5 +24,5 @@ cargo +stable metadata --no-deps --format-version 1
 cargo +stable check --workspace --target x86_64-pc-windows-msvc
 ```
 
-The Tauri UI's Node.js and package-manager requirements will be documented with
-the UI scaffold in issue #8.
+For the Tauri UI's Node.js, WebView2, and development commands, see
+[`apps/ui/README.md`](../../apps/ui/README.md).
