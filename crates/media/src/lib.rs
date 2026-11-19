@@ -1,14 +1,19 @@
-//! Still-image decoding boundaries for wallpaper media.
+//! Image decoding and video-source opening boundaries for wallpaper media.
 
 use std::path::Path;
 
 use wallpaper_core::error::{AppError, ErrorCode};
 
 #[cfg(target_os = "windows")]
+mod video;
+#[cfg(target_os = "windows")]
 mod wic;
 
+#[cfg(any(target_os = "windows", test))]
 const MAX_IMAGE_DIMENSION: u32 = 16_384;
+#[cfg(any(target_os = "windows", test))]
 const MAX_IMAGE_PIXELS: u64 = 64 * 1024 * 1024;
+#[cfg(any(target_os = "windows", test))]
 const BYTES_PER_PIXEL: u32 = 4;
 
 /// A decoded image using tightly packed, top-to-bottom RGBA8 pixels.
@@ -39,10 +44,19 @@ impl DecodedImage {
     }
 }
 
-/// Safe failure categories for still-image decoding.
+/// Safe failure categories for media decoding and source opening.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MediaError {
     UnsupportedPlatform,
+    UnsupportedVideoPlatform,
+    MediaFoundationStartupFailed { hresult: i32 },
+    VideoComInitializationFailed { hresult: i32 },
+    VideoSourceOpenFailed { hresult: i32 },
+    VideoStreamNotFound { hresult: i32 },
+    UnsupportedVideoFormat,
+    VideoMetadataUnavailable { hresult: i32 },
+    InvalidVideoMetadata,
+    InvalidVideoPath,
     ComInitialization { hresult: i32 },
     FactoryCreation { hresult: i32 },
     DecoderCreation { hresult: i32 },
@@ -61,7 +75,22 @@ impl MediaError {
         match self {
             Self::UnsupportedPlatform => AppError::new(
                 ErrorCode::UnsupportedPlatform,
-                "Image decoding is unavailable on this platform.",
+                "Media decoding is unavailable on this platform.",
+            ),
+            Self::UnsupportedVideoPlatform => AppError::new(
+                ErrorCode::UnsupportedPlatform,
+                "Video source opening is unavailable on this platform.",
+            ),
+            Self::MediaFoundationStartupFailed { .. }
+            | Self::VideoComInitializationFailed { .. }
+            | Self::VideoSourceOpenFailed { .. }
+            | Self::VideoStreamNotFound { .. }
+            | Self::UnsupportedVideoFormat
+            | Self::VideoMetadataUnavailable { .. }
+            | Self::InvalidVideoMetadata
+            | Self::InvalidVideoPath => AppError::new(
+                ErrorCode::VideoSourceOpenFailed,
+                "The video source could not be opened.",
             ),
             _ => AppError::new(
                 ErrorCode::ImageDecodeFailed,
@@ -74,6 +103,32 @@ impl MediaError {
     pub fn diagnostic_summary(self) -> String {
         match self {
             Self::UnsupportedPlatform => "stage=image_decode platform=unsupported".into(),
+            Self::UnsupportedVideoPlatform => "stage=video_open platform=unsupported".into(),
+            Self::MediaFoundationStartupFailed { hresult } => format!(
+                "stage=video_open reason=media_foundation_startup_failed hresult=0x{:08X}",
+                hresult as u32
+            ),
+            Self::VideoComInitializationFailed { hresult } => format!(
+                "stage=video_open reason=com_initialization_failed hresult=0x{:08X}",
+                hresult as u32
+            ),
+            Self::VideoSourceOpenFailed { hresult } => format!(
+                "stage=video_open reason=source_reader_creation_failed hresult=0x{:08X}",
+                hresult as u32
+            ),
+            Self::VideoStreamNotFound { hresult } => format!(
+                "stage=video_open reason=video_stream_not_found hresult=0x{:08X}",
+                hresult as u32
+            ),
+            Self::UnsupportedVideoFormat => {
+                "stage=video_open reason=unsupported_video_format".into()
+            }
+            Self::VideoMetadataUnavailable { hresult } => format!(
+                "stage=video_open reason=video_metadata_unavailable hresult=0x{:08X}",
+                hresult as u32
+            ),
+            Self::InvalidVideoMetadata => "stage=video_open reason=invalid_video_metadata".into(),
+            Self::InvalidVideoPath => "stage=video_open reason=invalid_path".into(),
             Self::ComInitialization { hresult } => format!(
                 "stage=image_decode reason=com_initialization_failed hresult=0x{:08X}",
                 hresult as u32
@@ -109,6 +164,82 @@ impl MediaError {
     }
 }
 
+/// Identifies which video stream selection the Media Foundation source reader uses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VideoStreamSelection {
+    FirstVideo,
+}
+
+/// Validated metadata for the first video stream in a source file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VideoMetadata {
+    width: u32,
+    height: u32,
+    frame_rate_numerator: u32,
+    frame_rate_denominator: u32,
+    duration_100ns: i64,
+    selected_stream: VideoStreamSelection,
+}
+
+impl VideoMetadata {
+    pub const fn width(self) -> u32 {
+        self.width
+    }
+
+    pub const fn height(self) -> u32 {
+        self.height
+    }
+
+    pub const fn frame_rate_numerator(self) -> u32 {
+        self.frame_rate_numerator
+    }
+
+    pub const fn frame_rate_denominator(self) -> u32 {
+        self.frame_rate_denominator
+    }
+
+    /// Total presentation duration in Media Foundation's 100 ns time units.
+    pub const fn duration_100ns(self) -> i64 {
+        self.duration_100ns
+    }
+
+    pub const fn selected_stream(self) -> VideoStreamSelection {
+        self.selected_stream
+    }
+}
+
+/// An open MP4 video source and its Media Foundation reader.
+///
+/// The reader is released before Media Foundation is shut down. The source is opened read-only.
+pub struct VideoSource {
+    metadata: VideoMetadata,
+    #[cfg(target_os = "windows")]
+    _platform: video::VideoSourceHandle,
+}
+
+impl VideoSource {
+    /// Opens a source whose first video stream uses the H.264 codec.
+    pub fn open(path: impl AsRef<Path>) -> Result<Self, MediaError> {
+        #[cfg(target_os = "windows")]
+        {
+            let (platform, metadata) = video::open(path.as_ref())?;
+            Ok(Self {
+                metadata,
+                _platform: platform,
+            })
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = path;
+            Err(MediaError::UnsupportedVideoPlatform)
+        }
+    }
+
+    pub const fn metadata(&self) -> VideoMetadata {
+        self.metadata
+    }
+}
+
 /// Decode the first frame of a PNG or JPEG file into an owned RGBA8 pixel buffer.
 ///
 /// Dimensions are limited to 16,384 per axis and 67,108,864 pixels before allocating the buffer.
@@ -125,6 +256,7 @@ pub fn decode_image(path: impl AsRef<Path>) -> Result<DecodedImage, MediaError> 
     }
 }
 
+#[cfg(any(target_os = "windows", test))]
 fn checked_pixel_layout(width: u32, height: u32) -> Result<(u32, usize), MediaError> {
     if width == 0 || height == 0 {
         return Err(MediaError::InvalidDimensions);
@@ -192,6 +324,36 @@ mod tests {
             wallpaper_core::error::ErrorCode::ImageDecodeFailed
         );
         assert!(!error.diagnostic_summary().contains("C:\\Users"));
+    }
+
+    #[test]
+    fn video_errors_use_a_safe_video_code_and_path_free_diagnostics() {
+        let error = MediaError::VideoSourceOpenFailed { hresult: -1 };
+        assert_eq!(
+            error.to_app_error().code,
+            wallpaper_core::error::ErrorCode::VideoSourceOpenFailed
+        );
+        assert!(!error.diagnostic_summary().contains("C:\\Users"));
+    }
+
+    #[test]
+    fn video_com_initialization_uses_video_error_code_and_stage() {
+        let error = MediaError::VideoComInitializationFailed { hresult: -1 };
+        assert_eq!(
+            error.to_app_error().code,
+            wallpaper_core::error::ErrorCode::VideoSourceOpenFailed
+        );
+        assert!(error.diagnostic_summary().contains("stage=video_open"));
+    }
+
+    #[test]
+    fn unsupported_video_platform_uses_video_diagnostic_stage() {
+        let error = MediaError::UnsupportedVideoPlatform;
+        assert_eq!(
+            error.to_app_error().code,
+            wallpaper_core::error::ErrorCode::UnsupportedPlatform
+        );
+        assert!(error.diagnostic_summary().contains("stage=video_open"));
     }
 
     #[test]
