@@ -1,10 +1,11 @@
-use std::{env, fs, path::PathBuf, process};
+use std::{env, fs, path::PathBuf, process, sync::mpsc::TryRecvError, time::Duration};
 
 use tracing_appender::{
     non_blocking::WorkerGuard,
     rolling::{RollingFileAppender, Rotation},
 };
 use tracing_subscriber::filter::LevelFilter;
+use wallpaper_desktop::{ShellLifecycleEvent, ShellLifecycleMonitor};
 
 const APP_LOG_DIRECTORY: &str = "com.soyuo.wallpaper-lite";
 
@@ -152,6 +153,25 @@ fn main() -> process::ExitCode {
     // Keep the native window alive until IPC exits; its Drop implementation destroys and joins.
     let _wallpaper_window = wallpaper_window;
 
+    let shell_lifecycle_monitor = match ShellLifecycleMonitor::start(desktop_host) {
+        Ok(monitor) => monitor,
+        Err(error) => {
+            tracing::error!(
+                component = "desktop",
+                event = "shell_lifecycle_monitor_start_failed",
+                error_code = error.to_app_error().code.as_str(),
+                diagnostic = %error.diagnostic_summary(),
+                "Explorer lifecycle monitoring could not start"
+            );
+            return process::ExitCode::FAILURE;
+        }
+    };
+    tracing::info!(
+        component = "desktop",
+        event = "shell_lifecycle_monitor_started",
+        "Explorer lifecycle monitoring started"
+    );
+
     let runtime = match tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -169,16 +189,72 @@ fn main() -> process::ExitCode {
         }
     };
 
-    if let Err(error) = runtime.block_on(wallpaper_ipc::server::run()) {
-        tracing::error!(
-            component = "host",
-            event = "ipc_server_failed",
-            error_code = error.code(),
-            diagnostic = %error.diagnostic_summary(),
-            "Wallpaper host IPC server failed"
-        );
-        return process::ExitCode::FAILURE;
-    }
+    let run_result = runtime.block_on(async {
+        let server = wallpaper_ipc::server::run();
+        tokio::pin!(server);
+        let mut lifecycle_poll = tokio::time::interval(Duration::from_millis(100));
 
-    process::ExitCode::SUCCESS
+        loop {
+            tokio::select! {
+                result = &mut server => break Ok(result),
+                _ = lifecycle_poll.tick() => loop {
+                    match shell_lifecycle_monitor.try_recv() {
+                        Ok(ShellLifecycleEvent::ExplorerExited { shell_process_id, host_kind }) => {
+                            tracing::warn!(
+                                component = "desktop",
+                                event = "shell_exited",
+                                shell_process_id,
+                                host_kind = host_kind.as_str(),
+                                "Explorer desktop host exited"
+                            );
+                        }
+                        Ok(ShellLifecycleEvent::ExplorerRestarted { shell_process_id, host_kind }) => {
+                            tracing::info!(
+                                component = "desktop",
+                                event = "shell_restarted",
+                                shell_process_id,
+                                host_kind = host_kind.as_str(),
+                                "Explorer desktop host became available again"
+                            );
+                        }
+                        Ok(ShellLifecycleEvent::MonitorFailed { stage, error_code }) => {
+                            tracing::error!(
+                                component = "desktop",
+                                event = "shell_lifecycle_monitor_failed",
+                                stage,
+                                error_code,
+                                "Explorer lifecycle monitoring failed"
+                            );
+                            return Err(());
+                        }
+                        Err(TryRecvError::Empty) => break,
+                        Err(TryRecvError::Disconnected) => {
+                            tracing::error!(
+                                component = "desktop",
+                                event = "shell_lifecycle_monitor_stopped",
+                                "Explorer lifecycle monitor stopped unexpectedly"
+                            );
+                            return Err(());
+                        }
+                    }
+                }
+            }
+        }
+    });
+    drop(shell_lifecycle_monitor);
+
+    match run_result {
+        Ok(Ok(())) => process::ExitCode::SUCCESS,
+        Ok(Err(error)) => {
+            tracing::error!(
+                component = "host",
+                event = "ipc_server_failed",
+                error_code = error.code(),
+                diagnostic = %error.diagnostic_summary(),
+                "Wallpaper host IPC server failed"
+            );
+            process::ExitCode::FAILURE
+        }
+        Err(()) => process::ExitCode::FAILURE,
+    }
 }

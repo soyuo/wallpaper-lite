@@ -3,10 +3,14 @@
 use wallpaper_core::error::{AppError, ErrorCode};
 
 #[cfg(target_os = "windows")]
+mod lifecycle;
+#[cfg(target_os = "windows")]
 mod shell;
 #[cfg(target_os = "windows")]
 mod window;
 
+#[cfg(target_os = "windows")]
+pub use lifecycle::ShellLifecycleMonitor;
 #[cfg(target_os = "windows")]
 pub use shell::discover_desktop_host;
 #[cfg(target_os = "windows")]
@@ -30,6 +34,25 @@ pub enum DesktopError {
     DesktopWindowDpiContextFailed,
     DesktopWindowBoundsUnavailable,
     WallpaperWindowUnavailable,
+    ShellLifecycleMonitorThreadFailed { os_error_code: Option<i32> },
+    ShellLifecycleMonitorProcessOpenFailed { hresult: i32 },
+}
+
+/// State transitions observed for the Explorer process that owns the desktop host.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShellLifecycleEvent {
+    ExplorerExited {
+        shell_process_id: u32,
+        host_kind: DesktopHostKind,
+    },
+    ExplorerRestarted {
+        shell_process_id: u32,
+        host_kind: DesktopHostKind,
+    },
+    MonitorFailed {
+        stage: &'static str,
+        error_code: u32,
+    },
 }
 
 /// The class of a validated Windows shell desktop window.
@@ -126,7 +149,9 @@ impl DesktopError {
             | Self::DesktopWindowDpiContextUnavailable
             | Self::DesktopWindowDpiContextFailed
             | Self::DesktopWindowBoundsUnavailable
-            | Self::WallpaperWindowUnavailable => AppError::new(
+            | Self::WallpaperWindowUnavailable
+            | Self::ShellLifecycleMonitorThreadFailed { .. }
+            | Self::ShellLifecycleMonitorProcessOpenFailed { .. } => AppError::new(
                 ErrorCode::DesktopHostUnavailable,
                 "The Windows desktop window could not be attached.",
             ),
@@ -183,6 +208,13 @@ impl DesktopError {
             Self::WallpaperWindowUnavailable => {
                 "stage=desktop_window_attach reason=attached_window_unavailable".into()
             }
+            Self::ShellLifecycleMonitorThreadFailed { os_error_code } => format!(
+                "stage=shell_lifecycle_monitor reason=thread_start_failed os_error_code={os_error_code:?}"
+            ),
+            Self::ShellLifecycleMonitorProcessOpenFailed { hresult } => format!(
+                "stage=shell_lifecycle_monitor reason=process_open_failed hresult=0x{:08X}",
+                hresult as u32
+            ),
         }
     }
 }
@@ -210,6 +242,22 @@ pub fn discover_desktop_host() -> Result<DesktopHost, DesktopError> {
 #[cfg(not(target_os = "windows"))]
 #[derive(Debug)]
 pub struct AttachedDesktopWindow;
+
+/// Placeholder type for non-Windows consumers of the cross-platform desktop API.
+#[cfg(not(target_os = "windows"))]
+#[derive(Debug)]
+pub struct ShellLifecycleMonitor;
+
+#[cfg(not(target_os = "windows"))]
+impl ShellLifecycleMonitor {
+    pub fn start(_host: DesktopHost) -> Result<Self, DesktopError> {
+        Err(DesktopError::UnsupportedPlatform)
+    }
+
+    pub fn try_recv(&self) -> Result<ShellLifecycleEvent, std::sync::mpsc::TryRecvError> {
+        Err(std::sync::mpsc::TryRecvError::Disconnected)
+    }
+}
 
 /// Return a typed error on non-Windows targets instead of silently skipping setup.
 #[cfg(not(target_os = "windows"))]
