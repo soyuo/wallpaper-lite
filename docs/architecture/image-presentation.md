@@ -12,7 +12,21 @@ distort, and `Center` uses one output pixel per source pixel and lets the
 client-area clip oversized images. `new` and the current host startup path
 default to `Cover`, preserving aspect ratio unless a caller explicitly selects
 `Stretch`. Renderer callers can choose a mode with `new_with_placement` or
-`set_placement_mode`. UI selection and persistent settings are later work.
+`set_placement_mode`, and supply transforms with `new_with_transform` or
+`set_transform`. UI selection and persistent settings are later work.
+
+`ImageTransform` adds runtime-only position, scale, rotation, anchor, and crop
+parameters. Position is a physical-pixel translation applied after the
+placement-mode rectangle is computed; positive X moves right and positive Y
+moves down. Scale is relative to that rectangle, rotation is in degrees
+clockwise in the output coordinate system, and the normalized anchor selects
+the pivot within the rectangle. Crop uses normalized top-left-origin source
+coordinates and is composed before placement, so `Cover` and `Fit` use the
+cropped region's aspect ratio. The order is crop, placement, scale/rotation
+around the anchor, then physical-pixel translation. Defaults are zero position,
+unit scale, zero rotation, centered anchor, and full-source crop. Geometry uses
+the HWND's physical client dimensions; editor CSS pixels are not accepted by
+the renderer API.
 
 The presenter creates a two-buffer `FLIP_SEQUENTIAL` swap chain for the existing
 desktop child HWND. The desktop crate creates that child inside the shell-owned,
@@ -25,8 +39,9 @@ restore presentation after Explorer recreates the child.
 
 ## Invalidation and resize
 
-Construction, image replacement, and placement-mode changes each draw and
-present one frame. Selecting the already-active mode is a no-op. The host does
+Construction, image replacement, placement-mode changes, and transform changes
+each draw and present one frame. Reapplying the active mode or transform is a
+no-op. The host does
 not run an animation or continuous render loop. While an image is active,
 the recovery worker checks the child client size every 100 ms; unchanged sizes
 do not call D3D11 or present a frame. A size change unbinds the old render target,
@@ -56,6 +71,11 @@ persistent wallpaper configuration are later work.
 
 Placement geometry tests cover wide and tall source/output aspect ratios,
 4K source dimensions, Center clipping, and rejection of zero dimensions. The
+transform tests cover identity across all placement modes, physical-pixel
+translation, scale, rotation around a normalized anchor, normalized crop
+composition, and typed errors for invalid crop/transform values or
+unrepresentable geometry. The transform GPU smoke test checks one redraw per
+change and confirms the PNG source bytes remain unchanged after transformation.
 Windows test `placement_changes_present_once_and_reselecting_the_mode_stays_idle`
 checks that mode changes present one frame and selecting the current mode does
 not redraw. `presents_once_and_stays_idle_until_image_or_size_changes` checks

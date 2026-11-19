@@ -5,7 +5,9 @@ use wallpaper_core::error::{AppError, ErrorCode};
 mod placement;
 
 pub use placement::{
-    ImagePlacement, PlacementDimensions, PlacementMode, PlacementRect, calculate_image_placement,
+    ImagePlacement, ImageTransform, NormalizedCrop, PlacementDimensions, PlacementMode,
+    PlacementPoint, PlacementRect, calculate_image_placement,
+    calculate_transformed_image_placement,
 };
 
 #[cfg(target_os = "windows")]
@@ -24,6 +26,8 @@ pub enum RendererError {
     WindowUnavailable,
     WindowSizeUnavailable,
     InvalidPlacementDimensions,
+    InvalidTransformParameters,
+    InvalidCropBounds,
     PlacementBufferCreation { hresult: i32 },
     SwapChainCreation { hresult: i32 },
     SwapChainResize { hresult: i32 },
@@ -72,6 +76,10 @@ impl RendererError {
             Self::InvalidPlacementDimensions => {
                 "stage=d3d11_present detail=invalid_placement_dimensions".into()
             }
+            Self::InvalidTransformParameters => {
+                "stage=image_transform detail=invalid_parameters".into()
+            }
+            Self::InvalidCropBounds => "stage=image_transform detail=invalid_crop_bounds".into(),
             Self::PlacementBufferCreation { hresult } => {
                 diagnostic("placement_buffer_create", hresult)
             }
@@ -128,6 +136,16 @@ impl<'a> D3d11ImagePresenter<'a> {
         Err(RendererError::UnsupportedPlatform)
     }
 
+    pub fn new_with_transform(
+        _device: &'a D3d11Device,
+        _window_handle: isize,
+        _image: &wallpaper_media::DecodedImage,
+        _placement_mode: PlacementMode,
+        _transform: ImageTransform,
+    ) -> Result<Self, RendererError> {
+        Err(RendererError::UnsupportedPlatform)
+    }
+
     pub fn set_image(
         &mut self,
         _image: &wallpaper_media::DecodedImage,
@@ -144,6 +162,14 @@ impl<'a> D3d11ImagePresenter<'a> {
         _placement_mode: PlacementMode,
     ) -> Result<(), RendererError> {
         Err(RendererError::UnsupportedPlatform)
+    }
+
+    pub fn set_transform(&mut self, _transform: ImageTransform) -> Result<(), RendererError> {
+        Err(RendererError::UnsupportedPlatform)
+    }
+
+    pub const fn transform(&self) -> ImageTransform {
+        ImageTransform::default()
     }
 
     pub const fn placement_mode(&self) -> PlacementMode {
