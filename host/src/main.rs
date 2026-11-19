@@ -7,6 +7,10 @@ use tracing_appender::{
 use tracing_subscriber::filter::LevelFilter;
 use wallpaper_desktop::{ShellLifecycleEvent, ShellLifecycleMonitor};
 
+mod recovery;
+
+use recovery::DesktopRecoveryWorker;
+
 const APP_LOG_DIRECTORY: &str = "com.soyuo.wallpaper-lite";
 
 fn install_stderr_logger() {
@@ -150,8 +154,24 @@ fn main() -> process::ExitCode {
         parent_kind = desktop_host.kind().as_str(),
         "Wallpaper window attached below desktop icons"
     );
-    // Keep the native window alive until IPC exits; its Drop implementation destroys and joins.
-    let _wallpaper_window = wallpaper_window;
+    let desktop_recovery = match DesktopRecoveryWorker::start(wallpaper_window) {
+        Ok(recovery) => recovery,
+        Err(error) => {
+            tracing::error!(
+                component = "desktop",
+                event = "desktop_recovery_start_failed",
+                error_kind = ?error.kind(),
+                os_error_code = ?error.raw_os_error(),
+                "Desktop recovery worker could not start"
+            );
+            return process::ExitCode::FAILURE;
+        }
+    };
+    tracing::info!(
+        component = "desktop",
+        event = "desktop_recovery_started",
+        "Desktop host recovery worker started"
+    );
 
     let shell_lifecycle_monitor = match ShellLifecycleMonitor::start(desktop_host) {
         Ok(monitor) => monitor,
@@ -207,6 +227,14 @@ fn main() -> process::ExitCode {
                                 host_kind = host_kind.as_str(),
                                 "Explorer desktop host exited"
                             );
+                            if !desktop_recovery.explorer_exited() {
+                                tracing::error!(
+                                    component = "desktop",
+                                    event = "desktop_recovery_worker_stopped",
+                                    "Desktop recovery worker stopped unexpectedly"
+                                );
+                                return Err(());
+                            }
                         }
                         Ok(ShellLifecycleEvent::ExplorerRestarted { shell_process_id, host_kind }) => {
                             tracing::info!(
@@ -216,6 +244,14 @@ fn main() -> process::ExitCode {
                                 host_kind = host_kind.as_str(),
                                 "Explorer desktop host became available again"
                             );
+                            if !desktop_recovery.explorer_restarted() {
+                                tracing::error!(
+                                    component = "desktop",
+                                    event = "desktop_recovery_worker_stopped",
+                                    "Desktop recovery worker stopped unexpectedly"
+                                );
+                                return Err(());
+                            }
                         }
                         Ok(ShellLifecycleEvent::MonitorFailed { stage, error_code }) => {
                             tracing::error!(
@@ -242,6 +278,7 @@ fn main() -> process::ExitCode {
         }
     });
     drop(shell_lifecycle_monitor);
+    drop(desktop_recovery);
 
     match run_result {
         Ok(Ok(())) => process::ExitCode::SUCCESS,
