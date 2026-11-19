@@ -42,14 +42,20 @@ impl DesktopRecoveryWorker {
             .send(RecoveryCommand::ExplorerRestarted)
             .is_ok()
     }
+
+    pub(crate) fn stop(&mut self) -> bool {
+        let Some(thread) = self.thread.take() else {
+            return true;
+        };
+
+        let _ = self.commands.send(RecoveryCommand::Shutdown);
+        thread.join().is_ok()
+    }
 }
 
 impl Drop for DesktopRecoveryWorker {
     fn drop(&mut self) {
-        let _ = self.commands.send(RecoveryCommand::Shutdown);
-        if let Some(thread) = self.thread.take() {
-            let _ = thread.join();
-        }
+        let _ = self.stop();
     }
 }
 
@@ -142,7 +148,8 @@ fn next_retry_delay(current: Duration) -> Duration {
 mod tests {
     use std::time::Duration;
 
-    use super::{INITIAL_RETRY_DELAY, MAX_RETRY_DELAY, next_retry_delay};
+    use super::{DesktopRecoveryWorker, INITIAL_RETRY_DELAY, MAX_RETRY_DELAY, next_retry_delay};
+    use wallpaper_desktop::discover_desktop_host;
 
     #[test]
     fn retry_backoff_doubles_to_a_one_second_cap() {
@@ -164,5 +171,20 @@ mod tests {
                 MAX_RETRY_DELAY,
             ]
         );
+    }
+
+    #[test]
+    fn stopping_the_recovery_worker_is_idempotent() {
+        let host = discover_desktop_host().expect("an interactive Windows shell is required");
+        let window = host
+            .attach_wallpaper_window()
+            .expect("the wallpaper child should attach to the desktop host");
+        let mut recovery =
+            DesktopRecoveryWorker::start(window).expect("the recovery worker should start");
+
+        assert!(recovery.explorer_exited());
+        assert!(recovery.explorer_restarted());
+        assert!(recovery.stop());
+        assert!(recovery.stop());
     }
 }

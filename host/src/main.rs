@@ -154,25 +154,6 @@ fn main() -> process::ExitCode {
         parent_kind = desktop_host.kind().as_str(),
         "Wallpaper window attached below desktop icons"
     );
-    let desktop_recovery = match DesktopRecoveryWorker::start(wallpaper_window) {
-        Ok(recovery) => recovery,
-        Err(error) => {
-            tracing::error!(
-                component = "desktop",
-                event = "desktop_recovery_start_failed",
-                error_kind = ?error.kind(),
-                os_error_code = ?error.raw_os_error(),
-                "Desktop recovery worker could not start"
-            );
-            return process::ExitCode::FAILURE;
-        }
-    };
-    tracing::info!(
-        component = "desktop",
-        event = "desktop_recovery_started",
-        "Desktop host recovery worker started"
-    );
-
     let shell_lifecycle_monitor = match ShellLifecycleMonitor::start(desktop_host) {
         Ok(monitor) => monitor,
         Err(error) => {
@@ -192,6 +173,25 @@ fn main() -> process::ExitCode {
         "Explorer lifecycle monitoring started"
     );
 
+    let mut desktop_recovery = match DesktopRecoveryWorker::start(wallpaper_window) {
+        Ok(recovery) => recovery,
+        Err(error) => {
+            tracing::error!(
+                component = "desktop",
+                event = "desktop_recovery_start_failed",
+                error_kind = ?error.kind(),
+                os_error_code = ?error.raw_os_error(),
+                "Desktop recovery worker could not start"
+            );
+            return process::ExitCode::FAILURE;
+        }
+    };
+    tracing::info!(
+        component = "desktop",
+        event = "desktop_recovery_started",
+        "Desktop host recovery worker started"
+    );
+
     let runtime = match tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -205,6 +205,9 @@ fn main() -> process::ExitCode {
                 os_error_code = ?error.raw_os_error(),
                 "Wallpaper host runtime initialization failed"
             );
+            stop_desktop_recovery(&mut desktop_recovery);
+            drop(desktop_recovery);
+            drop(shell_lifecycle_monitor);
             return process::ExitCode::FAILURE;
         }
     };
@@ -277,8 +280,9 @@ fn main() -> process::ExitCode {
             }
         }
     });
-    drop(shell_lifecycle_monitor);
+    stop_desktop_recovery(&mut desktop_recovery);
     drop(desktop_recovery);
+    drop(shell_lifecycle_monitor);
 
     match run_result {
         Ok(Ok(())) => process::ExitCode::SUCCESS,
@@ -293,5 +297,15 @@ fn main() -> process::ExitCode {
             process::ExitCode::FAILURE
         }
         Err(()) => process::ExitCode::FAILURE,
+    }
+}
+
+fn stop_desktop_recovery(recovery: &mut DesktopRecoveryWorker) {
+    if !recovery.stop() {
+        tracing::error!(
+            component = "desktop",
+            event = "desktop_recovery_join_failed",
+            "Desktop recovery worker did not stop cleanly"
+        );
     }
 }
