@@ -3650,6 +3650,7 @@ dependencies = [
 name = "wallpaper-host"
 version = "0.1.0"
 dependencies = [
+ "tokio",
  "wallpaper-core",
  "wallpaper-desktop",
  "wallpaper-ipc",
@@ -3660,7 +3661,11 @@ dependencies = [
 name = "wallpaper-ipc"
 version = "0.1.0"
 dependencies = [
+ "serde",
+ "serde_json",
+ "tokio",
  "wallpaper-core",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

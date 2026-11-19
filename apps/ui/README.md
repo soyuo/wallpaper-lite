@@ -32,3 +32,20 @@ npm run tauri dev
 `npm run tauri dev` command starts the frontend development server, builds the
 Tauri backend, and opens the desktop window. Close the window to exit the
 development app. Installer bundling is disabled until the release phase.
+
+## Verify UI-to-host IPC
+
+Start the host in a separate PowerShell terminal from the repository root:
+
+```powershell
+cargo +stable run -p wallpaper-host
+```
+
+Then run `npm run tauri dev` from `apps/ui` and select **Check wallpaper host**.
+The window reports a successful `pong` response. The host accepts another
+connection after each request, so the check can be repeated. If the host is not
+running, the UI reports `host_unavailable`; start the host and check again to
+verify reconnection. Stop the host with Ctrl+C.
+
+The wire format, message bound, timeouts, and error codes are documented in
+[`docs/architecture/ipc.md`](../../docs/architecture/ipc.md).
