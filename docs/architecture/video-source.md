@@ -14,7 +14,7 @@ Width and height must be nonzero, no axis may exceed 16,384 pixels, and the tota
 
 ## Decoded frame contract
 
-`read_next` returns tightly packed, top-to-bottom RGBA8 frames with dimensions, stride, presentation timestamp, and sample duration. Timestamps use Media Foundation's 100 ns units and must be nonnegative and strictly increasing. A positive sample duration is used when present; otherwise it is calculated from the validated frame-rate rational. Source Reader stream ticks are returned with their timestamps, and end-of-stream remains explicit on subsequent reads. A current media-type change is accepted only if it remains RGB32 with the original dimensions; otherwise `VideoFormatChanged` is returned. Invalid sample layouts, pixel formats, timestamps, and decoder failures have distinct typed errors with path-free diagnostics.
+`read_next` returns tightly packed, top-to-bottom RGBA8 frames with dimensions, stride, presentation timestamp, and sample duration. Timestamps use Media Foundation's 100 ns units and must be nonnegative and strictly increasing. A positive sample duration is used when present; otherwise it is calculated from the validated frame-rate rational. Source Reader stream ticks are returned with their timestamps, and end-of-stream remains explicit on subsequent reads. A current media-type change is accepted only if it remains RGB32 with the original dimensions; otherwise `VideoFormatChanged` is returned. Invalid sample layouts, pixel formats, timestamps, and decoder failures have distinct typed errors with path-free diagnostics. The independent decoded-frame queue is documented in [`video-frame-queue.md`](video-frame-queue.md).
 
 ## Hardware preference and fallback
 
