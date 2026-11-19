@@ -20,4 +20,9 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tauri = { version = "~2.11.6", features = [] }
+wallpaper-core = { workspace = true }
 wallpaper-ipc = { workspace = true }
+tracing = { workspace = true }
+tracing-appender = { workspace = true }
+rolling-file = { workspace = true }
+tracing-subscriber = { workspace = true }

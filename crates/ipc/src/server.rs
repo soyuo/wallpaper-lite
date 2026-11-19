@@ -21,7 +21,7 @@ pub(crate) async fn run_on_pipe(pipe_name: &str) -> Result<(), IpcError> {
     loop {
         pipe.connect().await.map_err(from_io)?;
 
-        let _request_result = time::timeout(IO_TIMEOUT, async {
+        let request_result = time::timeout(IO_TIMEOUT, async {
             let payload = read_frame(&mut pipe).await?;
             let request = decode_request(&payload)?;
             let response = encode_message(&Response::pong(request.request_id))?;
@@ -38,6 +38,27 @@ pub(crate) async fn run_on_pipe(pipe_name: &str) -> Result<(), IpcError> {
             }
         })
         .await;
+
+        match request_result {
+            Ok(Ok(())) => tracing::debug!(
+                component = "ipc",
+                event = "request_completed",
+                "IPC request completed"
+            ),
+            Ok(Err(error)) => tracing::warn!(
+                component = "ipc",
+                event = "request_rejected",
+                error_code = error.code(),
+                diagnostic = %error.diagnostic_summary(),
+                "IPC request failed"
+            ),
+            Err(_) => tracing::warn!(
+                component = "ipc",
+                event = "request_timed_out",
+                error_code = "timeout",
+                "IPC request exceeded its deadline"
+            ),
+        }
 
         pipe.disconnect().map_err(from_io)?;
 

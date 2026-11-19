@@ -1,13 +1,152 @@
-#[tauri::command]
-async fn host_ping() -> Result<(), String> {
-    wallpaper_ipc::client::ping()
-        .await
-        .map_err(|error| error.to_string())
+use std::{env, fs, path::PathBuf, process};
+
+use rolling_file::{BasicRollingFileAppender, RollingConditionBasic};
+use tracing_appender::non_blocking::WorkerGuard;
+use tracing_subscriber::filter::LevelFilter;
+use wallpaper_core::error::AppError;
+
+const APP_LOG_DIRECTORY: &str = "com.soyuo.wallpaper-lite";
+const UI_LOG_FILE_COUNT: usize = 7;
+const UI_LOG_MAX_SIZE_BYTES: u64 = 5 * 1024 * 1024;
+
+fn install_stderr_logger() {
+    let _ = tracing_subscriber::fmt()
+        .with_max_level(LevelFilter::INFO)
+        .with_target(true)
+        .with_ansi(false)
+        .with_writer(std::io::stderr)
+        .try_init();
 }
 
-pub fn run() {
-    tauri::Builder::default()
+fn initialize_logging() -> Option<WorkerGuard> {
+    let Some(local_app_data) = env::var_os("LOCALAPPDATA") else {
+        install_stderr_logger();
+        eprintln!("UI file logging is unavailable; using stderr.");
+        return None;
+    };
+
+    let log_directory = PathBuf::from(local_app_data)
+        .join(APP_LOG_DIRECTORY)
+        .join("logs");
+    if fs::create_dir_all(&log_directory).is_err() {
+        install_stderr_logger();
+        eprintln!("UI file logging is unavailable; using stderr.");
+        return None;
+    }
+
+    let condition = RollingConditionBasic::new()
+        .daily()
+        .max_size(UI_LOG_MAX_SIZE_BYTES);
+    let appender = match BasicRollingFileAppender::new(
+        log_directory.join("ui.log"),
+        condition,
+        UI_LOG_FILE_COUNT - 1,
+    ) {
+        Ok(appender) => appender,
+        Err(_) => {
+            install_stderr_logger();
+            eprintln!("UI file logging is unavailable; using stderr.");
+            return None;
+        }
+    };
+
+    let (writer, guard) = tracing_appender::non_blocking(appender);
+    if tracing_subscriber::fmt()
+        .with_max_level(LevelFilter::INFO)
+        .with_target(true)
+        .with_ansi(false)
+        .with_writer(writer)
+        .try_init()
+        .is_err()
+    {
+        install_stderr_logger();
+        eprintln!("UI file logger could not be installed; continuing with stderr logging.");
+        return None;
+    }
+
+    Some(guard)
+}
+
+fn tauri_error_code(error: &tauri::Error) -> &'static str {
+    match error {
+        tauri::Error::Runtime(_) => "runtime_error",
+        tauri::Error::WindowLabelAlreadyExists(_) => "window_label_conflict",
+        tauri::Error::WebviewLabelAlreadyExists(_) => "webview_label_conflict",
+        tauri::Error::CannotReparentWebviewWindow => "cannot_reparent_webview",
+        tauri::Error::AssetNotFound(_) => "asset_not_found",
+        tauri::Error::Json(_) => "serialization_error",
+        tauri::Error::Io(_) => "io_error",
+        tauri::Error::InvalidIcon(_) => "invalid_icon",
+        tauri::Error::InvalidArgs(..) => "invalid_arguments",
+        tauri::Error::Setup(_) => "setup_error",
+        tauri::Error::PluginInitialization(_, _) => "plugin_initialization_error",
+        tauri::Error::InvalidUrl(_) => "invalid_url",
+        tauri::Error::JoinError(_) => "task_join_error",
+        tauri::Error::CurrentDir(_) => "current_directory_error",
+        tauri::Error::UnknownPath => "unknown_path",
+        tauri::Error::NoParent => "path_missing_parent",
+        tauri::Error::NoExtension => "path_missing_extension",
+        tauri::Error::NoBasename => "path_missing_basename",
+        tauri::Error::WindowNotFound => "window_not_found",
+        tauri::Error::WebviewNotFound => "webview_not_found",
+        _ => "other_tauri_error",
+    }
+}
+
+#[tauri::command]
+async fn host_ping() -> Result<(), AppError> {
+    match wallpaper_ipc::client::ping().await {
+        Ok(()) => {
+            tracing::info!(
+                component = "ui_backend",
+                event = "host_ping_succeeded",
+                "Wallpaper host ping completed"
+            );
+            Ok(())
+        }
+        Err(error) => {
+            tracing::warn!(
+                component = "ui_backend",
+                event = "host_ping_failed",
+                error_code = error.code(),
+                diagnostic = %error.diagnostic_summary(),
+                "Wallpaper host ping failed"
+            );
+            Err(error.to_app_error())
+        }
+    }
+}
+
+pub fn run() -> process::ExitCode {
+    let _logging_guard = initialize_logging();
+    tracing::info!(
+        component = "ui_backend",
+        event = "startup",
+        "Wallpaper UI starting"
+    );
+
+    let result = tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![host_ping])
-        .run(tauri::generate_context!())
-        .expect("failed to run wallpaper-lite UI");
+        .run(tauri::generate_context!());
+
+    match result {
+        Ok(()) => {
+            tracing::info!(
+                component = "ui_backend",
+                event = "shutdown",
+                "Wallpaper UI stopped"
+            );
+            process::ExitCode::SUCCESS
+        }
+        Err(error) => {
+            let error_code = tauri_error_code(&error);
+            tracing::error!(
+                component = "ui_backend",
+                event = "tauri_runtime_failed",
+                error_code,
+                "Tauri runtime failed"
+            );
+            process::ExitCode::FAILURE
+        }
+    }
 }
