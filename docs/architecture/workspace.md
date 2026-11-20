@@ -75,12 +75,14 @@ Still-image decoding is implemented in `crates/media` using Windows Imaging
 Component (WIC) for PNG and JPEG. Image placement, transform, and color
 adjustments are implemented in `crates/renderer`. Media Foundation opens H.264
 sources and decodes timestamped RGBA8 frames, with software decoding and
-D3D11/DXVA-preferred paths. The bounded frame queue is implemented; playback
-scheduling and D3D11 video-frame presentation remain in Phase 3. Display
-topology and performance policy remain later boundaries in `crates/display`
-and `crates/performance`.
+D3D11/DXVA-preferred paths. The bounded frame queue, playback scheduler, and
+D3D11 video-frame presentation are implemented. Display topology and
+performance policy remain later boundaries in `crates/display` and
+`crates/performance`.
 
 See [`media-decoding.md`](media-decoding.md) for the still-image pixel contract,
 resource limits, and WIC behavior. See [`video-source.md`](video-source.md)
 for the Media Foundation source-reader, frame-timing, GPU interop, and lifetime contracts. See
 [`video-frame-queue.md`](video-frame-queue.md) for queue ordering, capacity, and late-frame policy.
+See [`media-library.md`](media-library.md) for the local catalog schema,
+source-file preservation, and catalog replacement behavior.

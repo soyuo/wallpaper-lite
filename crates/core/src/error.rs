@@ -19,6 +19,7 @@ pub enum ErrorCode {
     ImageDecodeFailed,
     VideoSourceOpenFailed,
     VideoDecodeFailed,
+    LibraryStorageFailed,
     DesktopHostUnavailable,
     Internal,
 }
@@ -41,6 +42,7 @@ impl ErrorCode {
             Self::ImageDecodeFailed => "image_decode_failed",
             Self::VideoSourceOpenFailed => "video_source_open_failed",
             Self::VideoDecodeFailed => "video_decode_failed",
+            Self::LibraryStorageFailed => "library_storage_failed",
             Self::DesktopHostUnavailable => "desktop_host_unavailable",
             Self::Internal => "internal",
         }

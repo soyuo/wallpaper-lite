@@ -5,6 +5,7 @@ use std::path::Path;
 use wallpaper_core::error::{AppError, ErrorCode};
 
 mod frame_queue;
+mod library;
 mod playback;
 #[cfg(target_os = "windows")]
 mod video;
@@ -12,6 +13,10 @@ mod video;
 mod wic;
 
 pub use frame_queue::{FrameEnqueueOutcome, FrameQueueError, VideoFrameQueue};
+pub use library::{
+    Availability, CatalogStore, LibraryError, MediaKind, WallpaperEntry, WallpaperId,
+    WallpaperLibrary,
+};
 pub use playback::{
     PlaybackError, PlaybackScheduler, PlaybackState, VideoFpsLimit, VideoFpsLimitError,
     VideoFpsPreset, VideoPlaybackSpeed, VideoPlaybackSpeedError,
