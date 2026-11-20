@@ -31,8 +31,8 @@ use windows::{
 };
 
 use crate::{
-    ColorAdjustments, D3d11Device, ImageTransform, PlacementDimensions, PlacementMode,
-    RendererError, calculate_transformed_image_placement,
+    ColorAdjustments, D3d11Device, ImageTransform, NormalizedCrop, PlacementDimensions,
+    PlacementMode, RendererError, calculate_transformed_image_placement,
 };
 
 const VERTEX_SHADER: &str = r#"
@@ -521,6 +521,56 @@ impl<'a> D3d11ImagePresenter<'a> {
         settings: wallpaper_core::editor_settings::EditorColorSettings,
     ) -> Result<(), RendererError> {
         self.set_color_adjustments(ColorAdjustments::from_editor_settings(settings)?)
+    }
+
+    /// Apply one complete editor snapshot, presenting it before committing presenter state.
+    pub fn set_editor_settings(
+        &mut self,
+        settings: &wallpaper_core::editor_settings::WallpaperEditorSettings,
+    ) -> Result<(), RendererError> {
+        use wallpaper_core::editor_settings::PlacementMode as StoredPlacementMode;
+
+        settings
+            .validate()
+            .map_err(|_| RendererError::InvalidEditorSettings)?;
+        let render = settings.render();
+        let placement_mode = match render.placement_mode() {
+            StoredPlacementMode::Cover | StoredPlacementMode::Custom => PlacementMode::Cover,
+            StoredPlacementMode::Fit => PlacementMode::Fit,
+            StoredPlacementMode::Stretch => PlacementMode::Stretch,
+            StoredPlacementMode::Center => PlacementMode::Center,
+        };
+        let position = render.position_px();
+        let scale = render.scale();
+        let anchor = render.anchor();
+        let crop = render.crop();
+        let size_px = render
+            .size_px()
+            .map(|size| (size.width() as f32, size.height() as f32));
+        let transform = ImageTransform::new(
+            (position.x() as f32, position.y() as f32),
+            (scale.x(), scale.y()),
+            render.rotation_degrees(),
+            (anchor.x(), anchor.y()),
+            NormalizedCrop::new(crop.x(), crop.y(), crop.width(), crop.height())?,
+        )?
+        .with_size_px(size_px)?;
+        let color_adjustments = ColorAdjustments::from_editor_settings(settings.color())?;
+        let placement_buffer = create_placement_buffer(
+            self.device,
+            self.source_dimensions,
+            PlacementDimensions::new(self.width, self.height)?,
+            placement_mode,
+            transform,
+            color_adjustments,
+        )?;
+
+        self.render_with_placement_buffer(&placement_buffer)?;
+        self.placement_buffer = placement_buffer;
+        self.placement_mode = placement_mode;
+        self.transform = transform;
+        self.color_adjustments = color_adjustments;
+        Ok(())
     }
 
     pub const fn color_adjustments(&self) -> ColorAdjustments {

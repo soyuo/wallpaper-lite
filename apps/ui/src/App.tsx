@@ -4,6 +4,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import "./App.css";
 import { EditorHistory, resolveEditorShortcut } from "./editor-history.mjs";
 import {
+  HostAdapterError,
   hostAdapter,
   type Availability,
   type EditorMonitor,
@@ -315,6 +316,11 @@ function App() {
   useEffect(() => {
     function handleEditorShortcut(event: KeyboardEvent) {
       if (!editorEntry || !editorSettingsDraft) return;
+      if (event.key === "Escape") {
+        event.preventDefault();
+        cancelEditorChanges();
+        return;
+      }
       const target = event.target;
       const editableTarget = target instanceof HTMLElement && (
         target.isContentEditable
@@ -525,24 +531,33 @@ function App() {
     const monitor = editorMonitors.find((item) => item.id === monitorId);
     if (!monitor) return;
     if (!editorEntry) return;
+    const keepDraft = editorDirty;
     setEditorBusy(true);
     setEditorPreview(null);
     setEditorError("");
     try {
-      if (editorDirty && editorSettingsDraft) {
-        await hostAdapter.saveEditorSettings(editorEntry.id, editorSettingsDraft);
-        setEditorDirty(false);
-      }
       setEditorMonitorId(monitor.id);
       const result = await hostAdapter.editorPreview(editorEntry.id, monitor.width, monitor.height);
       setEditorPreview(result);
-      setEditorSettingsDraft(result.settings);
-      setEditorDirty(false);
+      if (!keepDraft) {
+        setEditorSettingsDraft(result.settings);
+        setEditorDirty(false);
+      }
     } catch {
       setEditorError("The wallpaper preview could not be rendered for this display.");
     } finally {
       setEditorBusy(false);
     }
+  }
+
+  function cancelEditorChanges() {
+    if (editorSaveBusy) return;
+    editorHistory.current.clear();
+    setEditorEntry(null);
+    setEditorPreview(null);
+    setEditorSettingsDraft(null);
+    setEditorDirty(false);
+    setEditorError("");
   }
 
   async function saveEditorSettingsDraft() {
@@ -552,17 +567,23 @@ function App() {
     setEditorError("");
     let saved = false;
     try {
-      await hostAdapter.saveEditorSettings(editorEntry.id, editorSettingsDraft);
+      await hostAdapter.applyEditorSettings(editorEntry.id, editorSettingsDraft);
       saved = true;
       setEditorDirty(false);
       const result = await hostAdapter.editorPreview(editorEntry.id, monitor.width, monitor.height);
       setEditorPreview(result);
       setEditorSettingsDraft(result.settings);
       setEditorDirty(false);
-    } catch {
-      setEditorError(saved
-        ? "Settings were saved, but the preview could not be rendered."
-        : "These edits are invalid or could not be saved. The previous settings remain active.");
+    } catch (error) {
+      if (error instanceof HostAdapterError && error.code === "editor_apply_rollback_failed") {
+        setEditorError("Apply failed and the previous desktop settings could not be confirmed. The desktop may differ from saved settings; retry when the host and settings storage are available.");
+      } else if (error instanceof HostAdapterError && error.code === "editor_wallpaper_not_active") {
+        setEditorError("This library item is not the active desktop wallpaper. Its settings were not changed.");
+      } else {
+        setEditorError(saved
+          ? "Settings were saved, but the preview could not be rendered."
+          : "These edits are invalid or could not be saved. The previous settings remain active.");
+      }
     } finally {
       setEditorSaveBusy(false);
     }
@@ -814,16 +835,9 @@ function App() {
           <div className="editor-preview-heading">
             <div>
               <h2 id="editor-preview-title">Preview: {editorEntry.displayName}</h2>
-              <p>Uses the saved physical-pixel settings and renderer placement/color rules.</p>
+              <p>Uses the shared physical-pixel placement and color rules. Apply updates the desktop; Cancel discards the draft.</p>
             </div>
-            <button onClick={() => {
-              editorHistory.current.clear();
-              setEditorEntry(null);
-              setEditorPreview(null);
-              setEditorSettingsDraft(null);
-              setEditorDirty(false);
-              setEditorError("");
-            }}>
+            <button disabled={editorSaveBusy} onClick={cancelEditorChanges}>
               Close preview
             </button>
           </div>
@@ -969,8 +983,9 @@ function App() {
                 <button onClick={() => updateEditorRender({ crop: { x: 0, y: 0, width: 1, height: 1 } })}>Reset crop</button>
               </fieldset>
               <button disabled={editorSaveBusy} onClick={() => void saveEditorSettingsDraft()}>
-                {editorSaveBusy ? "Saving and rendering..." : "Save and preview"}
+                {editorSaveBusy ? "Applying and rendering..." : "Apply"}
               </button>
+              <button disabled={editorSaveBusy} onClick={cancelEditorChanges}>Cancel</button>
               <p>Drag the preview to position. Drag the corner handle to resize; hold Shift to lock its aspect ratio or Alt to resize around its center.</p>
             </div>
           )}

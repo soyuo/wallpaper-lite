@@ -32,11 +32,14 @@ position/size fields, zoom, rotation, normalized crop selection/move/resize,
 aspect presets, and crop reset. Selecting a standard placement mode resets
 custom geometry while preserving the crop; using a transform control enters
 Custom mode. Shift locks the image resize aspect ratio; Alt resizes around its
-center. Edits remain a validated draft until **Save and preview** stores them through
-`EditorSettingsStore` and renders the saved result. Pointer deltas are converted
-from CSS canvas units to monitor physical pixels. Playback-synchronized preview,
-edit history, transactional Apply/Cancel, and applying settings to the live
-desktop remain later work.
+center. Edits remain a validated draft until **Apply** updates the active host
+presenter and stores them through `EditorSettingsStore`. Pointer deltas are
+converted from CSS canvas units to monitor physical pixels. The editor's
+in-memory undo/redo history is bounded to 100 snapshots and
+coalesces continuous gestures. Apply sends a complete settings snapshot to the
+host, waits for the active presenter, then atomically persists it; a failed
+save requests host rollback. Cancel, Escape, and closing discard the draft.
+Applying one edit across multiple monitors remains later work.
 
 The editor exposes brightness, contrast, saturation, gamma, opacity, color
 temperature, and per-channel RGB balance with the shared settings ranges and

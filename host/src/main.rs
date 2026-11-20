@@ -234,8 +234,8 @@ fn main() -> process::ExitCode {
                 return process::ExitCode::FAILURE;
             }
         };
-    if let Some(image) = initial_image {
-        match desktop_recovery.present_image(image) {
+    if let Some((source_path, image)) = initial_image {
+        match desktop_recovery.present_image(image, source_path) {
             Ok(()) => tracing::info!(
                 component = "renderer",
                 event = "wallpaper_image_presented",
@@ -400,7 +400,7 @@ enum StartupImageError {
     Decode(MediaError),
 }
 
-fn load_startup_image() -> Result<Option<DecodedImage>, StartupImageError> {
+fn load_startup_image() -> Result<Option<(PathBuf, DecodedImage)>, StartupImageError> {
     let mut arguments = env::args_os().skip(1);
     let Some(option) = arguments.next() else {
         return Ok(None);
@@ -415,7 +415,8 @@ fn load_startup_image() -> Result<Option<DecodedImage>, StartupImageError> {
         return Err(StartupImageError::Arguments);
     }
 
-    decode_image(PathBuf::from(path))
-        .map(Some)
+    let source_path = PathBuf::from(path);
+    decode_image(&source_path)
+        .map(|image| Some((source_path, image)))
         .map_err(StartupImageError::Decode)
 }

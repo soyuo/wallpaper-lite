@@ -74,5 +74,30 @@ Cover geometry and applies stored physical size, position, scale, rotation,
 anchor, and crop. Canvas pointer deltas are converted from CSS dimensions to
 selected-monitor physical pixels before position and size are stored. This
 per-wallpaper store does not implement global-settings backup/restore. Edit
-history, transactional Apply/Cancel, and live host application remain separate
-work.
+history is handled separately from persistence. Editor changes remain in the UI
+draft until Apply. Apply validates the complete snapshot, sends it to the host,
+and waits for the active presenter to render it. After host acknowledgement, the
+UI atomically saves the snapshot. If saving fails, the UI asks the host to
+reapply the previously loaded snapshot and returns a visible error. If the host
+request times out or its response is uncertain, the UI also asks the host to
+reapply the previous snapshot before returning. A D3D render/present failure
+receives the same compensation because the back buffer may have been drawn
+before presentation failed. Validation and inactive-source rejections return
+directly without changing persistence. Concurrent Apply requests are serialized.
+Cancel, Escape, and closing the editor discard the draft without sending IPC or
+writing settings. Reopening the editor loads the last successfully applied
+snapshot.
+
+Before Apply, the UI resolves the selected library ID to its available source
+path. The host compares the canonical path with the active image or video
+presenter and rejects mismatches before changing the presenter or the settings
+snapshot retained for Explorer recovery. The recovery worker binds that active
+snapshot to its canonical source path. It reapplies the snapshot only when
+restoring the same source; switching to a different image or video clears the
+old snapshot and starts the new source with default render settings, so edits do
+not leak between library items.
+
+If a failed or uncertain Apply cannot be compensated, the command returns
+`editor_apply_rollback_failed` and logs a path-free rollback failure. The UI
+reports that active desktop output may differ from saved settings and asks the
+user to retry after restoring host or storage access.
