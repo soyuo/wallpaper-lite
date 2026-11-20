@@ -14,6 +14,23 @@ import {
   type WallpaperEditorSettings,
 } from "./host-adapter";
 
+const colorControls: Array<{
+  key: keyof WallpaperEditorSettings["color"];
+  label: string;
+  min: number;
+  max: number;
+}> = [
+  { key: "brightness", label: "Brightness", min: 0, max: 4 },
+  { key: "contrast", label: "Contrast", min: 0, max: 4 },
+  { key: "saturation", label: "Saturation", min: 0, max: 4 },
+  { key: "gamma", label: "Gamma", min: 0.1, max: 4 },
+  { key: "opacity", label: "Opacity", min: 0, max: 1 },
+  { key: "temperature", label: "Color temperature", min: -1, max: 1 },
+  { key: "red", label: "Red balance", min: 0, max: 4 },
+  { key: "green", label: "Green balance", min: 0, max: 4 },
+  { key: "blue", label: "Blue balance", min: 0, max: 4 },
+];
+
 const failureLabels: Record<ImportFailure, string> = {
   unsupported_format: "Unsupported format",
   invalid_media: "The file is corrupt or could not be decoded",
@@ -623,6 +640,28 @@ function App() {
     } : current);
   }
 
+  function updateEditorColor(patch: Partial<WallpaperEditorSettings["color"]>) {
+    setEditorDirty(true);
+    setEditorSettingsDraft((current) => current ? {
+      ...current,
+      color: { ...current.color, ...patch },
+    } : current);
+  }
+
+  function resetEditorColor() {
+    updateEditorColor({
+      brightness: 1,
+      contrast: 1,
+      saturation: 1,
+      gamma: 1,
+      opacity: 1,
+      temperature: 0,
+      red: 1,
+      green: 1,
+      blue: 1,
+    });
+  }
+
   function selectPlacementMode(mode: WallpaperEditorSettings["render"]["placementMode"]) {
     if (mode === "custom") {
       updateEditorRender({ placementMode: mode });
@@ -742,6 +781,28 @@ function App() {
                   </label>
                 </>
               )}
+              <fieldset className="editor-color-controls">
+                <legend>Color adjustments</legend>
+                <div className="editor-color-grid">
+                  {colorControls.map(({ key, label, min, max }) => (
+                    <label key={key}>
+                      <span>{label}</span>
+                      <input
+                        type="range"
+                        min={min}
+                        max={max}
+                        step="0.01"
+                        value={editorSettingsDraft.color[key]}
+                        aria-label={label}
+                        onChange={(event) => updateEditorColor({ [key]: Number(event.currentTarget.value) })}
+                      />
+                      <output aria-label={`${label} value`}>{editorSettingsDraft.color[key].toFixed(2)}</output>
+                    </label>
+                  ))}
+                </div>
+                <p className="editor-color-note">Temperature ranges from cool (-1) to warm (+1). Opacity scales adjusted color toward black; the desktop surface is not transparent.</p>
+                <button type="button" onClick={resetEditorColor}>Reset color</button>
+              </fieldset>
               <fieldset className="editor-crop-controls">
                 <legend>Normalized crop</legend>
                 {previews[editorEntry.id] && (

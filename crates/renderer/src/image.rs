@@ -515,6 +515,14 @@ impl<'a> D3d11ImagePresenter<'a> {
         Ok(())
     }
 
+    /// Apply shared editor color settings through the D3D11 color shader.
+    pub fn set_editor_color_settings(
+        &mut self,
+        settings: wallpaper_core::editor_settings::EditorColorSettings,
+    ) -> Result<(), RendererError> {
+        self.set_color_adjustments(ColorAdjustments::from_editor_settings(settings)?)
+    }
+
     pub const fn color_adjustments(&self) -> ColorAdjustments {
         self.color_adjustments
     }
@@ -1579,9 +1587,7 @@ mod tests {
                 .unwrap();
         presenter.set_transform(d3d_transform).unwrap();
         presenter
-            .set_color_adjustments(
-                ColorAdjustments::new(1.05, 1.1, 0.9, 1.1, 0.95, 0.05, (1.1, 0.95, 1.05)).unwrap(),
-            )
+            .set_editor_color_settings(settings.color())
             .unwrap();
 
         let gpu = read_render_target_rgba8(&presenter);

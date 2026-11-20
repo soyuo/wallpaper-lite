@@ -197,6 +197,44 @@ body {
   border-radius: 0.5rem;
 }
 
+.editor-color-controls {
+  display: grid;
+  grid-column: 1 / -1;
+  gap: 0.65rem;
+  border: 1px solid #d7dce5;
+  border-radius: 0.5rem;
+}
+
+.editor-color-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  gap: 0.65rem;
+}
+
+.editor-color-grid > label {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 0.2rem 0.5rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.editor-color-grid input {
+  grid-column: 1 / -1;
+  width: 100%;
+}
+
+.editor-color-grid output {
+  font-variant-numeric: tabular-nums;
+}
+
+.editor-color-note {
+  margin: 0;
+  color: #596579;
+  font-size: 0.8rem;
+}
+
 .editor-crop-controls > label {
   min-width: 5rem;
 }

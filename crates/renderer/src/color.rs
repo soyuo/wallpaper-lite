@@ -1,4 +1,5 @@
 use crate::RendererError;
+use wallpaper_core::editor_settings::EditorColorSettings;
 
 /// Runtime color controls for one still-image presenter.
 ///
@@ -66,6 +67,22 @@ impl ColorAdjustments {
             temperature,
             rgb_balance,
         })
+    }
+
+    /// Convert the validated shared editor color model into GPU parameters.
+    ///
+    /// Keeping this conversion here makes the CPU preview and D3D presenter use
+    /// the same values and validation rules.
+    pub fn from_editor_settings(settings: EditorColorSettings) -> Result<Self, RendererError> {
+        Self::new(
+            settings.brightness(),
+            settings.contrast(),
+            settings.saturation(),
+            settings.gamma(),
+            settings.opacity(),
+            settings.temperature(),
+            settings.rgb_balance(),
+        )
     }
 
     pub const fn brightness(self) -> f32 {
@@ -168,6 +185,21 @@ fn linear_to_srgb8(value: f32) -> u8 {
 mod tests {
     use super::{ColorAdjustments, apply_rgba8_reference};
     use crate::RendererError;
+
+    #[test]
+    fn shared_editor_color_settings_map_to_the_gpu_parameters() {
+        let stored = wallpaper_core::editor_settings::EditorColorSettings::new(
+            1.25, 1.1, 0.8, 1.2, 0.9, 0.25, 1.0, 0.95, 1.05,
+        )
+        .unwrap();
+        let expected =
+            ColorAdjustments::new(1.25, 1.1, 0.8, 1.2, 0.9, 0.25, (1.0, 0.95, 1.05)).unwrap();
+
+        assert_eq!(
+            ColorAdjustments::from_editor_settings(stored).unwrap(),
+            expected
+        );
+    }
 
     fn adjustments(
         brightness: f32,
