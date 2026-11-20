@@ -294,27 +294,30 @@ impl CatalogStore {
             return Err(LibraryError::CatalogSourceCollision);
         }
 
-        let parent = self.path.parent().ok_or(LibraryError::InvalidCatalogPath)?;
-        fs::create_dir_all(parent).map_err(|_| LibraryError::WriteFailed)?;
         let contents =
             serde_json::to_vec_pretty(&snapshot).map_err(|_| LibraryError::WriteFailed)?;
-        let (temporary_path, mut temporary_file) = create_temporary_file(&self.path)?;
-        let write_result = temporary_file
-            .write_all(&contents)
-            .and_then(|()| temporary_file.sync_all());
-        drop(temporary_file);
-
-        if write_result.is_err() {
-            let _ = fs::remove_file(&temporary_path);
-            return Err(LibraryError::WriteFailed);
-        }
-
-        if let Err(error) = replace_catalog(&temporary_path, &self.path) {
-            let _ = fs::remove_file(&temporary_path);
-            return Err(error);
-        }
-        Ok(())
+        atomic_write_bytes(&self.path, &contents)
     }
+}
+
+pub(crate) fn atomic_write_bytes(target: &Path, contents: &[u8]) -> Result<(), LibraryError> {
+    validate_catalog_path(target)?;
+    let parent = target.parent().ok_or(LibraryError::InvalidCatalogPath)?;
+    fs::create_dir_all(parent).map_err(|_| LibraryError::WriteFailed)?;
+    let (temporary_path, mut temporary_file) = create_temporary_file(target)?;
+    let write_result = temporary_file
+        .write_all(contents)
+        .and_then(|()| temporary_file.sync_all());
+    drop(temporary_file);
+    if write_result.is_err() {
+        let _ = fs::remove_file(&temporary_path);
+        return Err(LibraryError::WriteFailed);
+    }
+    if let Err(error) = replace_file(&temporary_path, target) {
+        let _ = fs::remove_file(&temporary_path);
+        return Err(error);
+    }
+    Ok(())
 }
 
 /// Safe, typed failures from catalog validation and persistence.
@@ -451,7 +454,7 @@ fn create_temporary_file(target: &Path) -> Result<(PathBuf, File), LibraryError>
 }
 
 #[cfg(windows)]
-fn replace_catalog(temporary: &Path, target: &Path) -> Result<(), LibraryError> {
+fn replace_file(temporary: &Path, target: &Path) -> Result<(), LibraryError> {
     use std::os::windows::ffi::OsStrExt;
 
     use windows::{
@@ -517,7 +520,7 @@ fn replace_catalog(temporary: &Path, target: &Path) -> Result<(), LibraryError> 
 }
 
 #[cfg(not(windows))]
-fn replace_catalog(temporary: &Path, target: &Path) -> Result<(), LibraryError> {
+fn replace_file(temporary: &Path, target: &Path) -> Result<(), LibraryError> {
     fs::rename(temporary, target).map_err(|_| LibraryError::ReplaceFailed)
 }
 

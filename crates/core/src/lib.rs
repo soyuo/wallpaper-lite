@@ -2,4 +2,5 @@
 
 #![forbid(unsafe_code)]
 
+pub mod editor_settings;
 pub mod error;

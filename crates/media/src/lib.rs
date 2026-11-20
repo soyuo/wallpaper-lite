@@ -4,6 +4,7 @@ use std::path::Path;
 
 use wallpaper_core::error::{AppError, ErrorCode};
 
+mod editor_settings;
 mod frame_queue;
 mod import;
 mod library;
@@ -13,6 +14,7 @@ mod video;
 #[cfg(target_os = "windows")]
 mod wic;
 
+pub use editor_settings::{EditorSettingsError, EditorSettingsStore};
 pub use frame_queue::{FrameEnqueueOutcome, FrameQueueError, VideoFrameQueue};
 pub use import::{ImportFailure, ImportResult, ImportStatus, import_local_media};
 pub use library::{
@@ -22,6 +24,11 @@ pub use library::{
 pub use playback::{
     PlaybackError, PlaybackScheduler, PlaybackState, VideoFpsLimit, VideoFpsLimitError,
     VideoFpsPreset, VideoPlaybackSpeed, VideoPlaybackSpeedError,
+};
+pub use wallpaper_core::editor_settings::{
+    EDITOR_SETTINGS_SCHEMA_VERSION, EditorColorSettings, EditorSettingsValidationError,
+    NormalizedCrop, NormalizedPoint, PhysicalPosition, PhysicalSize, PlacementMode, RenderSettings,
+    Scale2d, WallpaperEditorSettings,
 };
 
 #[cfg(any(target_os = "windows", test))]

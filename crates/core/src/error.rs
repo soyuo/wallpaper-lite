@@ -21,6 +21,8 @@ pub enum ErrorCode {
     VideoDecodeFailed,
     LibraryStorageFailed,
     InvalidLibraryEntry,
+    EditorSettingsStorageFailed,
+    InvalidEditorSettings,
     DesktopHostUnavailable,
     Internal,
 }
@@ -45,6 +47,8 @@ impl ErrorCode {
             Self::VideoDecodeFailed => "video_decode_failed",
             Self::LibraryStorageFailed => "library_storage_failed",
             Self::InvalidLibraryEntry => "invalid_library_entry",
+            Self::EditorSettingsStorageFailed => "editor_settings_storage_failed",
+            Self::InvalidEditorSettings => "invalid_editor_settings",
             Self::DesktopHostUnavailable => "desktop_host_unavailable",
             Self::Internal => "internal",
         }
