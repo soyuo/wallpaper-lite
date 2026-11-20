@@ -174,6 +174,51 @@ body {
   grid-column: 1 / -1;
 }
 
+.editor-presets {
+  display: grid;
+  grid-column: 1 / -1;
+  gap: 0.65rem;
+  border: 1px solid #d7dce5;
+  border-radius: 0.5rem;
+}
+
+.preset-save-row,
+.preset-list li,
+.recent-wallpapers li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.preset-save-row label {
+  display: grid;
+  min-width: min(16rem, 100%);
+  gap: 0.25rem;
+}
+
+.preset-list,
+.recent-wallpapers ul {
+  display: grid;
+  gap: 0.4rem;
+  margin: 0;
+  padding-left: 1.2rem;
+}
+
+.preset-list li > span,
+.recent-wallpapers li > span {
+  min-width: 8rem;
+  flex: 1;
+}
+
+.recent-wallpapers {
+  margin-block: 1rem;
+}
+
+.recent-wallpapers h3 {
+  margin-block: 0 0.5rem;
+}
+
 .editor-history-controls {
   display: flex;
   flex-wrap: wrap;

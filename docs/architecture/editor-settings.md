@@ -101,3 +101,21 @@ If a failed or uncertain Apply cannot be compensated, the command returns
 `editor_apply_rollback_failed` and logs a path-free rollback failure. The UI
 reports that active desktop output may differ from saved settings and asks the
 user to retry after restoring host or storage access.
+
+## Presets and recently applied items
+
+Named presets are stored as versioned per-wallpaper snapshots in
+`%APPDATA%\\WallpaperLite\\editor-presets\\<wallpaperId>.json`. Names are
+trimmed, case-insensitively unique, limited to 64 characters, and each wallpaper
+can have up to 32 presets. Preset snapshots pass the same settings validation
+as ordinary editor settings and never include or modify source media. Loading a
+preset replaces only the current in-memory draft and undo history; it does not
+write active settings or contact the desktop host. **Apply** is still required
+to update the wallpaper.
+
+Recently applied wallpaper IDs are stored in
+`%APPDATA%\\WallpaperLite\\recent-wallpapers.json`, newest first, capped at
+100 entries. The Apply command stages the recent ordering under the same UI
+transaction lock and restores the previous ordering if host application or
+settings persistence fails. The UI displays only IDs still present in the
+catalog. Opening or previewing an item does not change recency.

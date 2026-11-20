@@ -7,8 +7,8 @@ use wallpaper_core::editor_settings::WallpaperEditorSettings;
 use wallpaper_core::error::{AppError, ErrorCode};
 use wallpaper_ipc::protocol::{Command, PlaybackCommandErrorCode, ResponseResult};
 use wallpaper_media::{
-    Availability, CatalogStore, EditorSettingsStore, MediaKind, VideoReadEvent, VideoSource,
-    decode_image,
+    Availability, CatalogStore, EditorPresetStore, EditorSettingsStore, MediaKind,
+    RecentWallpaperStore, VideoReadEvent, VideoSource, WallpaperEditorPreset, decode_image,
 };
 use wallpaper_renderer::render_editor_preview;
 
@@ -87,6 +87,19 @@ pub async fn apply_editor_settings(
         )
     })??;
 
+    let recent_store =
+        RecentWallpaperStore::for_current_user().map_err(|error| error.to_app_error())?;
+    let recent_store_for_load = recent_store.clone();
+    let previous_recents =
+        tauri::async_runtime::spawn_blocking(move || recent_store_for_load.list())
+            .await
+            .map_err(|_| {
+                AppError::new(
+                    ErrorCode::Internal,
+                    "Recent wallpapers could not be loaded.",
+                )
+            })?
+            .map_err(|error| error.to_app_error())?;
     let apply_result = wallpaper_ipc::client::request(Command::ApplyEditorSettings {
         settings: settings.clone(),
         source_path: source_path.clone(),
@@ -126,6 +139,8 @@ pub async fn apply_editor_settings(
         return Err(compensate_host_settings(previous, source_path, apply_error).await);
     }
 
+    let rollback_store = store.clone();
+    let rollback_settings = previous.clone();
     let save_result =
         match tauri::async_runtime::spawn_blocking(move || store.save(&settings)).await {
             Ok(result) => result.map_err(|error| error.to_app_error()),
@@ -139,7 +154,204 @@ pub async fn apply_editor_settings(
         return Err(compensate_host_settings(previous, source_path, save_error).await);
     }
 
+    let recent_store_for_record = recent_store.clone();
+    let recent_result = match tauri::async_runtime::spawn_blocking(move || {
+        recent_store_for_record.record_applied(wallpaper_id)
+    })
+    .await
+    {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(error)) => Err(error.to_app_error()),
+        Err(_) => Err(AppError::new(
+            ErrorCode::Internal,
+            "Recent wallpapers could not be saved.",
+        )),
+    };
+    if let Err(recent_error) = recent_result {
+        return Err(rollback_after_recent_failure(
+            rollback_store,
+            rollback_settings,
+            recent_store,
+            previous_recents,
+            source_path,
+            recent_error,
+        )
+        .await);
+    }
+
     Ok(())
+}
+
+async fn rollback_after_recent_failure(
+    settings_store: EditorSettingsStore,
+    previous_settings: WallpaperEditorSettings,
+    recent_store: RecentWallpaperStore,
+    previous_recents: Vec<u64>,
+    source_path: String,
+    operation_error: AppError,
+) -> AppError {
+    let settings_for_restore = settings_store.clone();
+    let settings_snapshot = previous_settings.clone();
+    let settings_restore =
+        tauri::async_runtime::spawn_blocking(move || settings_for_restore.save(&settings_snapshot))
+            .await;
+    let recent_restore =
+        tauri::async_runtime::spawn_blocking(move || recent_store.restore(&previous_recents)).await;
+    let host_restore = wallpaper_ipc::client::request(Command::ApplyEditorSettings {
+        settings: previous_settings,
+        source_path,
+    })
+    .await;
+    if matches!(settings_restore, Ok(Ok(())))
+        && matches!(recent_restore, Ok(Ok(())))
+        && matches!(host_restore, Ok(ResponseResult::EditorSettingsApplied))
+    {
+        return operation_error;
+    }
+    tracing::error!(
+        component = "ui_backend",
+        event = "editor_apply_rollback_failed",
+        "Wallpaper settings, recent ordering, or active desktop could not be restored after recent-item persistence failed"
+    );
+    AppError::new(
+        ErrorCode::EditorApplyRollbackFailed,
+        "The prior wallpaper state could not be fully restored after Apply failed.",
+    )
+}
+
+fn validate_catalog_entry(wallpaper_id: u64) -> Result<(), AppError> {
+    let catalog = CatalogStore::for_current_user()
+        .map_err(|error| error.to_app_error())?
+        .load()
+        .map_err(|error| error.to_app_error())?;
+    let entry = catalog.get_by_raw_id(wallpaper_id).ok_or_else(|| {
+        AppError::new(
+            ErrorCode::InvalidLibraryEntry,
+            "The selected wallpaper is no longer in the library.",
+        )
+    })?;
+    if entry.availability() != Availability::Available {
+        return Err(AppError::new(
+            ErrorCode::InvalidLibraryEntry,
+            "The selected wallpaper source is unavailable.",
+        ));
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn list_editor_presets(
+    wallpaper_id: u64,
+) -> Result<Vec<WallpaperEditorPreset>, AppError> {
+    let _transaction_guard = EDITOR_APPLY_TRANSACTION
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    validate_catalog_entry(wallpaper_id)?;
+    let store = EditorPresetStore::for_current_user().map_err(|error| error.to_app_error())?;
+    tauri::async_runtime::spawn_blocking(move || store.list(wallpaper_id))
+        .await
+        .map_err(|_| {
+            AppError::new(
+                ErrorCode::Internal,
+                "Wallpaper presets could not be loaded.",
+            )
+        })?
+        .map_err(|error| error.to_app_error())
+}
+
+#[tauri::command]
+pub async fn save_editor_preset(
+    wallpaper_id: u64,
+    name: String,
+    settings: WallpaperEditorSettings,
+) -> Result<(), AppError> {
+    let _transaction_guard = EDITOR_APPLY_TRANSACTION
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    validate_catalog_entry(wallpaper_id)?;
+    if settings.wallpaper_id() != wallpaper_id || settings.validate().is_err() {
+        return Err(AppError::new(
+            ErrorCode::InvalidEditorSettings,
+            "The wallpaper editor settings are invalid.",
+        ));
+    }
+    let store = EditorPresetStore::for_current_user().map_err(|error| error.to_app_error())?;
+    tauri::async_runtime::spawn_blocking(move || store.save(wallpaper_id, &name, &settings))
+        .await
+        .map_err(|_| AppError::new(ErrorCode::Internal, "Wallpaper presets could not be saved."))?
+        .map_err(|error| error.to_app_error())
+}
+
+#[tauri::command]
+pub async fn rename_editor_preset(
+    wallpaper_id: u64,
+    current_name: String,
+    new_name: String,
+) -> Result<(), AppError> {
+    let _transaction_guard = EDITOR_APPLY_TRANSACTION
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    validate_catalog_entry(wallpaper_id)?;
+    let store = EditorPresetStore::for_current_user().map_err(|error| error.to_app_error())?;
+    tauri::async_runtime::spawn_blocking(move || {
+        store.rename(wallpaper_id, &current_name, &new_name)
+    })
+    .await
+    .map_err(|_| {
+        AppError::new(
+            ErrorCode::Internal,
+            "Wallpaper presets could not be renamed.",
+        )
+    })?
+    .map_err(|error| error.to_app_error())
+}
+
+#[tauri::command]
+pub async fn remove_editor_preset(wallpaper_id: u64, name: String) -> Result<(), AppError> {
+    let _transaction_guard = EDITOR_APPLY_TRANSACTION
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    validate_catalog_entry(wallpaper_id)?;
+    let store = EditorPresetStore::for_current_user().map_err(|error| error.to_app_error())?;
+    tauri::async_runtime::spawn_blocking(move || store.remove(wallpaper_id, &name))
+        .await
+        .map_err(|_| {
+            AppError::new(
+                ErrorCode::Internal,
+                "Wallpaper presets could not be removed.",
+            )
+        })?
+        .map_err(|error| error.to_app_error())
+}
+
+#[tauri::command]
+pub async fn recent_wallpaper_ids() -> Result<Vec<u64>, AppError> {
+    let _transaction_guard = EDITOR_APPLY_TRANSACTION
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let ids = RecentWallpaperStore::for_current_user().map_err(|error| error.to_app_error())?;
+    let ids = tauri::async_runtime::spawn_blocking(move || ids.list())
+        .await
+        .map_err(|_| {
+            AppError::new(
+                ErrorCode::Internal,
+                "Recent wallpapers could not be loaded.",
+            )
+        })?
+        .map_err(|error| error.to_app_error())?;
+    let catalog = CatalogStore::for_current_user()
+        .map_err(|error| error.to_app_error())?
+        .load()
+        .map_err(|error| error.to_app_error())?;
+    Ok(ids
+        .into_iter()
+        .filter(|id| catalog.get_by_raw_id(*id).is_some())
+        .collect())
 }
 
 async fn compensate_host_settings(
