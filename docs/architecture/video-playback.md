@@ -15,6 +15,13 @@ Frames with negative PTS, nonpositive duration, or an overflowing presentation
 end are rejected before entering the queue. Callers present only returned
 frames, so an idle clock sample does not redraw.
 
+The host's source-worker channel is separately bounded to three frames. When
+it is full, the source worker retains at most one pending decoded frame and
+does not read another media sample until the channel has room. A seek discards
+that pending frame before advancing the generation, so stale frames cannot
+cross the seek boundary or let the reader run to end of stream ahead of
+presentation.
+
 ## Output FPS cap
 
 `VideoFpsLimit` accepts typed presets of 15, 24, 30, 60, and 120 FPS, or a
