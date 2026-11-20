@@ -4,6 +4,7 @@ use wallpaper_core::error::{AppError, ErrorCode};
 
 mod color;
 mod placement;
+mod preview;
 
 pub use color::ColorAdjustments;
 pub use placement::{
@@ -11,6 +12,7 @@ pub use placement::{
     PlacementPoint, PlacementRect, calculate_image_placement,
     calculate_transformed_image_placement,
 };
+pub use preview::{EDITOR_PREVIEW_MAX_EDGE, RenderedEditorPreview, render_editor_preview};
 
 #[cfg(target_os = "windows")]
 mod image;
@@ -30,6 +32,9 @@ pub enum RendererError {
     WindowSizeUnavailable,
     InvalidPlacementDimensions,
     InvalidVideoFrame,
+    InvalidPreviewInput,
+    InvalidEditorSettings,
+    PreviewAllocationFailed,
     InvalidTransformParameters,
     InvalidCropBounds,
     InvalidColorAdjustments,
@@ -53,6 +58,10 @@ impl RendererError {
             Self::UnsupportedPlatform => AppError::new(
                 ErrorCode::UnsupportedPlatform,
                 "Direct3D initialization is unavailable on this platform.",
+            ),
+            Self::InvalidEditorSettings => AppError::new(
+                ErrorCode::InvalidEditorSettings,
+                "The wallpaper editor settings are invalid.",
             ),
             _ => AppError::new(
                 ErrorCode::GraphicsInitializationFailed,
@@ -85,6 +94,9 @@ impl RendererError {
                 "stage=d3d11_present detail=invalid_placement_dimensions".into()
             }
             Self::InvalidVideoFrame => "stage=d3d11_present detail=invalid_video_frame".into(),
+            Self::InvalidPreviewInput => "stage=editor_preview detail=invalid_input".into(),
+            Self::InvalidEditorSettings => "stage=editor_preview detail=invalid_settings".into(),
+            Self::PreviewAllocationFailed => "stage=editor_preview detail=allocation_failed".into(),
             Self::InvalidTransformParameters => {
                 "stage=image_transform detail=invalid_parameters".into()
             }

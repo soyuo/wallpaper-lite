@@ -999,7 +999,10 @@ mod tests {
     use super::{D3d11ImagePresenter, hwnd_from_raw};
     use crate::D3d11Device;
     use crate::color::apply_rgba8_reference;
-    use crate::{ColorAdjustments, ImageTransform, NormalizedCrop, PlacementMode};
+    use crate::{
+        ColorAdjustments, ImageTransform, NormalizedCrop, PlacementDimensions, PlacementMode,
+        calculate_transformed_image_placement,
+    };
     use windows::Win32::UI::WindowsAndMessaging::SWP_NOACTIVATE;
 
     fn read_render_target_pixel(presenter: &D3d11ImagePresenter<'_>, x: u32, y: u32) -> [u8; 4] {
@@ -1043,6 +1046,54 @@ mod tests {
         let pixel =
             unsafe { std::slice::from_raw_parts((mapped.pData as *const u8).add(offset), 4) };
         let result = [pixel[0], pixel[1], pixel[2], pixel[3]];
+        unsafe { context.Unmap(&staging, 0) };
+        result
+    }
+
+    fn read_render_target_rgba8(presenter: &D3d11ImagePresenter<'_>) -> Vec<u8> {
+        presenter
+            .draw_current_frame_for_readback()
+            .expect("current image should be drawn for readback");
+        let render_target = presenter
+            .render_target
+            .as_ref()
+            .expect("presenter should have a render target");
+        let resource = unsafe { render_target.GetResource() }
+            .expect("render target resource should be available");
+        let texture: ID3D11Texture2D = resource
+            .cast()
+            .expect("render target should be a 2D texture");
+        let mut description = D3D11_TEXTURE2D_DESC::default();
+        unsafe { texture.GetDesc(&mut description) };
+        description.Usage = D3D11_USAGE_STAGING;
+        description.BindFlags = 0;
+        description.CPUAccessFlags = D3D11_CPU_ACCESS_READ.0 as u32;
+        description.MiscFlags = 0;
+        let mut staging = None;
+        unsafe {
+            presenter
+                .device
+                .device()
+                .CreateTexture2D(&description, None, Some(&mut staging))
+        }
+        .expect("staging texture should be created");
+        let staging = staging.expect("staging texture should be returned");
+        let context = presenter.device.immediate_context();
+        unsafe { context.CopyResource(&staging, &texture) };
+        let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
+        unsafe { context.Map(&staging, 0, D3D11_MAP_READ, 0, Some(&mut mapped)) }
+            .expect("staging texture should be readable");
+        let mut result = vec![0; description.Width as usize * description.Height as usize * 4];
+        for row in 0..description.Height as usize {
+            let source = unsafe {
+                std::slice::from_raw_parts(
+                    (mapped.pData as *const u8).add(row * mapped.RowPitch as usize),
+                    description.Width as usize * 4,
+                )
+            };
+            let start = row * description.Width as usize * 4;
+            result[start..start + source.len()].copy_from_slice(source);
+        }
         unsafe { context.Unmap(&staging, 0) };
         result
     }
@@ -1477,6 +1528,135 @@ mod tests {
             !unsafe { IsWindow(Some(hwnd_from_raw(attached_hwnd))) }.as_bool(),
             "the video presenter should release before its owned child window"
         );
+    }
+
+    #[test]
+    fn editor_preview_matches_d3d_output_within_documented_tolerance() {
+        use wallpaper_core::editor_settings::{
+            EditorColorSettings, NormalizedCrop as StoredCrop, NormalizedPoint, PhysicalPosition,
+            PhysicalSize, PlacementMode as StoredPlacementMode, RenderSettings, Scale2d,
+            WallpaperEditorSettings,
+        };
+
+        let host = discover_desktop_host().expect("an interactive Windows shell is required");
+        let window = host
+            .attach_wallpaper_window()
+            .expect("the wallpaper child should attach to the desktop host");
+        let device = D3d11Device::create_hardware().expect("hardware D3D11 is required");
+        let image = decode_image(fixture_path("pixels.png")).expect("fixture should decode");
+        let mut presenter = D3d11ImagePresenter::new(&device, window.raw_handle(), &image)
+            .expect("fixture should present");
+        let hwnd = hwnd_from_raw(window.raw_handle());
+        unsafe { SetWindowPos(hwnd, None, 0, 0, 1280, 720, SWP_NOACTIVATE) }
+            .expect("the preview test window should resize");
+        presenter
+            .refresh_if_resized()
+            .expect("the swap chain should resize");
+
+        let stored_crop = StoredCrop::new(0.1, 0.1, 0.8, 0.8).unwrap();
+        let position = PhysicalPosition::new(34, -16).unwrap();
+        let size = Some(PhysicalSize::new(900, 500).unwrap());
+        let scale = Scale2d::new(1.05, 0.95).unwrap();
+        let anchor = NormalizedPoint::new(0.4, 0.6).unwrap();
+        let render = RenderSettings::new(
+            StoredPlacementMode::Cover,
+            position,
+            size,
+            scale,
+            4.0,
+            anchor,
+            stored_crop,
+        )
+        .unwrap();
+        let color =
+            EditorColorSettings::new(1.05, 1.1, 0.9, 1.1, 0.95, 0.05, 1.1, 0.95, 1.05).unwrap();
+        let settings = WallpaperEditorSettings::new(1, render, color).unwrap();
+        let d3d_crop = NormalizedCrop::new(0.1, 0.1, 0.8, 0.8).unwrap();
+        let d3d_transform =
+            ImageTransform::new((34.0, -16.0), (1.05, 0.95), 4.0, (0.4, 0.6), d3d_crop)
+                .unwrap()
+                .with_size_px(Some((900.0, 500.0)))
+                .unwrap();
+        presenter.set_transform(d3d_transform).unwrap();
+        presenter
+            .set_color_adjustments(
+                ColorAdjustments::new(1.05, 1.1, 0.9, 1.1, 0.95, 0.05, (1.1, 0.95, 1.05)).unwrap(),
+            )
+            .unwrap();
+
+        let gpu = read_render_target_rgba8(&presenter);
+        let cpu = crate::render_editor_preview(
+            image.width(),
+            image.height(),
+            image.stride(),
+            image.rgba8(),
+            1280,
+            720,
+            &settings,
+        )
+        .expect("the editor preview should render");
+        assert_eq!((cpu.width(), cpu.height()), (1280, 720));
+        assert_eq!(gpu.len(), cpu.rgba8().len());
+        let placement = calculate_transformed_image_placement(
+            PlacementDimensions::new(image.width(), image.height()).unwrap(),
+            PlacementDimensions::new(1280, 720).unwrap(),
+            PlacementMode::Cover,
+            d3d_transform,
+        )
+        .unwrap();
+        let corners = placement.destination_corners();
+        let p = (f64::from(corners[0].x()), f64::from(corners[0].y()));
+        let ex = (
+            f64::from(corners[1].x()) - p.0,
+            f64::from(corners[1].y()) - p.1,
+        );
+        let ey = (
+            f64::from(corners[3].x()) - p.0,
+            f64::from(corners[3].y()) - p.1,
+        );
+        let determinant = ex.0 * ey.1 - ex.1 * ey.0;
+        let ex_len = (ex.0 * 1280.0).hypot(ex.1 * 720.0);
+        let ey_len = (ey.0 * 1280.0).hypot(ey.1 * 720.0);
+        let (maximum_rgb_difference, pixel_index, channel) = gpu
+            .chunks_exact(4)
+            .zip(cpu.rgba8().chunks_exact(4))
+            .enumerate()
+            .flat_map(|(pixel, (gpu, cpu))| {
+                (0..3).map(move |channel| (gpu[channel].abs_diff(cpu[channel]), pixel, channel))
+            })
+            .max_by_key(|item| item.0)
+            .unwrap_or((0, 0, 0));
+        let maximum_interior_difference = gpu
+            .chunks_exact(4)
+            .zip(cpu.rgba8().chunks_exact(4))
+            .enumerate()
+            .filter_map(|(pixel, (gpu, cpu))| {
+                let x = (pixel % 1280) as f64 + 0.5;
+                let y = (pixel / 1280) as f64 + 0.5;
+                let dx = x / 1280.0 - p.0;
+                let dy = y / 720.0 - p.1;
+                let u = (dx * ey.1 - dy * ey.0) / determinant;
+                let v = (ex.0 * dy - ex.1 * dx) / determinant;
+                if u * ex_len < 2.0
+                    || (1.0 - u) * ex_len < 2.0
+                    || v * ey_len < 2.0
+                    || (1.0 - v) * ey_len < 2.0
+                {
+                    return None;
+                }
+                Some((0..3).map(|c| gpu[c].abs_diff(cpu[c])).max().unwrap_or(0))
+            })
+            .max()
+            .unwrap_or(0);
+        assert!(
+            maximum_interior_difference <= 5,
+            "maximum interior RGB difference {maximum_interior_difference}; overall {maximum_rgb_difference} at ({}, {}) ch {channel}: GPU {:?}, CPU {:?}",
+            pixel_index % 1280,
+            pixel_index / 1280,
+            &gpu[pixel_index * 4..pixel_index * 4 + 3],
+            &cpu.rgba8()[pixel_index * 4..pixel_index * 4 + 3],
+        );
+        drop(presenter);
     }
 
     #[test]

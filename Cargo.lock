@@ -3918,6 +3918,7 @@ dependencies = [
  "wallpaper-core",
  "wallpaper-ipc",
  "wallpaper-media",
+ "wallpaper-renderer",
 ]
 
 [[package]]

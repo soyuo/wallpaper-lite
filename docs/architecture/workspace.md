@@ -88,5 +88,6 @@ See [`media-library.md`](media-library.md) for the local catalog schema,
 content-validated import, library browsing/search, metadata, missing-file
 actions, and bounded cached thumbnails.
 Per-wallpaper editor defaults, units, validation, and persistence are described
-in [`editor-settings.md`](editor-settings.md); editor UI, history, and live
-application remain later work.
+in [`editor-settings.md`](editor-settings.md). The monitor preview and D3D11
+parity contract are described in [`editor-preview.md`](editor-preview.md);
+interactive crop/resize, edit history, and live application remain later work.
