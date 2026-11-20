@@ -169,6 +169,23 @@ body {
   align-items: end;
 }
 
+.editor-history-controls,
+.editor-history-shortcuts {
+  grid-column: 1 / -1;
+}
+
+.editor-history-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.editor-history-shortcuts {
+  margin: -0.35rem 0 0;
+  color: #5f6875;
+  font-size: 0.78rem;
+}
+
 .editor-controls > label,
 .editor-crop-controls label {
   display: grid;

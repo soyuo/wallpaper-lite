@@ -45,3 +45,14 @@ defaults; **Reset color** restores those defaults. Both the CPU preview and
 `EditorColorSettings` through `ColorAdjustments::from_editor_settings`, then
 use the color ordering documented in [`image-presentation.md`](image-presentation.md).
 The parity test compares this shared settings path against D3D11 readback.
+
+## Edit-session history
+
+The UI keeps complete validated-settings snapshots in memory for the active
+editor session. It retains at most 100 undo steps; later edits discard the
+oldest step. Reset is recorded as an ordinary edit, and any new edit after an
+undo clears redo history. Continuous canvas drags/resizes and range-slider
+gestures are coalesced into one step. Closing the preview drops the session
+history. `Ctrl/Cmd+Z` undoes, `Ctrl/Cmd+Y` redoes, and `Delete` resets all
+editor settings; these shortcuts are ignored while focus is in a text or
+selection control. History changes remain drafts until **Save and preview**.

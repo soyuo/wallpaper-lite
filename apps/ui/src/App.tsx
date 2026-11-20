@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as
 import { open } from "@tauri-apps/plugin-dialog";
 
 import "./App.css";
+import { EditorHistory, resolveEditorShortcut } from "./editor-history.mjs";
 import {
   hostAdapter,
   type Availability,
@@ -30,6 +31,33 @@ const colorControls: Array<{
   { key: "green", label: "Green balance", min: 0, max: 4 },
   { key: "blue", label: "Blue balance", min: 0, max: 4 },
 ];
+
+function defaultEditorSettings(wallpaperId: number): WallpaperEditorSettings {
+  return {
+    schemaVersion: 1,
+    wallpaperId,
+    render: {
+      placementMode: "cover",
+      positionPx: { x: 0, y: 0 },
+      sizePx: null,
+      scale: { x: 1, y: 1 },
+      rotationDegrees: 0,
+      anchor: { x: 0.5, y: 0.5 },
+      crop: { x: 0, y: 0, width: 1, height: 1 },
+    },
+    color: {
+      brightness: 1,
+      contrast: 1,
+      saturation: 1,
+      gamma: 1,
+      opacity: 1,
+      temperature: 0,
+      red: 1,
+      green: 1,
+      blue: 1,
+    },
+  };
+}
 
 const failureLabels: Record<ImportFailure, string> = {
   unsupported_format: "Unsupported format",
@@ -251,6 +279,7 @@ function App() {
   const [editorPreview, setEditorPreview] = useState<EditorPreview | null>(null);
   const [editorSettingsDraft, setEditorSettingsDraft] = useState<WallpaperEditorSettings | null>(null);
   const [editorDirty, setEditorDirty] = useState(false);
+  const editorHistory = useRef(new EditorHistory<WallpaperEditorSettings>());
   const [editorSaveBusy, setEditorSaveBusy] = useState(false);
   const [createCropMode, setCreateCropMode] = useState(false);
   const [editorBusy, setEditorBusy] = useState(false);
@@ -282,6 +311,36 @@ function App() {
       setEditorMonitorId(monitors[0]?.id ?? "");
     }).catch(() => setEditorError("Display information is unavailable."));
   }, []);
+
+  useEffect(() => {
+    function handleEditorShortcut(event: KeyboardEvent) {
+      if (!editorEntry || !editorSettingsDraft) return;
+      const target = event.target;
+      const editableTarget = target instanceof HTMLElement && (
+        target.isContentEditable
+        || target.closest("input, textarea, select") !== null
+        || target.closest("[contenteditable]") !== null
+      );
+      const command = resolveEditorShortcut({
+        key: event.key,
+        ctrlKey: event.ctrlKey,
+        metaKey: event.metaKey,
+        shiftKey: event.shiftKey,
+        editableTarget,
+      });
+      if (!command) return;
+
+      const handled = command === "undo"
+        ? undoEditorChange()
+        : command === "redo"
+          ? redoEditorChange()
+          : resetEditorSettings();
+      if (handled) event.preventDefault();
+    }
+
+    window.addEventListener("keydown", handleEditorShortcut);
+    return () => window.removeEventListener("keydown", handleEditorShortcut);
+  }, [editorEntry, editorSettingsDraft]);
 
   const loadPreview = useCallback(async (id: number) => {
     if (previewRequests.current.has(id)) return;
@@ -453,6 +512,7 @@ function App() {
       const result = await hostAdapter.editorPreview(entry.id, monitor.width, monitor.height);
       setEditorPreview(result);
       setEditorSettingsDraft(result.settings);
+      editorHistory.current.reset(result.settings);
       setEditorDirty(false);
     } catch {
       setEditorError("The wallpaper preview could not be rendered.");
@@ -521,6 +581,7 @@ function App() {
       size,
       aspect: size.width / size.height,
     };
+    beginEditorGesture(`canvas-${kind}`);
     event.currentTarget.setPointerCapture(event.pointerId);
     event.preventDefault();
   }
@@ -594,6 +655,7 @@ function App() {
       startY: (event.clientY - bounds.top) / bounds.height,
       origin: crop,
     };
+    beginEditorGesture(`crop-${kind}`);
     surface.setPointerCapture(event.pointerId);
     event.preventDefault();
     event.stopPropagation();
@@ -633,19 +695,59 @@ function App() {
   }
 
   function updateEditorRender(patch: Partial<WallpaperEditorSettings["render"]>) {
-    setEditorDirty(true);
-    setEditorSettingsDraft((current) => current ? {
-      ...current,
-      render: { ...current.render, ...patch },
-    } : current);
+    if (!editorSettingsDraft) return;
+    updateEditorSettings({
+      ...editorSettingsDraft,
+      render: { ...editorSettingsDraft.render, ...patch },
+    });
   }
 
   function updateEditorColor(patch: Partial<WallpaperEditorSettings["color"]>) {
+    if (!editorSettingsDraft) return;
+    updateEditorSettings({
+      ...editorSettingsDraft,
+      color: { ...editorSettingsDraft.color, ...patch },
+    });
+  }
+
+  function updateEditorSettings(settings: WallpaperEditorSettings) {
+    setEditorSettingsDraft(editorHistory.current.update(settings));
     setEditorDirty(true);
-    setEditorSettingsDraft((current) => current ? {
-      ...current,
-      color: { ...current.color, ...patch },
-    } : current);
+  }
+
+  function beginEditorGesture(key: string) {
+    editorHistory.current.beginGesture(key);
+  }
+
+  function endEditorGesture(key?: string) {
+    editorHistory.current.endGesture(key);
+  }
+
+  function undoEditorChange(): boolean {
+    if (!editorHistory.current.canUndo) return false;
+    const settings = editorHistory.current.undo();
+    if (!settings) return false;
+    setEditorSettingsDraft(settings);
+    setEditorDirty(true);
+    return true;
+  }
+
+  function redoEditorChange(): boolean {
+    if (!editorHistory.current.canRedo) return false;
+    const settings = editorHistory.current.redo();
+    if (!settings) return false;
+    setEditorSettingsDraft(settings);
+    setEditorDirty(true);
+    return true;
+  }
+
+  function resetEditorSettings(): boolean {
+    if (!editorEntry || !editorSettingsDraft) return false;
+    const settings = defaultEditorSettings(editorEntry.id);
+    if (JSON.stringify(settings) === JSON.stringify(editorSettingsDraft)) return false;
+    setEditorSettingsDraft(editorHistory.current.record(settings));
+    setEditorDirty(true);
+    return true;
   }
 
   function resetEditorColor() {
@@ -714,7 +816,14 @@ function App() {
               <h2 id="editor-preview-title">Preview: {editorEntry.displayName}</h2>
               <p>Uses the saved physical-pixel settings and renderer placement/color rules.</p>
             </div>
-            <button onClick={() => { setEditorEntry(null); setEditorPreview(null); setEditorError(""); }}>
+            <button onClick={() => {
+              editorHistory.current.clear();
+              setEditorEntry(null);
+              setEditorPreview(null);
+              setEditorSettingsDraft(null);
+              setEditorDirty(false);
+              setEditorError("");
+            }}>
               Close preview
             </button>
           </div>
@@ -736,8 +845,8 @@ function App() {
               aria-label={`Preview canvas ${editorPreview.monitorWidth} by ${editorPreview.monitorHeight}`}
               onPointerDown={(event) => beginEditorPointer(event, "move")}
               onPointerMove={moveEditorPointer}
-              onPointerUp={() => { editorPointer.current = null; }}
-              onPointerCancel={() => { editorPointer.current = null; }}
+              onPointerUp={() => { editorPointer.current = null; endEditorGesture(); }}
+              onPointerCancel={() => { editorPointer.current = null; endEditorGesture(); }}
               style={{
                 aspectRatio: `${editorPreview.width} / ${editorPreview.height}`,
                 width: `min(100%, ${Math.min(56, 32 * editorPreview.width / editorPreview.height)}rem)`,
@@ -753,13 +862,28 @@ function App() {
           ) : null}
           {editorSettingsDraft && editorPreview && !editorBusy && (
             <div className="editor-controls">
+              <div className="editor-history-controls" aria-label="Edit history">
+                <button type="button" disabled={!editorHistory.current.canUndo} onClick={undoEditorChange}>Undo</button>
+                <button type="button" disabled={!editorHistory.current.canRedo} onClick={redoEditorChange}>Redo</button>
+                <button type="button" onClick={resetEditorSettings}>Reset settings</button>
+              </div>
+              <p className="editor-history-shortcuts">Ctrl/Cmd+Z undo · Ctrl/Cmd+Y redo · Delete resets settings (shortcuts pause in text controls)</p>
               <label>Placement
                 <select value={editorSettingsDraft.render.placementMode} onChange={(event) => selectPlacementMode(event.currentTarget.value as WallpaperEditorSettings["render"]["placementMode"])}>
                   <option value="cover">Cover</option><option value="fit">Fit</option><option value="stretch">Stretch</option><option value="center">Center</option><option value="custom">Custom</option>
                 </select>
               </label>
               <label>Zoom
-                <input type="range" min="0.01" max="8" step="0.01" value={editorSettingsDraft.render.scale.x} onChange={(event) => { const value = Number(event.currentTarget.value); updateEditorRender({ placementMode: "custom", scale: { x: value, y: value } }); }} />
+                <input
+                  type="range" min="0.01" max="8" step="0.01" value={editorSettingsDraft.render.scale.x}
+                  onPointerDown={() => beginEditorGesture("scale-slider")}
+                  onPointerUp={() => endEditorGesture("scale-slider")}
+                  onPointerCancel={() => endEditorGesture("scale-slider")}
+                  onBlur={() => endEditorGesture("scale-slider")}
+                  onKeyDown={(event) => { if (event.key.startsWith("Arrow") || event.key === "Home" || event.key === "End" || event.key.startsWith("Page")) beginEditorGesture("scale-slider"); }}
+                  onKeyUp={(event) => { if (event.key.startsWith("Arrow") || event.key === "Home" || event.key === "End" || event.key.startsWith("Page")) endEditorGesture("scale-slider"); }}
+                  onChange={(event) => { const value = Number(event.currentTarget.value); updateEditorRender({ placementMode: "custom", scale: { x: value, y: value } }); }}
+                />
                 <output>{editorSettingsDraft.render.scale.x.toFixed(2)}×</output>
               </label>
               <label>Rotation
@@ -794,6 +918,12 @@ function App() {
                         step="0.01"
                         value={editorSettingsDraft.color[key]}
                         aria-label={label}
+                        onPointerDown={() => beginEditorGesture(`color-${key}`)}
+                        onPointerUp={() => endEditorGesture(`color-${key}`)}
+                        onPointerCancel={() => endEditorGesture(`color-${key}`)}
+                        onBlur={() => endEditorGesture(`color-${key}`)}
+                        onKeyDown={(event) => { if (event.key.startsWith("Arrow") || event.key === "Home" || event.key === "End" || event.key.startsWith("Page")) beginEditorGesture(`color-${key}`); }}
+                        onKeyUp={(event) => { if (event.key.startsWith("Arrow") || event.key === "Home" || event.key === "End" || event.key.startsWith("Page")) endEditorGesture(`color-${key}`); }}
                         onChange={(event) => updateEditorColor({ [key]: Number(event.currentTarget.value) })}
                       />
                       <output aria-label={`${label} value`}>{editorSettingsDraft.color[key].toFixed(2)}</output>
@@ -812,8 +942,8 @@ function App() {
                     style={{ aspectRatio: `${previews[editorEntry.id].width} / ${previews[editorEntry.id].height}` }}
                     onPointerDown={(event) => { if (createCropMode) beginCropPointer(event, "create"); }}
                     onPointerMove={moveCropPointer}
-                    onPointerUp={() => { cropPointer.current = null; setCreateCropMode(false); }}
-                    onPointerCancel={() => { cropPointer.current = null; setCreateCropMode(false); }}
+                    onPointerUp={() => { cropPointer.current = null; setCreateCropMode(false); endEditorGesture(); }}
+                    onPointerCancel={() => { cropPointer.current = null; setCreateCropMode(false); endEditorGesture(); }}
                   >
                     <img draggable={false} src={previews[editorEntry.id].thumbnailDataUrl} alt="Original source crop" />
                     <div

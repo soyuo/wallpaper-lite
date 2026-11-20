@@ -89,6 +89,6 @@ content-validated import, library browsing/search, metadata, missing-file
 actions, and bounded cached thumbnails.
 Per-wallpaper editor defaults, units, validation, and persistence are described
 in [`editor-settings.md`](editor-settings.md). The monitor preview, D3D11
-parity contract, and initial placement/crop/color controls are described in
-[`editor-preview.md`](editor-preview.md); edit history, transactional apply, and
+parity contract, placement/crop/color controls, and bounded edit history are
+described in [`editor-preview.md`](editor-preview.md); transactional apply and
 live application remain later work.
