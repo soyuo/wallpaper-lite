@@ -3,8 +3,9 @@
 `wallpaper-ui` and `wallpaper-host` communicate through the Windows named pipe
 `\\.\pipe\wallpaper-lite` for commands and
 `\\.\pipe\wallpaper-lite-playback-events` for state subscriptions. Protocol
-version 3 supports a liveness ping and the Phase 3 video playback controls.
-Version 3 adds asynchronous load state to version 2. Request and response
+version 4 supports a liveness ping, Phase 3 video playback controls, and full
+wallpaper editor-settings updates. Version 4 adds editor render settings to
+version 3. Request and response
 decoders reject mismatched versions, so UI and host builds must be deployed
 together. Video decoding, scheduling, and presentation stay in the host.
 
@@ -30,11 +31,37 @@ together. Video decoding, scheduling, and presentation stay in the host.
 
 ## Request and response shapes
 
-Version 3 retains the ping request:
+Version 4 retains the ping request:
 
 ```json
-{"version":3,"request_id":1,"command":"ping"}
+{"version":4,"request_id":1,"command":"ping"}
 ```
+
+Editor Apply sends the complete validated settings snapshot in one command:
+
+```json
+{
+  "version": 4,
+  "request_id": 42,
+  "command": {
+    "apply_editor_settings": {
+      "settings": { "schemaVersion": 1, "wallpaperId": 7, "render": {}, "color": {} },
+      "source_path": "C:/Media/wallpaper.png"
+    }
+  }
+}
+```
+
+The UI resolves the selected catalog ID to its available source path. The host
+compares that path with the active presenter source and rejects settings for a
+different wallpaper before changing renderer or recovery state. For a match, it
+applies the snapshot to the active presenter before acknowledging it. The UI
+then atomically persists the snapshot. If persistence fails, the UI asks
+the host to restore the previously loaded snapshot and reports an error. A host
+validation or render failure leaves the settings file untouched. If the host
+response is lost or uncertain, the UI also asks the host to restore the prior
+snapshot before returning an error. Apply requests are serialized by the UI
+backend; Cancel and Escape never send a host or storage command.
 
 Playback commands use the same request envelope. Enum values are snake case;
 fields use the names below:
@@ -53,14 +80,14 @@ fields use the names below:
 The playback-events pipe accepts a long-lived subscription request:
 
 ```json
-{"version":3,"request_id":10,"command":"subscribe_playback_state"}
+{"version":4,"request_id":10,"command":"subscribe_playback_state"}
 ```
 
 The response result is either `pong`, a typed playback error, or a
 `playback_state` snapshot:
 
 ```json
-{"version":3,"request_id":3,"result":{"playback_state":{"sequence":2,"state":"playing","media_time_100ns":50000,"duration_100ns":120000000,"speed_percent":100,"fps_limit":60,"loading_video":false,"last_error":null}}}
+{"version":4,"request_id":3,"result":{"playback_state":{"sequence":2,"state":"playing","media_time_100ns":50000,"duration_100ns":120000000,"speed_percent":100,"fps_limit":60,"loading_video":false,"last_error":null}}}
 ```
 
 State snapshots are returned with control-command responses and on explicit

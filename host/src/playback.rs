@@ -15,7 +15,7 @@ use wallpaper_media::{
 };
 use windows::Win32::Graphics::Direct3D11::ID3D11Device;
 
-use crate::recovery::{DesktopRecoveryWorker, RecoveryFrameSender};
+use crate::recovery::{ApplySettingsError, DesktopRecoveryWorker, RecoveryFrameSender};
 
 const TICK_INTERVAL: Duration = Duration::from_millis(8);
 const QUEUE_TARGET: usize = 3;
@@ -146,6 +146,7 @@ struct PendingVideoLoad {
 }
 
 struct VideoSourceWorker {
+    source_path: PathBuf,
     command_sender: SyncSender<VideoSourceCommand>,
     stop_sender: Option<SyncSender<()>>,
     event_receiver: Receiver<VideoSourceEvent>,
@@ -178,6 +179,7 @@ struct VideoFrameMessage {
 
 impl VideoSourceWorker {
     fn start(path: PathBuf, device: Option<ID3D11Device>) -> std::io::Result<Self> {
+        let source_path = path.clone();
         let (command_sender, command_receiver) = mpsc::sync_channel(8);
         let (stop_sender, stop_receiver) = mpsc::sync_channel(1);
         let (event_sender, event_receiver) = mpsc::channel();
@@ -289,6 +291,7 @@ impl VideoSourceWorker {
             })?;
 
         Ok(Self {
+            source_path,
             command_sender,
             stop_sender: Some(stop_sender),
             event_receiver,
@@ -525,6 +528,40 @@ impl PlaybackController {
     }
 
     fn execute(&mut self, command: Command) -> ResponseResult {
+        let command = match command {
+            Command::ApplyEditorSettings {
+                settings,
+                source_path,
+            } => {
+                if settings.validate().is_err() {
+                    return ResponseResult::Error {
+                        code: PlaybackCommandErrorCode::EditorSettingsInvalid,
+                    };
+                }
+                return match self
+                    .frame_sender
+                    .apply_editor_settings(settings, PathBuf::from(source_path))
+                {
+                    Ok(()) => ResponseResult::EditorSettingsApplied,
+                    Err(ApplySettingsError::WallpaperNotActive) => ResponseResult::Error {
+                        code: PlaybackCommandErrorCode::EditorWallpaperNotActive,
+                    },
+                    Err(ApplySettingsError::Renderer(error)) => {
+                        tracing::warn!(
+                            component = "renderer",
+                            event = "editor_settings_apply_failed",
+                            error_code = error.to_app_error().code.as_str(),
+                            diagnostic = %error.diagnostic_summary(),
+                            "Editor settings could not be applied to the desktop"
+                        );
+                        ResponseResult::Error {
+                            code: PlaybackCommandErrorCode::EditorSettingsApplyFailed,
+                        }
+                    }
+                };
+            }
+            command => command,
+        };
         let publish_event = !matches!(&command, Command::GetPlaybackState | Command::Ping);
         if matches!(&command, Command::GetPlaybackState) {
             if let Some(code) = self.pending_error.take() {
@@ -609,6 +646,9 @@ impl PlaybackController {
             Command::SubscribePlaybackState => {
                 return self.error(PlaybackCommandErrorCode::PlaybackUnavailable);
             }
+            Command::ApplyEditorSettings { .. } => {
+                Err(PlaybackCommandErrorCode::EditorSettingsApplyFailed)
+            }
             Command::Ping => return ResponseResult::Pong,
         };
 
@@ -632,6 +672,18 @@ impl PlaybackController {
             .as_ref()
             .map(|_| ())
             .ok_or(PlaybackCommandErrorCode::VideoNotLoaded)
+    }
+
+    fn present_video_frame(
+        &self,
+        frame: DecodedVideoFrame,
+    ) -> Result<(), wallpaper_renderer::RendererError> {
+        let source_path = self
+            .source
+            .as_ref()
+            .map(|source| source.source_path.clone())
+            .ok_or(wallpaper_renderer::RendererError::WindowUnavailable)?;
+        self.frame_sender.present_video_frame(frame, source_path)
     }
 
     fn tick(&mut self) {
@@ -679,7 +731,7 @@ impl PlaybackController {
             }
         };
         if let Some(frame) = paused_frame
-            && self.frame_sender.present_video_frame(frame).is_err()
+            && self.present_video_frame(frame).is_err()
         {
             self.fail_playback(
                 "video_frame_presentation_failed",
@@ -736,7 +788,7 @@ impl PlaybackController {
         if self.scheduler.state() == PlaybackState::Playing {
             match self.scheduler.next_due_frame(self.now_100ns()) {
                 Ok(Some(frame)) => {
-                    if self.frame_sender.present_video_frame(frame).is_err() {
+                    if self.present_video_frame(frame).is_err() {
                         self.fail_playback(
                             "video_frame_presentation_failed",
                             PlaybackCommandErrorCode::PlaybackFailed,

@@ -23,6 +23,9 @@ pub enum ErrorCode {
     InvalidLibraryEntry,
     EditorSettingsStorageFailed,
     InvalidEditorSettings,
+    EditorApplyFailed,
+    EditorApplyRollbackFailed,
+    EditorWallpaperNotActive,
     DesktopHostUnavailable,
     Internal,
 }
@@ -49,6 +52,9 @@ impl ErrorCode {
             Self::InvalidLibraryEntry => "invalid_library_entry",
             Self::EditorSettingsStorageFailed => "editor_settings_storage_failed",
             Self::InvalidEditorSettings => "invalid_editor_settings",
+            Self::EditorApplyFailed => "editor_apply_failed",
+            Self::EditorApplyRollbackFailed => "editor_apply_rollback_failed",
+            Self::EditorWallpaperNotActive => "editor_wallpaper_not_active",
             Self::DesktopHostUnavailable => "desktop_host_unavailable",
             Self::Internal => "internal",
         }

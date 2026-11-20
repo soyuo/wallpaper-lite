@@ -95,6 +95,9 @@ export type AppErrorCode =
   | "invalid_library_entry"
   | "editor_settings_storage_failed"
   | "invalid_editor_settings"
+  | "editor_apply_failed"
+  | "editor_apply_rollback_failed"
+  | "editor_wallpaper_not_active"
   | "internal";
 
 interface AppErrorPayload {
@@ -119,7 +122,7 @@ export interface HostAdapter {
   libraryPreview(id: number): Promise<LibraryPreview>;
   editorMonitors(): Promise<EditorMonitor[]>;
   editorPreview(id: number, monitorWidth: number, monitorHeight: number): Promise<EditorPreview>;
-  saveEditorSettings(id: number, settings: WallpaperEditorSettings): Promise<void>;
+  applyEditorSettings(id: number, settings: WallpaperEditorSettings): Promise<void>;
   removeLibraryEntry(id: number): Promise<void>;
   renameLibraryEntry(id: number, displayName: string): Promise<void>;
   setLibraryFavorite(id: number, favorite: boolean): Promise<void>;
@@ -134,6 +137,20 @@ function isAppErrorPayload(value: unknown): value is AppErrorPayload {
     isAppErrorCode(payload.code) &&
     typeof payload.message === "string"
   );
+}
+
+async function invokeAppCommand<T>(
+  command: string,
+  args?: Record<string, unknown>,
+): Promise<T> {
+  try {
+    return await invoke<T>(command, args);
+  } catch (error: unknown) {
+    if (isAppErrorPayload(error)) {
+      throw new HostAdapterError(error.code, error.message);
+    }
+    throw error;
+  }
 }
 
 function isAppErrorCode(value: unknown): value is AppErrorCode {
@@ -152,6 +169,9 @@ function isAppErrorCode(value: unknown): value is AppErrorCode {
     value === "invalid_library_entry" ||
     value === "editor_settings_storage_failed" ||
     value === "invalid_editor_settings" ||
+    value === "editor_apply_failed" ||
+    value === "editor_apply_rollback_failed" ||
+    value === "editor_wallpaper_not_active" ||
     value === "internal"
   );
 }
@@ -189,8 +209,8 @@ export const hostAdapter: HostAdapter = {
   editorPreview(id, monitorWidth, monitorHeight) {
     return invoke<EditorPreview>("editor_preview", { wallpaperId: id, monitorWidth, monitorHeight });
   },
-  saveEditorSettings(id, settings) {
-    return invoke<void>("save_editor_settings", { wallpaperId: id, settings });
+  applyEditorSettings(id, settings) {
+    return invokeAppCommand<void>("apply_editor_settings", { wallpaperId: id, settings });
   },
   removeLibraryEntry(id) {
     return invoke<void>("remove_library_entry", { id });

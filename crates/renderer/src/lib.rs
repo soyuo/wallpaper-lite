@@ -228,6 +228,13 @@ impl<'a> D3d11ImagePresenter<'a> {
         Err(RendererError::UnsupportedPlatform)
     }
 
+    pub fn set_editor_settings(
+        &mut self,
+        _settings: &wallpaper_core::editor_settings::WallpaperEditorSettings,
+    ) -> Result<(), RendererError> {
+        Err(RendererError::UnsupportedPlatform)
+    }
+
     pub fn transform(&self) -> ImageTransform {
         ImageTransform::default()
     }

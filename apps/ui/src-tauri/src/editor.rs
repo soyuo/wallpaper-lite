@@ -2,8 +2,10 @@ use std::path::PathBuf;
 
 use base64::Engine;
 use serde::Serialize;
+use std::sync::OnceLock;
 use wallpaper_core::editor_settings::WallpaperEditorSettings;
 use wallpaper_core::error::{AppError, ErrorCode};
+use wallpaper_ipc::protocol::{Command, PlaybackCommandErrorCode, ResponseResult};
 use wallpaper_media::{
     Availability, CatalogStore, EditorSettingsStore, MediaKind, VideoReadEvent, VideoSource,
     decode_image,
@@ -11,6 +13,8 @@ use wallpaper_media::{
 use wallpaper_renderer::render_editor_preview;
 
 use crate::library::lock_catalog_mutation;
+
+static EDITOR_APPLY_TRANSACTION: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -33,29 +37,134 @@ pub struct EditorPreview {
 }
 
 #[tauri::command]
-pub async fn save_editor_settings(
+pub async fn apply_editor_settings(
     wallpaper_id: u64,
     settings: WallpaperEditorSettings,
 ) -> Result<(), AppError> {
-    tauri::async_runtime::spawn_blocking(move || {
-        if settings.wallpaper_id() != wallpaper_id {
-            return Err(AppError::new(
-                ErrorCode::InvalidEditorSettings,
-                "The wallpaper editor settings are invalid.",
-            ));
+    let _transaction_guard = EDITOR_APPLY_TRANSACTION
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    if settings.wallpaper_id() != wallpaper_id || settings.validate().is_err() {
+        return Err(AppError::new(
+            ErrorCode::InvalidEditorSettings,
+            "The wallpaper editor settings are invalid.",
+        ));
+    }
+
+    let catalog = CatalogStore::for_current_user()
+        .map_err(|error| error.to_app_error())?
+        .load()
+        .map_err(|error| error.to_app_error())?;
+    let entry = catalog.get_by_raw_id(wallpaper_id).ok_or_else(|| {
+        AppError::new(
+            ErrorCode::InvalidLibraryEntry,
+            "The selected wallpaper is no longer in the library.",
+        )
+    })?;
+    if entry.availability() != Availability::Available {
+        return Err(AppError::new(
+            ErrorCode::InvalidLibraryEntry,
+            "The selected wallpaper source is unavailable.",
+        ));
+    }
+    let source_path = entry.source_path().to_string_lossy().into_owned();
+
+    let store = EditorSettingsStore::for_current_user().map_err(|error| error.to_app_error())?;
+    let previous = tauri::async_runtime::spawn_blocking({
+        let store = store.clone();
+        move || {
+            store
+                .load(wallpaper_id)
+                .map_err(|error| error.to_app_error())
         }
-        EditorSettingsStore::for_current_user()
-            .map_err(|error| error.to_app_error())?
-            .save(&settings)
-            .map_err(|error| error.to_app_error())
     })
     .await
     .map_err(|_| {
         AppError::new(
             ErrorCode::Internal,
-            "The editor settings could not be saved.",
+            "The editor settings transaction could not be completed.",
         )
-    })?
+    })??;
+
+    let apply_result = wallpaper_ipc::client::request(Command::ApplyEditorSettings {
+        settings: settings.clone(),
+        source_path: source_path.clone(),
+    })
+    .await;
+    let uncertain_apply_failure = match apply_result {
+        Ok(ResponseResult::EditorSettingsApplied) => None,
+        Ok(ResponseResult::Error {
+            code: PlaybackCommandErrorCode::EditorSettingsInvalid,
+        }) => {
+            return Err(AppError::new(
+                ErrorCode::InvalidEditorSettings,
+                "The wallpaper editor settings are invalid.",
+            ));
+        }
+        Ok(ResponseResult::Error {
+            code: PlaybackCommandErrorCode::EditorWallpaperNotActive,
+        }) => {
+            return Err(AppError::new(
+                ErrorCode::EditorWallpaperNotActive,
+                "The selected wallpaper is not active on the desktop.",
+            ));
+        }
+        Ok(ResponseResult::Error {
+            code: PlaybackCommandErrorCode::EditorSettingsApplyFailed,
+        }) => Some(AppError::new(
+            ErrorCode::EditorApplyFailed,
+            "The active wallpaper could not be updated.",
+        )),
+        Ok(_) => Some(AppError::new(
+            ErrorCode::MalformedResponse,
+            "The wallpaper host returned an unexpected response.",
+        )),
+        Err(error) => Some(error.to_app_error()),
+    };
+    if let Some(apply_error) = uncertain_apply_failure {
+        return Err(compensate_host_settings(previous, source_path, apply_error).await);
+    }
+
+    let save_result =
+        match tauri::async_runtime::spawn_blocking(move || store.save(&settings)).await {
+            Ok(result) => result.map_err(|error| error.to_app_error()),
+            Err(_) => Err(AppError::new(
+                ErrorCode::Internal,
+                "The editor settings transaction could not be completed.",
+            )),
+        };
+
+    if let Err(save_error) = save_result {
+        return Err(compensate_host_settings(previous, source_path, save_error).await);
+    }
+
+    Ok(())
+}
+
+async fn compensate_host_settings(
+    previous: WallpaperEditorSettings,
+    source_path: String,
+    operation_error: AppError,
+) -> AppError {
+    let rollback = wallpaper_ipc::client::request(Command::ApplyEditorSettings {
+        settings: previous,
+        source_path,
+    })
+    .await;
+    if matches!(rollback, Ok(ResponseResult::EditorSettingsApplied)) {
+        return operation_error;
+    }
+
+    tracing::error!(
+        component = "ui_backend",
+        event = "editor_apply_rollback_failed",
+        "Wallpaper settings could not be confirmed after a failed apply transaction"
+    );
+    AppError::new(
+        ErrorCode::EditorApplyRollbackFailed,
+        "The prior wallpaper settings could not be restored after the apply failed.",
+    )
 }
 
 #[tauri::command]
