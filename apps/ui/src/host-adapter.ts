@@ -25,6 +25,26 @@ export interface ImportResult {
   wallpaperId: number | null;
 }
 
+export type MediaKind = "image" | "video";
+export type Availability = "available" | "file_missing" | "unavailable";
+
+export interface LibraryEntry {
+  id: number;
+  displayName: string;
+  sourcePath: string;
+  mediaKind: MediaKind;
+  availability: Availability;
+  sizeBytes: number | null;
+}
+
+export interface LibraryPreview {
+  width: number;
+  height: number;
+  duration100ns: number | null;
+  sizeBytes: number;
+  thumbnailDataUrl: string;
+}
+
 export type AppErrorCode =
   | "host_unavailable"
   | "timeout"
@@ -57,6 +77,10 @@ export class HostAdapterError extends Error {
 export interface HostAdapter {
   ping(): Promise<void>;
   importMedia(paths: string[]): Promise<ImportResult[]>;
+  listLibrary(): Promise<LibraryEntry[]>;
+  libraryPreview(id: number): Promise<LibraryPreview>;
+  removeLibraryEntry(id: number): Promise<void>;
+  relocateLibraryEntry(id: number, path: string): Promise<void>;
 }
 
 function isAppErrorPayload(value: unknown): value is AppErrorPayload {
@@ -106,5 +130,17 @@ export const hostAdapter: HostAdapter = {
   },
   importMedia(paths) {
     return invoke<ImportResult[]>("import_media", { paths });
+  },
+  listLibrary() {
+    return invoke<LibraryEntry[]>("list_library");
+  },
+  libraryPreview(id) {
+    return invoke<LibraryPreview>("library_preview", { id });
+  },
+  removeLibraryEntry(id) {
+    return invoke<void>("remove_library_entry", { id });
+  },
+  relocateLibraryEntry(id, path) {
+    return invoke<void>("relocate_library_entry", { id, path });
   },
 };

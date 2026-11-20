@@ -136,3 +136,166 @@ body {
   flex: none;
   color: #4c5668;
 }
+
+.library-panel {
+  display: grid;
+  width: min(100%, 68rem);
+  gap: 0.85rem;
+  margin-top: 1rem;
+  padding: 1rem;
+  border: 1px solid #d9dde5;
+  border-radius: 0.75rem;
+  background: #fff;
+  text-align: left;
+}
+
+.library-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.library-heading h2 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+.library-heading p,
+.library-card p,
+.library-message,
+.library-empty {
+  margin: 0.25rem 0 0;
+  color: #5f6368;
+  font-size: 0.85rem;
+}
+
+.library-heading button,
+.library-card-actions button,
+.library-more {
+  padding: 0.45rem 0.7rem;
+  border: 1px solid #c8cfdb;
+  border-radius: 0.4rem;
+  background: #f8f9fb;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.library-search {
+  display: grid;
+  gap: 0.35rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.library-search input {
+  width: 100%;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid #c8cfdb;
+  border-radius: 0.4rem;
+  font: inherit;
+  font-weight: 400;
+}
+
+.library-search input:focus-visible,
+.library-panel button:focus-visible {
+  outline: 3px solid #315fca;
+  outline-offset: 2px;
+}
+
+.library-list {
+  display: grid;
+  max-height: 34rem;
+  gap: 0.65rem;
+  overflow: auto;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.library-card {
+  display: grid;
+  grid-template-columns: 10rem minmax(0, 1fr);
+  gap: 0.85rem;
+  padding: 0.65rem;
+  border: 1px solid #eceef2;
+  border-radius: 0.6rem;
+}
+
+.library-thumbnail {
+  display: grid;
+  min-height: 6rem;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 0.4rem;
+  background: #edf0f5;
+  color: #596579;
+  font-size: 0.75rem;
+  text-align: center;
+}
+
+.library-thumbnail img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  max-height: 8rem;
+  object-fit: contain;
+}
+
+.library-card-content {
+  min-width: 0;
+  align-self: center;
+}
+
+.library-card h3 {
+  overflow: hidden;
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.library-card .library-card-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.library-card-meta {
+  font-variant-numeric: tabular-nums;
+}
+
+.library-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.55rem;
+}
+
+.library-card-actions button:disabled,
+.library-heading button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+.library-more {
+  justify-self: center;
+  min-width: 8rem;
+}
+
+@media (max-width: 560px) {
+  .app-shell {
+    padding: 1rem;
+  }
+
+  .library-card {
+    grid-template-columns: 6rem minmax(0, 1fr);
+  }
+
+  .library-card-actions button {
+    padding: 0.35rem 0.45rem;
+    font-size: 0.8rem;
+  }
+}

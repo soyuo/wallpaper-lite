@@ -1,8 +1,15 @@
-import { useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 
 import "./App.css";
-import { hostAdapter, type ImportFailure, type ImportResult } from "./host-adapter";
+import {
+  hostAdapter,
+  type Availability,
+  type ImportFailure,
+  type ImportResult,
+  type LibraryEntry,
+  type LibraryPreview,
+} from "./host-adapter";
 
 const failureLabels: Record<ImportFailure, string> = {
   unsupported_format: "Unsupported format",
@@ -22,26 +29,185 @@ function resultLabel(result: ImportResult): string {
   return "Import could not be completed";
 }
 
+function formatBytes(value: number | null): string {
+  if (value === null) return "Size unavailable";
+  if (value < 1024) return `${value} B`;
+  const units = ["KB", "MB", "GB", "TB"];
+  let size = value / 1024;
+  let unit = units[0];
+  for (let index = 1; size >= 1024 && index < units.length; index += 1) {
+    size /= 1024;
+    unit = units[index];
+  }
+  return `${size.toFixed(size >= 100 ? 0 : 1)} ${unit}`;
+}
+
+function formatDuration(duration100ns: number | null): string | null {
+  if (duration100ns === null) return null;
+  const totalSeconds = Math.floor(duration100ns / 10_000_000);
+  return `${Math.floor(totalSeconds / 60)}:${String(totalSeconds % 60).padStart(2, "0")}`;
+}
+
+function availabilityLabel(value: Availability): string {
+  if (value === "file_missing") return "FILE_MISSING";
+  if (value === "unavailable") return "Unavailable";
+  return "Available";
+}
+
+interface LibraryCardProps {
+  entry: LibraryEntry;
+  preview?: LibraryPreview;
+  previewError?: string;
+  previewLoading: boolean;
+  keepAcknowledged: boolean;
+  actionBusy: boolean;
+  onRequestPreview(id: number): void;
+  onLocate(entry: LibraryEntry): void;
+  onRemove(entry: LibraryEntry): void;
+  onKeep(id: number): void;
+}
+
+function LibraryCard({
+  entry,
+  preview,
+  previewError,
+  previewLoading,
+  keepAcknowledged,
+  actionBusy,
+  onRequestPreview,
+  onLocate,
+  onRemove,
+  onKeep,
+}: LibraryCardProps) {
+  const cardRef = useRef<HTMLLIElement>(null);
+
+  useEffect(() => {
+    if (entry.availability !== "available" || preview || previewLoading || previewError) return;
+    const element = cardRef.current;
+    if (!element) return;
+    if (!("IntersectionObserver" in window)) {
+      onRequestPreview(entry.id);
+      return;
+    }
+
+    const observer = new IntersectionObserver(
+      (observations) => {
+        if (observations.some((observation) => observation.isIntersecting)) {
+          onRequestPreview(entry.id);
+          observer.disconnect();
+        }
+      },
+      { rootMargin: "180px" },
+    );
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [entry.availability, entry.id, onRequestPreview, preview, previewError, previewLoading]);
+
+  const duration = formatDuration(preview?.duration100ns ?? null);
+  const unavailable = entry.availability !== "available";
+
+  return (
+    <li className="library-card" ref={cardRef}>
+      <div className="library-thumbnail" aria-label={`${entry.displayName} thumbnail`}>
+        {preview ? (
+          <img src={preview.thumbnailDataUrl} alt={`${entry.displayName} preview`} />
+        ) : unavailable ? (
+          <span>{availabilityLabel(entry.availability)}</span>
+        ) : previewError ? (
+          <span>Preview unavailable</span>
+        ) : previewLoading ? (
+          <span>Loading preview...</span>
+        ) : (
+          <span>Preview pending</span>
+        )}
+      </div>
+      <div className="library-card-content">
+        <h3>{entry.displayName}</h3>
+        <p className="library-card-path" title={entry.sourcePath}>{entry.sourcePath}</p>
+        <p className="library-card-meta">
+          {entry.mediaKind === "video" ? "Video" : "Image"} · {formatBytes(preview?.sizeBytes ?? entry.sizeBytes)}
+          {preview ? ` · ${preview.width} × ${preview.height}` : ""}
+          {duration ? ` · ${duration}` : ""}
+        </p>
+        {unavailable && (
+          <div className="library-card-actions">
+            <button disabled={actionBusy} onClick={() => onLocate(entry)}>Locate file</button>
+            <button disabled={actionBusy} onClick={() => onRemove(entry)}>Remove entry</button>
+            <button disabled={keepAcknowledged} onClick={() => onKeep(entry.id)}>
+              {keepAcknowledged ? "Kept for later" : "Keep entry"}
+            </button>
+          </div>
+        )}
+      </div>
+    </li>
+  );
+}
+
 function App() {
   const [checkingHost, setCheckingHost] = useState(false);
   const [hostStatus, setHostStatus] = useState("Host connection has not been checked.");
   const [importing, setImporting] = useState(false);
   const [importResults, setImportResults] = useState<ImportResult[]>([]);
   const [importStatus, setImportStatus] = useState("");
+  const [library, setLibrary] = useState<LibraryEntry[]>([]);
+  const [librarySearch, setLibrarySearch] = useState("");
+  const [libraryBusy, setLibraryBusy] = useState(false);
+  const [libraryMessage, setLibraryMessage] = useState("");
+  const [previews, setPreviews] = useState<Record<number, LibraryPreview>>({});
+  const [previewErrors, setPreviewErrors] = useState<Record<number, string>>({});
+  const [previewLoading, setPreviewLoading] = useState<Record<number, boolean>>({});
+  const [busyEntryId, setBusyEntryId] = useState<number | null>(null);
+  const [keptIds, setKeptIds] = useState<Set<number>>(() => new Set());
+  const [visibleCount, setVisibleCount] = useState(24);
+  const previewRequests = useRef(new Set<number>());
+
+  const refreshLibrary = useCallback(async () => {
+    setLibraryBusy(true);
+    setLibraryMessage("");
+    try {
+      setLibrary(await hostAdapter.listLibrary());
+    } catch {
+      setLibraryMessage("The library could not be loaded. Other application functions remain available.");
+    } finally {
+      setLibraryBusy(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshLibrary();
+  }, [refreshLibrary]);
+
+  const loadPreview = useCallback(async (id: number) => {
+    if (previewRequests.current.has(id)) return;
+    previewRequests.current.add(id);
+    setPreviewLoading((current) => ({ ...current, [id]: true }));
+    try {
+      const preview = await hostAdapter.libraryPreview(id);
+      setPreviews((current) => ({ ...current, [id]: preview }));
+    } catch {
+      setPreviewErrors((current) => ({ ...current, [id]: "Preview unavailable" }));
+    } finally {
+      setPreviewLoading((current) => ({ ...current, [id]: false }));
+    }
+  }, []);
+
+  const filteredLibrary = useMemo(() => {
+    const query = librarySearch.trim().toLocaleLowerCase();
+    if (!query) return library;
+    return library.filter((entry) =>
+      `${entry.displayName}\n${entry.sourcePath}`.toLocaleLowerCase().includes(query),
+    );
+  }, [library, librarySearch]);
+  const visibleLibrary = filteredLibrary.slice(0, visibleCount);
 
   async function checkHost() {
     setCheckingHost(true);
-    setHostStatus("Checking host connection…");
-
+    setHostStatus("Checking host connection...");
     try {
       await hostAdapter.ping();
       setHostStatus("Wallpaper host connected.");
     } catch (error) {
-      setHostStatus(
-        error instanceof Error
-          ? error.message
-          : "Could not check the wallpaper host.",
-      );
+      setHostStatus(error instanceof Error ? error.message : "Could not check the wallpaper host.");
     } finally {
       setCheckingHost(false);
     }
@@ -55,10 +221,7 @@ function App() {
       const selection = await open(
         directory
           ? { directory: true, multiple: false, title: "Import wallpaper folder" }
-          : {
-              multiple: true,
-              title: "Import wallpaper files",
-            },
+          : { multiple: true, title: "Import wallpaper files" },
       );
       if (!selection) return;
       const paths = Array.isArray(selection) ? selection : [selection];
@@ -66,10 +229,65 @@ function App() {
       setImportResults(results);
       const imported = results.filter((result) => result.status === "imported").length;
       setImportStatus(`${imported} item${imported === 1 ? "" : "s"} added; ${results.length} result${results.length === 1 ? "" : "s"}.`);
+      await refreshLibrary();
     } catch {
       setImportStatus("Import could not be completed. Check the library and try again.");
     } finally {
       setImporting(false);
+    }
+  }
+
+  async function locateEntry(entry: LibraryEntry) {
+    setBusyEntryId(entry.id);
+    setLibraryMessage("");
+    try {
+      const path = await open({ multiple: false, title: "Locate wallpaper file" });
+      if (typeof path !== "string") return;
+      await hostAdapter.relocateLibraryEntry(entry.id, path);
+      previewRequests.current.delete(entry.id);
+      setPreviews((current) => {
+        const next = { ...current };
+        delete next[entry.id];
+        return next;
+      });
+      setPreviewErrors((current) => {
+        const next = { ...current };
+        delete next[entry.id];
+        return next;
+      });
+      setKeptIds((current) => {
+        const next = new Set(current);
+        next.delete(entry.id);
+        return next;
+      });
+      await refreshLibrary();
+    } catch {
+      setLibraryMessage(`Could not locate "${entry.displayName}". Choose a supported file of the same media type.`);
+    } finally {
+      setBusyEntryId(null);
+    }
+  }
+
+  async function removeEntry(entry: LibraryEntry) {
+    setBusyEntryId(entry.id);
+    setLibraryMessage("");
+    try {
+      await hostAdapter.removeLibraryEntry(entry.id);
+      setPreviews((current) => {
+        const next = { ...current };
+        delete next[entry.id];
+        return next;
+      });
+      setKeptIds((current) => {
+        const next = new Set(current);
+        next.delete(entry.id);
+        return next;
+      });
+      await refreshLibrary();
+    } catch {
+      setLibraryMessage(`Could not remove "${entry.displayName}" from the library. Its source file remains untouched.`);
+    } finally {
+      setBusyEntryId(null);
     }
   }
 
@@ -78,33 +296,79 @@ function App() {
       <h1>wallpaper-lite</h1>
       <p>Desktop application shell</p>
       <button className="host-check" disabled={checkingHost} onClick={checkHost}>
-        {checkingHost ? "Checking…" : "Check wallpaper host"}
+        {checkingHost ? "Checking..." : "Check wallpaper host"}
       </button>
-      <p aria-live="polite" className="host-status" role="status">
-        {hostStatus}
-      </p>
+      <p aria-live="polite" className="host-status" role="status">{hostStatus}</p>
+
       <section className="import-panel" aria-labelledby="import-title">
         <h2 id="import-title">Import media</h2>
         <div className="import-actions">
-          <button disabled={importing} onClick={() => void importSelection(false)}>
-            Choose files
-          </button>
-          <button disabled={importing} onClick={() => void importSelection(true)}>
-            Choose folder
-          </button>
+          <button disabled={importing} onClick={() => void importSelection(false)}>Choose files</button>
+          <button disabled={importing} onClick={() => void importSelection(true)}>Choose folder</button>
         </div>
         <p aria-live="polite" className="import-status" role="status">
-          {importing ? "Validating selected media…" : importStatus}
+          {importing ? "Validating selected media..." : importStatus}
         </p>
         {importResults.length > 0 && (
           <ul className="import-results" aria-label="Import results">
             {importResults.map((result, index) => (
               <li key={`${result.fileName}-${index}`}>
                 <span>{result.fileName}</span>
-                <span>{resultLabel(result)}</span>
+                <span>{result.failure ? failureLabels[result.failure] : resultLabel(result)}</span>
               </li>
             ))}
           </ul>
+        )}
+      </section>
+
+      <section className="library-panel" aria-labelledby="library-title">
+        <div className="library-heading">
+          <div>
+            <h2 id="library-title">Wallpaper library</h2>
+            <p>{library.length} item{library.length === 1 ? "" : "s"}</p>
+          </div>
+          <button disabled={libraryBusy} onClick={() => void refreshLibrary()}>
+            {libraryBusy ? "Refreshing..." : "Refresh library"}
+          </button>
+        </div>
+        <label className="library-search">
+          <span>Search by name or path</span>
+          <input
+            type="search"
+            value={librarySearch}
+            onChange={(event) => {
+              setLibrarySearch(event.currentTarget.value);
+              setVisibleCount(24);
+            }}
+            placeholder="Search wallpapers"
+          />
+        </label>
+        <p aria-live="polite" className="library-message" role="status">{libraryMessage}</p>
+        {filteredLibrary.length === 0 ? (
+          <p className="library-empty">{libraryBusy ? "Loading library..." : "No matching wallpaper entries."}</p>
+        ) : (
+          <ul className="library-list" aria-label="Wallpaper library entries">
+            {visibleLibrary.map((entry) => (
+              <LibraryCard
+                key={entry.id}
+                entry={entry}
+                preview={previews[entry.id]}
+                previewError={previewErrors[entry.id]}
+                previewLoading={Boolean(previewLoading[entry.id])}
+                keepAcknowledged={keptIds.has(entry.id)}
+                actionBusy={busyEntryId === entry.id}
+                onRequestPreview={(id) => void loadPreview(id)}
+                onLocate={(item) => void locateEntry(item)}
+                onRemove={(item) => void removeEntry(item)}
+                onKeep={(id) => setKeptIds((current) => new Set(current).add(id))}
+              />
+            ))}
+          </ul>
+        )}
+        {visibleCount < filteredLibrary.length && (
+          <button className="library-more" onClick={() => setVisibleCount((count) => count + 24)}>
+            Show more
+          </button>
         )}
       </section>
     </main>

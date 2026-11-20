@@ -49,5 +49,21 @@ write failures and preserves the prior catalog. Source files are read-only and
 are never copied, renamed, or removed.
 
 The Tauri UI provides file and folder selection and displays each import
-result. Thumbnail generation, library browsing/search, editor settings, and
-settings backup remain later Phase 4 work.
+result. The library view loads catalog entries independently, searches names and
+paths in the UI, and isolates source availability and preview failures to the
+affected entry. Available image and video entries expose dimensions, file size,
+and video duration when previewed. Video thumbnails use the first decoded frame.
+
+Thumbnails are generated only as entries approach the visible list, resized to
+at most 320 pixels on either axis, and stored as BMP cache files under
+`%LOCALAPPDATA%\WallpaperLite\thumbnails\v1`. The cache is capped at 64 MiB;
+its key includes the source path, size, and modification time. Repeated views
+reuse the cached thumbnail and metadata. Cache files are disposable and never
+replace or modify source media.
+
+Missing or unavailable entries remain searchable. Locate validates the selected
+file against the existing image/video kind and updates the original catalog ID;
+Remove deletes only the catalog entry; Keep leaves it listed for later. These
+actions do not delete or modify source files. Catalog persistence, browsing,
+thumbnail generation, and source decoding failures are reported independently
+so one bad entry does not stop other entries from appearing.
