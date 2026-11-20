@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use base64::Engine;
 use serde::Serialize;
+use wallpaper_core::editor_settings::WallpaperEditorSettings;
 use wallpaper_core::error::{AppError, ErrorCode};
 use wallpaper_media::{
     Availability, CatalogStore, EditorSettingsStore, MediaKind, VideoReadEvent, VideoSource,
@@ -28,6 +29,33 @@ pub struct EditorPreview {
     monitor_width: u32,
     monitor_height: u32,
     data_url: String,
+    settings: WallpaperEditorSettings,
+}
+
+#[tauri::command]
+pub async fn save_editor_settings(
+    wallpaper_id: u64,
+    settings: WallpaperEditorSettings,
+) -> Result<(), AppError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        if settings.wallpaper_id() != wallpaper_id {
+            return Err(AppError::new(
+                ErrorCode::InvalidEditorSettings,
+                "The wallpaper editor settings are invalid.",
+            ));
+        }
+        EditorSettingsStore::for_current_user()
+            .map_err(|error| error.to_app_error())?
+            .save(&settings)
+            .map_err(|error| error.to_app_error())
+    })
+    .await
+    .map_err(|_| {
+        AppError::new(
+            ErrorCode::Internal,
+            "The editor settings could not be saved.",
+        )
+    })?
 }
 
 #[tauri::command]
@@ -162,6 +190,7 @@ fn render_preview(
             "data:image/bmp;base64,{}",
             base64::engine::general_purpose::STANDARD.encode(bitmap)
         ),
+        settings,
     })
 }
 

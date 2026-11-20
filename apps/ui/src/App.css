@@ -125,6 +125,7 @@ body {
 }
 
 .editor-preview-canvas {
+  position: relative;
   display: grid;
   width: min(100%, 56rem);
   max-height: 32rem;
@@ -136,6 +137,8 @@ body {
   background-image: linear-gradient(45deg, #d3d9e2 25%, transparent 25%), linear-gradient(-45deg, #d3d9e2 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #d3d9e2 75%), linear-gradient(-45deg, transparent 75%, #d3d9e2 75%);
   background-position: 0 0, 0 0.5rem, 0.5rem -0.5rem, -0.5rem 0;
   background-size: 1rem 1rem;
+  touch-action: none;
+  cursor: move;
 }
 
 .editor-preview-canvas img {
@@ -143,6 +146,104 @@ body {
   width: 100%;
   height: 100%;
   object-fit: contain;
+}
+
+.editor-resize-handle {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 1rem;
+  height: 1rem;
+  padding: 0;
+  border: 2px solid #fff;
+  border-radius: 0.2rem 0 0.2rem 0;
+  background: #2864c5;
+  cursor: nwse-resize;
+  touch-action: none;
+}
+
+.editor-controls {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  gap: 0.65rem;
+  align-items: end;
+}
+
+.editor-controls > label,
+.editor-crop-controls label {
+  display: grid;
+  gap: 0.25rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.editor-controls input,
+.editor-controls select {
+  min-width: 0;
+  padding: 0.4rem;
+  border: 1px solid #c8cfdb;
+  border-radius: 0.35rem;
+  background: #fff;
+  color: inherit;
+}
+
+.editor-crop-controls {
+  display: flex;
+  flex-wrap: wrap;
+  grid-column: 1 / -1;
+  gap: 0.55rem;
+  align-items: end;
+  border: 1px solid #d7dce5;
+  border-radius: 0.5rem;
+}
+
+.editor-crop-controls > label {
+  min-width: 5rem;
+}
+
+.editor-source-crop {
+  position: relative;
+  width: min(100%, 30rem);
+  max-height: 20rem;
+  overflow: hidden;
+  border: 1px solid #8994a5;
+  touch-action: none;
+  cursor: crosshair;
+}
+
+.editor-source-crop > img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+  pointer-events: none;
+}
+
+.editor-crop-selection {
+  position: absolute;
+  border: 2px solid #fff;
+  outline: 1px solid #164b9f;
+  background: rgb(40 100 197 / 12%);
+  cursor: move;
+  touch-action: none;
+}
+
+.editor-crop-selection.is-disabled {
+  pointer-events: none;
+  opacity: 0.75;
+}
+
+.editor-crop-selection button {
+  position: absolute;
+  right: -0.45rem;
+  bottom: -0.45rem;
+  width: 0.85rem;
+  height: 0.85rem;
+  padding: 0;
+  border: 1px solid #fff;
+  border-radius: 50%;
+  background: #164b9f;
+  cursor: nwse-resize;
 }
 
 .import-panel h2 {

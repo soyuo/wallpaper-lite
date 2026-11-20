@@ -564,6 +564,44 @@ mod tests {
     }
 
     #[test]
+    fn custom_physical_bounds_and_offsets_scale_on_wide_tall_and_square_displays() {
+        let source = d(1600, 900);
+        for output in [d(1920, 1080), d(1080, 1920), d(1200, 1200)] {
+            let transform = ImageTransform::new(
+                (24.0, -12.0),
+                (1.0, 1.0),
+                0.0,
+                (0.5, 0.5),
+                NormalizedCrop::default(),
+            )
+            .expect("valid transform")
+            .with_size_px(Some((900.0, 500.0)))
+            .expect("valid physical size");
+            let placement = calculate_transformed(source, output, M::Cover, transform)
+                .expect("placement should be finite");
+            let bounds = placement.destination();
+            close(
+                bounds.left(),
+                0.5 - 450.0 / output.width() as f32 + 24.0 / output.width() as f32,
+            );
+            close(
+                bounds.right(),
+                0.5 + 450.0 / output.width() as f32 + 24.0 / output.width() as f32,
+            );
+            close(
+                bounds.top(),
+                0.5 - 250.0 / output.height() as f32 - 12.0 / output.height() as f32,
+            );
+            close(
+                bounds.bottom(),
+                0.5 + 250.0 / output.height() as f32 - 12.0 / output.height() as f32,
+            );
+            assert!(placement.source_uv().left() >= 0.0);
+            assert!(placement.source_uv().right() <= 1.0);
+        }
+    }
+
+    #[test]
     fn four_k_wide_source_maps_correctly_to_portrait_output() {
         let source = d(3840, 2160);
         let output = d(1080, 1920);

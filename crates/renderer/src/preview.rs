@@ -112,6 +112,7 @@ pub fn render_editor_preview(
         StoredPlacementMode::Fit => PlacementMode::Fit,
         StoredPlacementMode::Stretch => PlacementMode::Stretch,
         StoredPlacementMode::Center => PlacementMode::Center,
+        StoredPlacementMode::Custom => PlacementMode::Cover,
     };
     let placement = calculate_transformed_image_placement(source, output, mode, transform)?;
 
