@@ -94,3 +94,6 @@ described in [`editor-preview.md`](editor-preview.md); transactional apply and
 live application are implemented. Per-wallpaper presets and persisted recent
 wallpaper ordering use the same validated settings snapshot and are documented
 in [`editor-settings.md`](editor-settings.md).
+Per-wallpaper playback preference defaults, bounds, and atomic persistence are
+described in [`playback-settings.md`](playback-settings.md); runtime controls
+and audio output remain in later playback work.
