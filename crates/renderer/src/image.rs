@@ -1716,6 +1716,114 @@ mod tests {
     }
 
     #[test]
+    fn video_editor_preview_matches_d3d_output_within_documented_tolerance() {
+        use wallpaper_core::editor_settings::{EditorColorSettings, WallpaperEditorSettings};
+
+        let host = discover_desktop_host().expect("an interactive Windows shell is required");
+        let window = host
+            .attach_wallpaper_window()
+            .expect("the wallpaper child should attach to the desktop host");
+        let device = D3d11Device::create_hardware().expect("hardware D3D11 is required");
+        let video_path = fixture_path("short-h264-80x64.mp4");
+        let mut preview_source = VideoSource::open(&video_path)
+            .expect("the H.264 fixture should open for the editor preview");
+        let preview_frame = next_video_frame(&mut preview_source, "editor preview");
+        let preview_decoder_mode = preview_source.decoder_mode();
+        let mut desktop_source = VideoSource::open_with_d3d11_device(&video_path, device.device())
+            .expect("the H.264 fixture should open with the presenter device");
+        let desktop_frame = next_video_frame(&mut desktop_source, "desktop presenter");
+        let desktop_decoder_mode = desktop_source.decoder_mode();
+        assert_eq!(
+            (preview_frame.width(), preview_frame.height()),
+            (desktop_frame.width(), desktop_frame.height())
+        );
+        let decoder_difference = preview_frame
+            .rgba8()
+            .iter()
+            .zip(desktop_frame.rgba8())
+            .map(|(preview, desktop)| preview.abs_diff(*desktop))
+            .max()
+            .unwrap_or(0);
+        let mut presenter =
+            D3d11ImagePresenter::new_with_video_frame(&device, window.raw_handle(), &desktop_frame)
+                .expect("the decoded video frame should present");
+        let hwnd = hwnd_from_raw(window.raw_handle());
+        unsafe { SetWindowPos(hwnd, None, 0, 0, 1280, 720, SWP_NOACTIVATE) }
+            .expect("the preview test window should resize");
+        presenter
+            .refresh_if_resized()
+            .expect("the video swap chain should resize");
+
+        let defaults = WallpaperEditorSettings::default_for(1)
+            .expect("default editor settings should validate");
+        let color = EditorColorSettings::new(1.1, 1.05, 0.95, 1.0, 1.0, 0.0, 1.0, 1.0, 1.0)
+            .expect("video editor color settings should validate");
+        let settings = WallpaperEditorSettings::new(1, defaults.render(), color)
+            .expect("video editor settings should validate");
+        presenter
+            .set_editor_settings(&settings)
+            .expect("the desktop presenter should apply editor settings");
+        let gpu = read_render_target_rgba8(&presenter);
+        let preview_cpu = crate::render_editor_preview(
+            preview_frame.width(),
+            preview_frame.height(),
+            preview_frame.stride(),
+            preview_frame.rgba8(),
+            1280,
+            720,
+            &settings,
+        )
+        .expect("the editor preview should render the decoded H.264 video frame");
+        let desktop_cpu = crate::render_editor_preview(
+            desktop_frame.width(),
+            desktop_frame.height(),
+            desktop_frame.stride(),
+            desktop_frame.rgba8(),
+            1280,
+            720,
+            &settings,
+        )
+        .expect("the CPU renderer should render the desktop-decoded video frame");
+        assert_eq!((preview_cpu.width(), preview_cpu.height()), (1280, 720));
+        assert_eq!((desktop_cpu.width(), desktop_cpu.height()), (1280, 720));
+        assert_eq!(gpu.len(), preview_cpu.rgba8().len());
+
+        let max_interior_difference = |cpu: &[u8]| {
+            gpu.chunks_exact(4)
+                .zip(cpu.chunks_exact(4))
+                .enumerate()
+                .filter_map(|(pixel, (gpu, cpu))| {
+                    let x = pixel % 1280;
+                    let y = pixel / 1280;
+                    if x < 2 || x >= 1278 || y < 2 || y >= 718 {
+                        return None;
+                    }
+                    Some(
+                        (0..3)
+                            .map(|channel| gpu[channel].abs_diff(cpu[channel]))
+                            .max()
+                            .unwrap_or(0),
+                    )
+                })
+                .max()
+                .unwrap_or(0)
+        };
+        let renderer_difference = max_interior_difference(desktop_cpu.rgba8());
+        let editor_preview_difference = max_interior_difference(preview_cpu.rgba8());
+        println!(
+            "video decoder modes: preview={preview_decoder_mode:?}, desktop={desktop_decoder_mode:?}; source max channel delta={decoder_difference}/255; same-frame renderer delta={renderer_difference}/255; editor-to-desktop delta={editor_preview_difference}/255"
+        );
+        assert!(
+            renderer_difference <= 5,
+            "maximum same-frame video renderer difference {renderer_difference}/255"
+        );
+        assert!(
+            editor_preview_difference <= 16,
+            "maximum editor-to-desktop video difference {editor_preview_difference}/255"
+        );
+    }
+
+    #[test]
     fn presents_once_and_stays_idle_until_image_or_size_changes() {
         let host = discover_desktop_host().expect("an interactive Windows shell is required");
         let window = host
