@@ -119,3 +119,7 @@ Recently applied wallpaper IDs are stored in
 transaction lock and restores the previous ordering if host application or
 settings persistence fails. The UI displays only IDs still present in the
 catalog. Opening or previewing an item does not change recency.
+
+Video playback preferences use a separate per-wallpaper settings record; see
+[`playback-settings.md`](playback-settings.md) for its defaults, validation,
+and storage contract.

@@ -10,6 +10,7 @@ mod frame_queue;
 mod import;
 mod library;
 mod playback;
+mod playback_settings;
 #[cfg(target_os = "windows")]
 mod video;
 #[cfg(target_os = "windows")]
@@ -29,10 +30,15 @@ pub use playback::{
     PlaybackError, PlaybackScheduler, PlaybackState, VideoFpsLimit, VideoFpsLimitError,
     VideoFpsPreset, VideoPlaybackSpeed, VideoPlaybackSpeedError,
 };
+pub use playback_settings::{PlaybackSettingsError, PlaybackSettingsStore};
 pub use wallpaper_core::editor_settings::{
     EDITOR_SETTINGS_SCHEMA_VERSION, EditorColorSettings, EditorSettingsValidationError,
     NormalizedCrop, NormalizedPoint, PhysicalPosition, PhysicalSize, PlacementMode, RenderSettings,
     Scale2d, WallpaperEditorSettings,
+};
+pub use wallpaper_core::playback_settings::{
+    LoopMode, MIN_SEGMENT_DURATION_MS, PLAYBACK_SETTINGS_SCHEMA_VERSION, PlaybackSettings,
+    PlaybackSettingsValidationError, SegmentRange,
 };
 
 #[cfg(any(target_os = "windows", test))]

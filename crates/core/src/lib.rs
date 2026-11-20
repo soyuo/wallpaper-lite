@@ -4,3 +4,4 @@
 
 pub mod editor_settings;
 pub mod error;
+pub mod playback_settings;

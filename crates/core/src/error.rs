@@ -26,6 +26,8 @@ pub enum ErrorCode {
     EditorApplyFailed,
     EditorApplyRollbackFailed,
     EditorWallpaperNotActive,
+    PlaybackSettingsStorageFailed,
+    InvalidPlaybackSettings,
     DesktopHostUnavailable,
     Internal,
 }
@@ -55,6 +57,8 @@ impl ErrorCode {
             Self::EditorApplyFailed => "editor_apply_failed",
             Self::EditorApplyRollbackFailed => "editor_apply_rollback_failed",
             Self::EditorWallpaperNotActive => "editor_wallpaper_not_active",
+            Self::PlaybackSettingsStorageFailed => "playback_settings_storage_failed",
+            Self::InvalidPlaybackSettings => "invalid_playback_settings",
             Self::DesktopHostUnavailable => "desktop_host_unavailable",
             Self::Internal => "internal",
         }
