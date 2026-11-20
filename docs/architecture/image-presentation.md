@@ -67,6 +67,12 @@ Non-finite or out-of-range input returns `InvalidColorAdjustments`. Neutral
 defaults are brightness/contrast/saturation/gamma/opacity/RGB balance `1`, and
 temperature `0`.
 
+Persisted `EditorColorSettings` are converted through
+`ColorAdjustments::from_editor_settings`. The CPU editor preview uses this same
+conversion; the D3D11 presenter accepts it through
+`D3d11ImagePresenter::set_editor_color_settings`. The parity test compares both
+paths against the same stored color values.
+
 The HWND swap chain uses `DXGI_ALPHA_MODE_IGNORE`, so the opacity control fades
 RGB toward black; it does not reveal the desktop beneath the child. Source PNG
 alpha is ignored consistently with that opaque presentation path. A future

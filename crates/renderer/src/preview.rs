@@ -116,16 +116,7 @@ pub fn render_editor_preview(
     };
     let placement = calculate_transformed_image_placement(source, output, mode, transform)?;
 
-    let color = settings.color();
-    let adjustments = ColorAdjustments::new(
-        color.brightness(),
-        color.contrast(),
-        color.saturation(),
-        color.gamma(),
-        color.opacity(),
-        color.temperature(),
-        color.rgb_balance(),
-    )?;
+    let adjustments = ColorAdjustments::from_editor_settings(settings.color())?;
 
     let pixel_count = (output_width as usize)
         .checked_mul(output_height as usize)

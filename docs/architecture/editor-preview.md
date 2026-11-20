@@ -37,3 +37,11 @@ center. Edits remain a validated draft until **Save and preview** stores them th
 from CSS canvas units to monitor physical pixels. Playback-synchronized preview,
 edit history, transactional Apply/Cancel, and applying settings to the live
 desktop remain later work.
+
+The editor exposes brightness, contrast, saturation, gamma, opacity, color
+temperature, and per-channel RGB balance with the shared settings ranges and
+defaults; **Reset color** restores those defaults. Both the CPU preview and
+`D3d11ImagePresenter::set_editor_color_settings` convert the same
+`EditorColorSettings` through `ColorAdjustments::from_editor_settings`, then
+use the color ordering documented in [`image-presentation.md`](image-presentation.md).
+The parity test compares this shared settings path against D3D11 readback.
