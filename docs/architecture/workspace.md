@@ -87,3 +87,6 @@ for the Media Foundation source-reader, frame-timing, GPU interop, and lifetime 
 See [`media-library.md`](media-library.md) for the local catalog schema,
 content-validated import, library browsing/search, metadata, missing-file
 actions, and bounded cached thumbnails.
+Per-wallpaper editor defaults, units, validation, and persistence are described
+in [`editor-settings.md`](editor-settings.md); editor UI, history, and live
+application remain later work.

@@ -59,6 +59,8 @@ export type AppErrorCode =
   | "transport_error"
   | "library_storage_failed"
   | "invalid_library_entry"
+  | "editor_settings_storage_failed"
+  | "invalid_editor_settings"
   | "internal";
 
 interface AppErrorPayload {
@@ -111,6 +113,8 @@ function isAppErrorCode(value: unknown): value is AppErrorCode {
     value === "transport_error" ||
     value === "library_storage_failed" ||
     value === "invalid_library_entry" ||
+    value === "editor_settings_storage_failed" ||
+    value === "invalid_editor_settings" ||
     value === "internal"
   );
 }
