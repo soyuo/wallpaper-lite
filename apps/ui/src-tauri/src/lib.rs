@@ -7,6 +7,7 @@ use wallpaper_core::error::AppError;
 use wallpaper_core::error::ErrorCode;
 use wallpaper_media::{CatalogStore, ImportResult, import_local_media};
 
+mod editor;
 mod library;
 
 const APP_LOG_DIRECTORY: &str = "com.soyuo.wallpaper-lite";
@@ -151,6 +152,8 @@ pub fn run() -> process::ExitCode {
         .invoke_handler(tauri::generate_handler![
             host_ping,
             import_media,
+            editor::editor_monitors,
+            editor::editor_preview,
             library::list_library,
             library::library_preview,
             library::remove_library_entry,

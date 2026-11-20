@@ -46,6 +46,21 @@ export interface LibraryPreview {
   thumbnailDataUrl: string;
 }
 
+export interface EditorMonitor {
+  id: string;
+  label: string;
+  width: number;
+  height: number;
+}
+
+export interface EditorPreview {
+  width: number;
+  height: number;
+  monitorWidth: number;
+  monitorHeight: number;
+  dataUrl: string;
+}
+
 export type AppErrorCode =
   | "host_unavailable"
   | "timeout"
@@ -83,6 +98,8 @@ export interface HostAdapter {
   importMedia(paths: string[]): Promise<ImportResult[]>;
   listLibrary(): Promise<LibraryEntry[]>;
   libraryPreview(id: number): Promise<LibraryPreview>;
+  editorMonitors(): Promise<EditorMonitor[]>;
+  editorPreview(id: number, monitorWidth: number, monitorHeight: number): Promise<EditorPreview>;
   removeLibraryEntry(id: number): Promise<void>;
   renameLibraryEntry(id: number, displayName: string): Promise<void>;
   setLibraryFavorite(id: number, favorite: boolean): Promise<void>;
@@ -145,6 +162,12 @@ export const hostAdapter: HostAdapter = {
   },
   libraryPreview(id) {
     return invoke<LibraryPreview>("library_preview", { id });
+  },
+  editorMonitors() {
+    return invoke<EditorMonitor[]>("editor_monitors");
+  },
+  editorPreview(id, monitorWidth, monitorHeight) {
+    return invoke<EditorPreview>("editor_preview", { wallpaperId: id, monitorWidth, monitorHeight });
   },
   removeLibraryEntry(id) {
     return invoke<void>("remove_library_entry", { id });

@@ -5,6 +5,8 @@ import "./App.css";
 import {
   hostAdapter,
   type Availability,
+  type EditorMonitor,
+  type EditorPreview,
   type ImportFailure,
   type ImportResult,
   type LibraryEntry,
@@ -72,6 +74,7 @@ interface LibraryCardProps {
   onSubmitRename(entry: LibraryEntry): void;
   onCancelRename(): void;
   onToggleFavorite(entry: LibraryEntry): void;
+  onOpenEditorPreview(entry: LibraryEntry): void;
 }
 
 function LibraryCard({
@@ -92,6 +95,7 @@ function LibraryCard({
   onSubmitRename,
   onCancelRename,
   onToggleFavorite,
+  onOpenEditorPreview,
 }: LibraryCardProps) {
   const cardRef = useRef<HTMLLIElement>(null);
 
@@ -163,6 +167,9 @@ function LibraryCard({
           {duration ? ` · ${duration}` : ""}
         </p>
         <div className="library-card-actions">
+          {entry.availability === "available" && (
+            <button disabled={actionBusy} onClick={() => onOpenEditorPreview(entry)}>Preview on display</button>
+          )}
           <button
             aria-pressed={entry.isFavorite}
             disabled={actionBusy}
@@ -205,6 +212,12 @@ function App() {
   const [renameDraft, setRenameDraft] = useState("");
   const [keptIds, setKeptIds] = useState<Set<number>>(() => new Set());
   const [visibleCount, setVisibleCount] = useState(24);
+  const [editorMonitors, setEditorMonitors] = useState<EditorMonitor[]>([]);
+  const [editorMonitorId, setEditorMonitorId] = useState("");
+  const [editorEntry, setEditorEntry] = useState<LibraryEntry | null>(null);
+  const [editorPreview, setEditorPreview] = useState<EditorPreview | null>(null);
+  const [editorBusy, setEditorBusy] = useState(false);
+  const [editorError, setEditorError] = useState("");
   const previewRequests = useRef(new Set<number>());
 
   const refreshLibrary = useCallback(async () => {
@@ -222,6 +235,13 @@ function App() {
   useEffect(() => {
     void refreshLibrary();
   }, [refreshLibrary]);
+
+  useEffect(() => {
+    void hostAdapter.editorMonitors().then((monitors) => {
+      setEditorMonitors(monitors);
+      setEditorMonitorId(monitors[0]?.id ?? "");
+    }).catch(() => setEditorError("Display information is unavailable."));
+  }, []);
 
   const loadPreview = useCallback(async (id: number) => {
     if (previewRequests.current.has(id)) return;
@@ -372,6 +392,45 @@ function App() {
     }
   }
 
+  async function openEditorPreview(entry: LibraryEntry) {
+    setEditorEntry(entry);
+    setEditorPreview(null);
+    setEditorError("");
+    setEditorBusy(true);
+    try {
+      const monitors = editorMonitors.length > 0 ? editorMonitors : await hostAdapter.editorMonitors();
+      if (monitors.length === 0) {
+        setEditorError("No display is available for preview.");
+        return;
+      }
+      const monitor = monitors.find((item) => item.id === editorMonitorId) ?? monitors[0];
+      setEditorMonitors(monitors);
+      setEditorMonitorId(monitor.id);
+      setEditorPreview(await hostAdapter.editorPreview(entry.id, monitor.width, monitor.height));
+    } catch {
+      setEditorError("The wallpaper preview could not be rendered.");
+    } finally {
+      setEditorBusy(false);
+    }
+  }
+
+  async function changeEditorMonitor(monitorId: string) {
+    const monitor = editorMonitors.find((item) => item.id === monitorId);
+    if (!monitor) return;
+    setEditorMonitorId(monitor.id);
+    if (!editorEntry) return;
+    setEditorBusy(true);
+    setEditorPreview(null);
+    setEditorError("");
+    try {
+      setEditorPreview(await hostAdapter.editorPreview(editorEntry.id, monitor.width, monitor.height));
+    } catch {
+      setEditorError("The wallpaper preview could not be rendered for this display.");
+    } finally {
+      setEditorBusy(false);
+    }
+  }
+
   return (
     <main className="app-shell">
       <h1>wallpaper-lite</h1>
@@ -401,6 +460,45 @@ function App() {
           </ul>
         )}
       </section>
+
+      {editorEntry && (
+        <section className="editor-preview-panel" aria-labelledby="editor-preview-title">
+          <div className="editor-preview-heading">
+            <div>
+              <h2 id="editor-preview-title">Preview: {editorEntry.displayName}</h2>
+              <p>Uses the saved physical-pixel settings and renderer placement/color rules.</p>
+            </div>
+            <button onClick={() => { setEditorEntry(null); setEditorPreview(null); setEditorError(""); }}>
+              Close preview
+            </button>
+          </div>
+          <label className="editor-monitor-select">
+            <span>Preview display</span>
+            <select value={editorMonitorId} onChange={(event) => void changeEditorMonitor(event.currentTarget.value)}>
+              {editorMonitors.map((monitor) => (
+                <option key={monitor.id} value={monitor.id}>{monitor.label}</option>
+              ))}
+            </select>
+          </label>
+          {editorBusy ? (
+            <p role="status">Rendering preview...</p>
+          ) : editorError ? (
+            <p role="status">{editorError}</p>
+          ) : editorPreview ? (
+            <div
+              className="editor-preview-canvas"
+              aria-label={`Preview canvas ${editorPreview.monitorWidth} by ${editorPreview.monitorHeight}`}
+              style={{
+                aspectRatio: `${editorPreview.width} / ${editorPreview.height}`,
+                width: `min(100%, ${Math.min(56, 32 * editorPreview.width / editorPreview.height)}rem)`,
+              }}
+            >
+              <img src={editorPreview.dataUrl} alt={`Rendered ${editorEntry.displayName}`} />
+            </div>
+          ) : null}
+          <p className="editor-preview-note">Resizing this application window only scales the preview display; it does not change saved wallpaper settings.</p>
+        </section>
+      )}
 
       <section className="library-panel" aria-labelledby="library-title">
         <div className="library-heading">
@@ -466,6 +564,7 @@ function App() {
                   setRenameDraft("");
                 }}
                 onToggleFavorite={(item) => void toggleFavorite(item)}
+                onOpenEditorPreview={(item) => void openEditorPreview(item)}
               />
             ))}
           </ul>

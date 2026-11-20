@@ -112,7 +112,6 @@ impl Default for ColorAdjustments {
 }
 
 /// CPU reference for the D3D11 pixel shader, useful for deterministic tests.
-#[cfg(test)]
 pub(crate) fn apply_rgba8_reference(pixel: [u8; 4], adjustments: ColorAdjustments) -> [u8; 4] {
     if adjustments == ColorAdjustments::default() {
         return pixel;
@@ -147,7 +146,6 @@ pub(crate) fn apply_rgba8_reference(pixel: [u8; 4], adjustments: ColorAdjustment
     ]
 }
 
-#[cfg(test)]
 fn srgb_to_linear(value: f32) -> f32 {
     if value <= 0.04045 {
         value / 12.92
@@ -156,7 +154,6 @@ fn srgb_to_linear(value: f32) -> f32 {
     }
 }
 
-#[cfg(test)]
 fn linear_to_srgb8(value: f32) -> u8 {
     let value = value.clamp(0.0, 1.0);
     let encoded = if value <= 0.0031308 {

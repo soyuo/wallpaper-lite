@@ -108,6 +108,7 @@ pub struct ImageTransform {
     anchor_x: f32,
     anchor_y: f32,
     crop: NormalizedCrop,
+    size_px: Option<(f32, f32)>,
 }
 
 impl ImageTransform {
@@ -150,7 +151,19 @@ impl ImageTransform {
             anchor_x: anchor.0,
             anchor_y: anchor.1,
             crop,
+            size_px: None,
         })
+    }
+
+    /// Override the placement rectangle in physical pixels before relative scaling.
+    pub fn with_size_px(mut self, size: Option<(f32, f32)>) -> Result<Self, RendererError> {
+        if size.is_some_and(|(width, height)| {
+            !width.is_finite() || !height.is_finite() || width <= 0.0 || height <= 0.0
+        }) {
+            return Err(RendererError::InvalidTransformParameters);
+        }
+        self.size_px = size;
+        Ok(self)
     }
 
     pub const fn position_px(self) -> (f32, f32) {
@@ -185,6 +198,7 @@ impl Default for ImageTransform {
             anchor_x: 0.5,
             anchor_y: 0.5,
             crop: NormalizedCrop::default(),
+            size_px: None,
         }
     }
 }
@@ -325,12 +339,18 @@ pub fn calculate_transformed_image_placement(
     let base = placement.destination;
     let width = f64::from(output.width);
     let height = f64::from(output.height);
-    let anchor_x = (f64::from(base.left)
-        + f64::from(base.right - base.left) * f64::from(transform.anchor_x))
-        * width;
-    let anchor_y = (f64::from(base.top)
-        + f64::from(base.bottom - base.top) * f64::from(transform.anchor_y))
-        * height;
+    let base_left = f64::from(base.left) * width;
+    let base_top = f64::from(base.top) * height;
+    let base_width = f64::from(base.right - base.left) * width;
+    let base_height = f64::from(base.bottom - base.top) * height;
+    let (rect_width, rect_height) = transform
+        .size_px
+        .map(|(width, height)| (f64::from(width), f64::from(height)))
+        .unwrap_or((base_width, base_height));
+    let rect_left = (base_left + base_left + base_width - rect_width) * 0.5;
+    let rect_top = (base_top + base_top + base_height - rect_height) * 0.5;
+    let anchor_x = rect_left + rect_width * f64::from(transform.anchor_x);
+    let anchor_y = rect_top + rect_height * f64::from(transform.anchor_y);
     let radians = f64::from(transform.rotation_degrees).to_radians();
     let cosine = radians.cos();
     let sine = radians.sin();
@@ -339,8 +359,12 @@ pub fn calculate_transformed_image_placement(
 
     let mut transformed = placement.destination_corners;
     for point in &mut transformed {
-        let local_x = (f64::from(point.x) * width - anchor_x) * f64::from(transform.scale_x);
-        let local_y = (f64::from(point.y) * height - anchor_y) * f64::from(transform.scale_y);
+        let original_x = f64::from(point.x) * width;
+        let original_y = f64::from(point.y) * height;
+        let resized_x = rect_left + (original_x - base_left) * rect_width / base_width;
+        let resized_y = rect_top + (original_y - base_top) * rect_height / base_height;
+        let local_x = (resized_x - anchor_x) * f64::from(transform.scale_x);
+        let local_y = (resized_y - anchor_y) * f64::from(transform.scale_y);
         let physical_x = anchor_x + local_x * cosine - local_y * sine + position_x;
         let physical_y = anchor_y + local_x * sine + local_y * cosine + position_y;
         point.x = finite_f32(physical_x / width)?;
