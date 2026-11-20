@@ -126,6 +126,7 @@ async fn import_media(paths: Vec<String>) -> Result<Vec<ImportResult>, AppError>
     let store = CatalogStore::for_current_user().map_err(|error| error.to_app_error())?;
     let paths = paths.into_iter().map(PathBuf::from).collect::<Vec<_>>();
     tauri::async_runtime::spawn_blocking(move || {
+        let _catalog_lock = library::lock_catalog_mutation()?;
         import_local_media(&store, &paths).map_err(|error| error.to_app_error())
     })
     .await
@@ -153,6 +154,8 @@ pub fn run() -> process::ExitCode {
             library::list_library,
             library::library_preview,
             library::remove_library_entry,
+            library::rename_library_entry,
+            library::set_library_favorite,
             library::relocate_library_entry,
         ])
         .run(tauri::generate_context!());

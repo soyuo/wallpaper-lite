@@ -204,6 +204,45 @@ body {
   outline-offset: 2px;
 }
 
+.library-favorites-filter {
+  display: flex;
+  width: fit-content;
+  align-items: center;
+  gap: 0.45rem;
+  color: #4c5668;
+  font-size: 0.85rem;
+}
+
+.library-rename-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-bottom: 0.35rem;
+}
+
+.library-rename-form label {
+  flex: 1 1 12rem;
+}
+
+.library-rename-form input {
+  width: 100%;
+  min-width: 0;
+  padding: 0.4rem 0.5rem;
+  border: 1px solid #c8cfdb;
+  border-radius: 0.35rem;
+  font: inherit;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  clip-path: inset(50%);
+}
+
 .library-list {
   display: grid;
   max-height: 34rem;

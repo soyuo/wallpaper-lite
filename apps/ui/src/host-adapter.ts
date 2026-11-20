@@ -33,6 +33,7 @@ export interface LibraryEntry {
   displayName: string;
   sourcePath: string;
   mediaKind: MediaKind;
+  isFavorite: boolean;
   availability: Availability;
   sizeBytes: number | null;
 }
@@ -57,6 +58,7 @@ export type AppErrorCode =
   | "unsupported_platform"
   | "transport_error"
   | "library_storage_failed"
+  | "invalid_library_entry"
   | "internal";
 
 interface AppErrorPayload {
@@ -80,6 +82,8 @@ export interface HostAdapter {
   listLibrary(): Promise<LibraryEntry[]>;
   libraryPreview(id: number): Promise<LibraryPreview>;
   removeLibraryEntry(id: number): Promise<void>;
+  renameLibraryEntry(id: number, displayName: string): Promise<void>;
+  setLibraryFavorite(id: number, favorite: boolean): Promise<void>;
   relocateLibraryEntry(id: number, path: string): Promise<void>;
 }
 
@@ -106,6 +110,7 @@ function isAppErrorCode(value: unknown): value is AppErrorCode {
     value === "unsupported_platform" ||
     value === "transport_error" ||
     value === "library_storage_failed" ||
+    value === "invalid_library_entry" ||
     value === "internal"
   );
 }
@@ -139,6 +144,12 @@ export const hostAdapter: HostAdapter = {
   },
   removeLibraryEntry(id) {
     return invoke<void>("remove_library_entry", { id });
+  },
+  renameLibraryEntry(id, displayName) {
+    return invoke<void>("rename_library_entry", { id, displayName });
+  },
+  setLibraryFavorite(id, favorite) {
+    return invoke<void>("set_library_favorite", { id, favorite });
   },
   relocateLibraryEntry(id, path) {
     return invoke<void>("relocate_library_entry", { id, path });

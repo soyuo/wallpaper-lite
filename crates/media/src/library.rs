@@ -52,6 +52,8 @@ pub struct WallpaperEntry {
     source_path: PathBuf,
     display_name: String,
     media_kind: MediaKind,
+    #[serde(default)]
+    is_favorite: bool,
     availability: Availability,
 }
 
@@ -70,6 +72,10 @@ impl WallpaperEntry {
 
     pub const fn media_kind(&self) -> MediaKind {
         self.media_kind
+    }
+
+    pub const fn is_favorite(&self) -> bool {
+        self.is_favorite
     }
 
     pub const fn availability(&self) -> Availability {
@@ -115,6 +121,27 @@ impl WallpaperLibrary {
         };
         self.entries.remove(index);
         true
+    }
+
+    pub fn rename(&mut self, id: u64, display_name: impl Into<String>) -> Result<(), LibraryError> {
+        let display_name = validate_display_name(display_name.into())?;
+        let entry = self
+            .entries
+            .iter_mut()
+            .find(|entry| entry.id.get() == id)
+            .ok_or(LibraryError::EntryNotFound)?;
+        entry.display_name = display_name;
+        Ok(())
+    }
+
+    pub fn set_favorite(&mut self, id: u64, favorite: bool) -> Result<(), LibraryError> {
+        let entry = self
+            .entries
+            .iter_mut()
+            .find(|entry| entry.id.get() == id)
+            .ok_or(LibraryError::EntryNotFound)?;
+        entry.is_favorite = favorite;
+        Ok(())
     }
 
     pub fn relocate(
@@ -166,6 +193,7 @@ impl WallpaperLibrary {
             source_path,
             display_name,
             media_kind,
+            is_favorite: false,
             availability,
         });
         self.next_id = next_id;
@@ -296,6 +324,7 @@ pub enum LibraryError {
     InvalidCatalogPath,
     InvalidSourcePath,
     InvalidDisplayName,
+    EntryNotFound,
     IdExhausted,
     UnsupportedSchema,
     InvalidCatalog,
@@ -308,10 +337,20 @@ pub enum LibraryError {
 
 impl LibraryError {
     pub const fn to_app_error(self) -> AppError {
-        AppError::new(
-            ErrorCode::LibraryStorageFailed,
-            "The wallpaper library could not be loaded or saved.",
-        )
+        match self {
+            Self::InvalidDisplayName => AppError::new(
+                ErrorCode::InvalidLibraryEntry,
+                "The wallpaper display name is invalid.",
+            ),
+            Self::EntryNotFound => AppError::new(
+                ErrorCode::InvalidLibraryEntry,
+                "The wallpaper library entry no longer exists.",
+            ),
+            _ => AppError::new(
+                ErrorCode::LibraryStorageFailed,
+                "The wallpaper library could not be loaded or saved.",
+            ),
+        }
     }
 
     /// Path-free diagnostic stage suitable for application logs.
@@ -321,6 +360,7 @@ impl LibraryError {
             Self::InvalidCatalogPath => "library_stage=validate_catalog_path",
             Self::InvalidSourcePath => "library_stage=validate_source_path",
             Self::InvalidDisplayName => "library_stage=validate_display_name",
+            Self::EntryNotFound => "library_stage=find_entry",
             Self::IdExhausted => "library_stage=allocate_id",
             Self::UnsupportedSchema => "library_stage=validate_schema",
             Self::InvalidCatalog => "library_stage=validate_catalog",
@@ -340,6 +380,7 @@ impl fmt::Display for LibraryError {
             Self::InvalidCatalogPath => "The wallpaper catalog path is invalid.",
             Self::InvalidSourcePath => "A wallpaper source path is invalid.",
             Self::InvalidDisplayName => "A wallpaper display name is invalid.",
+            Self::EntryNotFound => "The wallpaper library entry no longer exists.",
             Self::IdExhausted => "No more wallpaper identifiers can be allocated.",
             Self::UnsupportedSchema => "The wallpaper catalog schema is unsupported.",
             Self::InvalidCatalog => "The wallpaper catalog data is invalid.",
@@ -565,10 +606,93 @@ mod tests {
         assert_eq!(entry.display_name(), "Sample wallpaper");
         assert_eq!(entry.media_kind(), MediaKind::Image);
         assert_eq!(entry.availability(), Availability::Available);
+        assert!(!entry.is_favorite());
         assert_eq!(
             fs::read(&source).expect("source remains readable"),
             original
         );
+    }
+
+    #[test]
+    fn rename_and_favorite_persist_without_changing_the_source() {
+        let directory = TestDirectory::new();
+        let source = directory.path().join("source.png");
+        let original = b"source bytes stay unchanged";
+        fs::write(&source, original).expect("source should be written");
+        let store = CatalogStore::at_path(directory.path().join("WallpaperLite/library.json"));
+        let mut library = store.load().expect("catalog should load");
+        let id = library
+            .add(&source, "Original name", MediaKind::Image)
+            .expect("source should be catalogued");
+
+        library
+            .rename(id.get(), "  A better name  ")
+            .expect("valid name should be accepted");
+        library
+            .set_favorite(id.get(), true)
+            .expect("existing item should become favorite");
+        store.save(&library).expect("updated catalog should save");
+
+        let loaded = store.load().expect("updated catalog should reload");
+        let entry = loaded.get(id).expect("ID should remain stable");
+        assert_eq!(entry.display_name(), "A better name");
+        assert_eq!(entry.source_path(), source);
+        assert!(entry.is_favorite());
+        assert_eq!(
+            fs::read(&source).expect("source remains readable"),
+            original
+        );
+
+        assert_eq!(
+            library.rename(id.get(), "  "),
+            Err(LibraryError::InvalidDisplayName)
+        );
+        assert_eq!(
+            library.rename(id.get() + 10, "Missing"),
+            Err(LibraryError::EntryNotFound)
+        );
+        assert_eq!(
+            library.set_favorite(id.get() + 10, true),
+            Err(LibraryError::EntryNotFound)
+        );
+        assert_eq!(
+            LibraryError::InvalidDisplayName.to_app_error().code,
+            ErrorCode::InvalidLibraryEntry
+        );
+        assert_eq!(
+            LibraryError::EntryNotFound.to_app_error().code,
+            ErrorCode::InvalidLibraryEntry
+        );
+    }
+
+    #[test]
+    fn older_catalog_without_favorite_field_defaults_to_false() {
+        let directory = TestDirectory::new();
+        let source = directory.path().join("source.png");
+        fs::write(&source, b"source").expect("source should be written");
+        let store = CatalogStore::at_path(directory.path().join("WallpaperLite/library.json"));
+        let mut library = store.load().expect("catalog should load");
+        let id = library
+            .add(&source, "Legacy entry", MediaKind::Image)
+            .expect("source should be catalogued");
+        store.save(&library).expect("catalog should save");
+
+        let mut serialized: serde_json::Value =
+            serde_json::from_slice(&fs::read(store.path()).expect("catalog should be readable"))
+                .expect("catalog JSON should parse");
+        serialized["entries"][0]
+            .as_object_mut()
+            .expect("entry should be an object")
+            .remove("isFavorite");
+        fs::write(
+            store.path(),
+            serde_json::to_vec(&serialized).expect("legacy JSON should serialize"),
+        )
+        .expect("legacy catalog should be written");
+
+        let loaded = store.load().expect("legacy catalog should still load");
+        let entry = loaded.get(id).expect("legacy entry ID should survive");
+        assert!(!entry.is_favorite());
     }
 
     #[test]
@@ -578,6 +702,7 @@ mod tests {
         let second_source = directory.path().join("second.png");
         fs::write(&first_source, b"first source").expect("first source should be written");
         fs::write(&second_source, b"second source").expect("second source should be written");
+        let store = CatalogStore::at_path(directory.path().join("WallpaperLite/library.json"));
         let mut library = WallpaperLibrary::default();
         let first_id = library
             .add(&first_source, "First", MediaKind::Image)
@@ -585,6 +710,7 @@ mod tests {
         let second_id = library
             .add(&second_source, "Second", MediaKind::Image)
             .expect("second source should be catalogued");
+        store.save(&library).expect("initial catalog should save");
 
         assert!(library.remove(first_id.get()));
         assert!(!library.remove(first_id.get()));
@@ -595,12 +721,16 @@ mod tests {
                 MediaKind::Image,
             )
             .expect("a missing absolute path can remain catalogued");
+        store.save(&library).expect("updated catalog should save");
+        let loaded = store.load().expect("updated catalog should reload");
 
         assert!(library.get_by_raw_id(first_id.get()).is_none());
+        assert!(loaded.get_by_raw_id(first_id.get()).is_none());
         assert_eq!(
-            library.get_by_raw_id(second_id.get()).unwrap().id(),
+            loaded.get_by_raw_id(second_id.get()).unwrap().id(),
             second_id
         );
+        assert!(loaded.get_by_raw_id(third_id.get()).is_some());
         assert!(third_id.get() > second_id.get());
         assert_eq!(fs::read(first_source).unwrap(), b"first source");
         assert_eq!(fs::read(second_source).unwrap(), b"second source");

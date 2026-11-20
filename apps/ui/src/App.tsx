@@ -61,10 +61,17 @@ interface LibraryCardProps {
   previewLoading: boolean;
   keepAcknowledged: boolean;
   actionBusy: boolean;
+  renaming: boolean;
+  renameDraft: string;
   onRequestPreview(id: number): void;
   onLocate(entry: LibraryEntry): void;
   onRemove(entry: LibraryEntry): void;
   onKeep(id: number): void;
+  onStartRename(entry: LibraryEntry): void;
+  onRenameDraftChange(value: string): void;
+  onSubmitRename(entry: LibraryEntry): void;
+  onCancelRename(): void;
+  onToggleFavorite(entry: LibraryEntry): void;
 }
 
 function LibraryCard({
@@ -74,10 +81,17 @@ function LibraryCard({
   previewLoading,
   keepAcknowledged,
   actionBusy,
+  renaming,
+  renameDraft,
   onRequestPreview,
   onLocate,
   onRemove,
   onKeep,
+  onStartRename,
+  onRenameDraftChange,
+  onSubmitRename,
+  onCancelRename,
+  onToggleFavorite,
 }: LibraryCardProps) {
   const cardRef = useRef<HTMLLIElement>(null);
 
@@ -122,22 +136,51 @@ function LibraryCard({
         )}
       </div>
       <div className="library-card-content">
-        <h3>{entry.displayName}</h3>
+        {renaming ? (
+          <form className="library-rename-form" onSubmit={(event) => {
+            event.preventDefault();
+            onSubmitRename(entry);
+          }}>
+            <label>
+              <span className="visually-hidden">New name for {entry.displayName}</span>
+              <input
+                autoFocus
+                maxLength={256}
+                value={renameDraft}
+                onChange={(event) => onRenameDraftChange(event.currentTarget.value)}
+              />
+            </label>
+            <button disabled={actionBusy} type="submit">Save name</button>
+            <button disabled={actionBusy} onClick={onCancelRename} type="button">Cancel</button>
+          </form>
+        ) : (
+          <h3>{entry.displayName}</h3>
+        )}
         <p className="library-card-path" title={entry.sourcePath}>{entry.sourcePath}</p>
         <p className="library-card-meta">
           {entry.mediaKind === "video" ? "Video" : "Image"} · {formatBytes(preview?.sizeBytes ?? entry.sizeBytes)}
           {preview ? ` · ${preview.width} × ${preview.height}` : ""}
           {duration ? ` · ${duration}` : ""}
         </p>
-        {unavailable && (
-          <div className="library-card-actions">
-            <button disabled={actionBusy} onClick={() => onLocate(entry)}>Locate file</button>
-            <button disabled={actionBusy} onClick={() => onRemove(entry)}>Remove entry</button>
-            <button disabled={keepAcknowledged} onClick={() => onKeep(entry.id)}>
-              {keepAcknowledged ? "Kept for later" : "Keep entry"}
-            </button>
-          </div>
-        )}
+        <div className="library-card-actions">
+          <button
+            aria-pressed={entry.isFavorite}
+            disabled={actionBusy}
+            onClick={() => onToggleFavorite(entry)}
+          >
+            {entry.isFavorite ? "★ Favorited" : "☆ Favorite"}
+          </button>
+          {!renaming && <button disabled={actionBusy} onClick={() => onStartRename(entry)}>Rename</button>}
+          <button disabled={actionBusy} onClick={() => onRemove(entry)}>Remove entry</button>
+          {unavailable && (
+            <>
+              <button disabled={actionBusy} onClick={() => onLocate(entry)}>Locate file</button>
+              <button disabled={keepAcknowledged} onClick={() => onKeep(entry.id)}>
+                {keepAcknowledged ? "Kept for later" : "Keep entry"}
+              </button>
+            </>
+          )}
+        </div>
       </div>
     </li>
   );
@@ -151,12 +194,15 @@ function App() {
   const [importStatus, setImportStatus] = useState("");
   const [library, setLibrary] = useState<LibraryEntry[]>([]);
   const [librarySearch, setLibrarySearch] = useState("");
+  const [favoritesOnly, setFavoritesOnly] = useState(false);
   const [libraryBusy, setLibraryBusy] = useState(false);
   const [libraryMessage, setLibraryMessage] = useState("");
   const [previews, setPreviews] = useState<Record<number, LibraryPreview>>({});
   const [previewErrors, setPreviewErrors] = useState<Record<number, string>>({});
   const [previewLoading, setPreviewLoading] = useState<Record<number, boolean>>({});
   const [busyEntryId, setBusyEntryId] = useState<number | null>(null);
+  const [renamingId, setRenamingId] = useState<number | null>(null);
+  const [renameDraft, setRenameDraft] = useState("");
   const [keptIds, setKeptIds] = useState<Set<number>>(() => new Set());
   const [visibleCount, setVisibleCount] = useState(24);
   const previewRequests = useRef(new Set<number>());
@@ -193,11 +239,11 @@ function App() {
 
   const filteredLibrary = useMemo(() => {
     const query = librarySearch.trim().toLocaleLowerCase();
-    if (!query) return library;
     return library.filter((entry) =>
-      `${entry.displayName}\n${entry.sourcePath}`.toLocaleLowerCase().includes(query),
+      (!favoritesOnly || entry.isFavorite) &&
+      (!query || `${entry.displayName}\n${entry.sourcePath}`.toLocaleLowerCase().includes(query)),
     );
-  }, [library, librarySearch]);
+  }, [favoritesOnly, library, librarySearch]);
   const visibleLibrary = filteredLibrary.slice(0, visibleCount);
 
   async function checkHost() {
@@ -278,6 +324,12 @@ function App() {
         delete next[entry.id];
         return next;
       });
+      setPreviewErrors((current) => {
+        const next = { ...current };
+        delete next[entry.id];
+        return next;
+      });
+      previewRequests.current.delete(entry.id);
       setKeptIds((current) => {
         const next = new Set(current);
         next.delete(entry.id);
@@ -286,6 +338,35 @@ function App() {
       await refreshLibrary();
     } catch {
       setLibraryMessage(`Could not remove "${entry.displayName}" from the library. Its source file remains untouched.`);
+    } finally {
+      setBusyEntryId(null);
+    }
+  }
+
+  async function renameEntry(entry: LibraryEntry) {
+    setBusyEntryId(entry.id);
+    setLibraryMessage("");
+    try {
+      await hostAdapter.renameLibraryEntry(entry.id, renameDraft);
+      setRenamingId(null);
+      setRenameDraft("");
+      setLibraryMessage(`Renamed to "${renameDraft.trim()}".`);
+      await refreshLibrary();
+    } catch {
+      setLibraryMessage("Could not rename this entry. Use a name of 1 to 256 characters.");
+    } finally {
+      setBusyEntryId(null);
+    }
+  }
+
+  async function toggleFavorite(entry: LibraryEntry) {
+    setBusyEntryId(entry.id);
+    setLibraryMessage("");
+    try {
+      await hostAdapter.setLibraryFavorite(entry.id, !entry.isFavorite);
+      await refreshLibrary();
+    } catch {
+      setLibraryMessage(`Could not update the favorite state for "${entry.displayName}".`);
     } finally {
       setBusyEntryId(null);
     }
@@ -343,6 +424,17 @@ function App() {
             placeholder="Search wallpapers"
           />
         </label>
+        <label className="library-favorites-filter">
+          <input
+            type="checkbox"
+            checked={favoritesOnly}
+            onChange={(event) => {
+              setFavoritesOnly(event.currentTarget.checked);
+              setVisibleCount(24);
+            }}
+          />
+          <span>Favorites only</span>
+        </label>
         <p aria-live="polite" className="library-message" role="status">{libraryMessage}</p>
         {filteredLibrary.length === 0 ? (
           <p className="library-empty">{libraryBusy ? "Loading library..." : "No matching wallpaper entries."}</p>
@@ -357,10 +449,23 @@ function App() {
                 previewLoading={Boolean(previewLoading[entry.id])}
                 keepAcknowledged={keptIds.has(entry.id)}
                 actionBusy={busyEntryId === entry.id}
+                renaming={renamingId === entry.id}
+                renameDraft={renameDraft}
                 onRequestPreview={(id) => void loadPreview(id)}
                 onLocate={(item) => void locateEntry(item)}
                 onRemove={(item) => void removeEntry(item)}
                 onKeep={(id) => setKeptIds((current) => new Set(current).add(id))}
+                onStartRename={(item) => {
+                  setRenamingId(item.id);
+                  setRenameDraft(item.displayName);
+                }}
+                onRenameDraftChange={setRenameDraft}
+                onSubmitRename={(item) => void renameEntry(item)}
+                onCancelRename={() => {
+                  setRenamingId(null);
+                  setRenameDraft("");
+                }}
+                onToggleFavorite={(item) => void toggleFavorite(item)}
               />
             ))}
           </ul>

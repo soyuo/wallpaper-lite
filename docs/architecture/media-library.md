@@ -7,14 +7,15 @@ to user files; it does not copy, rename, re-encode, or delete them.
 
 - The per-user catalog path is `%APPDATA%\WallpaperLite\library.json`.
 - The versioned schema stores a stable numeric ID, absolute source path, display
-  name, media kind, and availability for each entry.
+  name, media kind, availability, and favorite state for each entry. Older
+  catalogs load with entries unfavorited when the field is absent.
 - A missing source remains in the catalog with `file_missing` availability.
   Loading reconciles availability for every entry without dropping the other
   entries. Other filesystem failures use `unavailable` rather than being
   mislabeled as missing.
-- Source paths and display names are validated. Catalog errors expose a safe
-  `LibraryStorageFailed` application error; diagnostic summaries do not include
-  user paths.
+- Source paths and display names are validated. Invalid entry operations expose
+  a safe `InvalidLibraryEntry` application error; catalog errors use
+  `LibraryStorageFailed`. Diagnostic summaries do not include user paths.
 - A catalog path may not equal a referenced source path, preventing catalog
   writes from replacing a listed media file.
 
@@ -50,9 +51,11 @@ are never copied, renamed, or removed.
 
 The Tauri UI provides file and folder selection and displays each import
 result. The library view loads catalog entries independently, searches names and
-paths in the UI, and isolates source availability and preview failures to the
-affected entry. Available image and video entries expose dimensions, file size,
-and video duration when previewed. Video thumbnails use the first decoded frame.
+paths, filters favorites, and isolates source availability and preview failures
+to the affected entry. Entries can be renamed, favorited, or removed from the
+catalog without modifying source files. Available image and video entries expose
+dimensions, file size, and video duration when previewed. Video thumbnails use
+the first decoded frame.
 
 Thumbnails are generated only as entries approach the visible list, resized to
 at most 320 pixels on either axis, and stored as BMP cache files under
