@@ -62,6 +62,11 @@ export interface EditorPreview {
   settings: WallpaperEditorSettings;
 }
 
+export interface WallpaperEditorPreset {
+  name: string;
+  settings: WallpaperEditorSettings;
+}
+
 export interface WallpaperEditorSettings {
   schemaVersion: number;
   wallpaperId: number;
@@ -123,6 +128,11 @@ export interface HostAdapter {
   editorMonitors(): Promise<EditorMonitor[]>;
   editorPreview(id: number, monitorWidth: number, monitorHeight: number): Promise<EditorPreview>;
   applyEditorSettings(id: number, settings: WallpaperEditorSettings): Promise<void>;
+  listEditorPresets(id: number): Promise<WallpaperEditorPreset[]>;
+  saveEditorPreset(id: number, name: string, settings: WallpaperEditorSettings): Promise<void>;
+  renameEditorPreset(id: number, currentName: string, newName: string): Promise<void>;
+  removeEditorPreset(id: number, name: string): Promise<void>;
+  recentWallpaperIds(): Promise<number[]>;
   removeLibraryEntry(id: number): Promise<void>;
   renameLibraryEntry(id: number, displayName: string): Promise<void>;
   setLibraryFavorite(id: number, favorite: boolean): Promise<void>;
@@ -211,6 +221,21 @@ export const hostAdapter: HostAdapter = {
   },
   applyEditorSettings(id, settings) {
     return invokeAppCommand<void>("apply_editor_settings", { wallpaperId: id, settings });
+  },
+  listEditorPresets(id) {
+    return invokeAppCommand<WallpaperEditorPreset[]>("list_editor_presets", { wallpaperId: id });
+  },
+  saveEditorPreset(id, name, settings) {
+    return invokeAppCommand<void>("save_editor_preset", { wallpaperId: id, name, settings });
+  },
+  renameEditorPreset(id, currentName, newName) {
+    return invokeAppCommand<void>("rename_editor_preset", { wallpaperId: id, currentName, newName });
+  },
+  removeEditorPreset(id, name) {
+    return invokeAppCommand<void>("remove_editor_preset", { wallpaperId: id, name });
+  },
+  recentWallpaperIds() {
+    return invokeAppCommand<number[]>("recent_wallpaper_ids");
   },
   removeLibraryEntry(id) {
     return invoke<void>("remove_library_entry", { id });

@@ -13,6 +13,7 @@ import {
   type ImportResult,
   type LibraryEntry,
   type LibraryPreview,
+  type WallpaperEditorPreset,
   type WallpaperEditorSettings,
 } from "./host-adapter";
 
@@ -262,6 +263,7 @@ function App() {
   const [importResults, setImportResults] = useState<ImportResult[]>([]);
   const [importStatus, setImportStatus] = useState("");
   const [library, setLibrary] = useState<LibraryEntry[]>([]);
+  const [recentIds, setRecentIds] = useState<number[]>([]);
   const [librarySearch, setLibrarySearch] = useState("");
   const [favoritesOnly, setFavoritesOnly] = useState(false);
   const [libraryBusy, setLibraryBusy] = useState(false);
@@ -280,6 +282,11 @@ function App() {
   const [editorPreview, setEditorPreview] = useState<EditorPreview | null>(null);
   const [editorSettingsDraft, setEditorSettingsDraft] = useState<WallpaperEditorSettings | null>(null);
   const [editorDirty, setEditorDirty] = useState(false);
+  const [editorPresets, setEditorPresets] = useState<WallpaperEditorPreset[]>([]);
+  const [presetName, setPresetName] = useState("");
+  const [presetRename, setPresetRename] = useState<{ name: string; draft: string } | null>(null);
+  const [presetMessage, setPresetMessage] = useState("");
+  const [presetBusy, setPresetBusy] = useState(false);
   const editorHistory = useRef(new EditorHistory<WallpaperEditorSettings>());
   const [editorSaveBusy, setEditorSaveBusy] = useState(false);
   const [createCropMode, setCreateCropMode] = useState(false);
@@ -294,7 +301,13 @@ function App() {
     setLibraryBusy(true);
     setLibraryMessage("");
     try {
-      setLibrary(await hostAdapter.listLibrary());
+      const entries = await hostAdapter.listLibrary();
+      setLibrary(entries);
+      try {
+        setRecentIds(await hostAdapter.recentWallpaperIds());
+      } catch {
+        setRecentIds([]);
+      }
     } catch {
       setLibraryMessage("The library could not be loaded. Other application functions remain available.");
     } finally {
@@ -370,6 +383,10 @@ function App() {
     );
   }, [favoritesOnly, library, librarySearch]);
   const visibleLibrary = filteredLibrary.slice(0, visibleCount);
+  const recentLibrary = useMemo(() => recentIds
+    .map((id) => library.find((entry) => entry.id === id))
+    .filter((entry): entry is LibraryEntry => entry !== undefined)
+    .slice(0, 10), [library, recentIds]);
 
   async function checkHost() {
     setCheckingHost(true);
@@ -520,6 +537,15 @@ function App() {
       setEditorSettingsDraft(result.settings);
       editorHistory.current.reset(result.settings);
       setEditorDirty(false);
+      try {
+        setEditorPresets(await hostAdapter.listEditorPresets(entry.id));
+      } catch {
+        setEditorPresets([]);
+        setPresetMessage("Saved presets could not be loaded.");
+      }
+      setPresetName("");
+      setPresetRename(null);
+      setPresetMessage("");
     } catch {
       setEditorError("The wallpaper preview could not be rendered.");
     } finally {
@@ -556,6 +582,8 @@ function App() {
     setEditorEntry(null);
     setEditorPreview(null);
     setEditorSettingsDraft(null);
+    setEditorPresets([]);
+    setPresetRename(null);
     setEditorDirty(false);
     setEditorError("");
   }
@@ -569,6 +597,11 @@ function App() {
     try {
       await hostAdapter.applyEditorSettings(editorEntry.id, editorSettingsDraft);
       saved = true;
+      try {
+        setRecentIds(await hostAdapter.recentWallpaperIds());
+      } catch {
+        // Apply already succeeded; the next library refresh can reload recent metadata.
+      }
       setEditorDirty(false);
       const result = await hostAdapter.editorPreview(editorEntry.id, monitor.width, monitor.height);
       setEditorPreview(result);
@@ -586,6 +619,61 @@ function App() {
       }
     } finally {
       setEditorSaveBusy(false);
+    }
+  }
+
+  async function saveCurrentPreset() {
+    if (!editorEntry || !editorSettingsDraft || presetBusy) return;
+    setPresetBusy(true);
+    setPresetMessage("");
+    try {
+      await hostAdapter.saveEditorPreset(editorEntry.id, presetName, editorSettingsDraft);
+      setEditorPresets(await hostAdapter.listEditorPresets(editorEntry.id));
+      setPresetName("");
+      setPresetMessage("Preset saved.");
+    } catch (error) {
+      setPresetMessage(error instanceof Error ? error.message : "The preset could not be saved.");
+    } finally {
+      setPresetBusy(false);
+    }
+  }
+
+  function loadPresetToDraft(preset: WallpaperEditorPreset) {
+    if (!editorEntry || !editorSettingsDraft || preset.settings.wallpaperId !== editorEntry.id) return;
+    editorHistory.current.endGesture();
+    setEditorSettingsDraft(editorHistory.current.record(preset.settings));
+    setEditorDirty(true);
+    setPresetMessage("Preset loaded into the draft. Apply to update the desktop.");
+  }
+
+  async function renamePreset(preset: WallpaperEditorPreset) {
+    if (!editorEntry || !presetRename || presetBusy) return;
+    setPresetBusy(true);
+    setPresetMessage("");
+    try {
+      await hostAdapter.renameEditorPreset(editorEntry.id, preset.name, presetRename.draft);
+      setEditorPresets(await hostAdapter.listEditorPresets(editorEntry.id));
+      setPresetRename(null);
+      setPresetMessage("Preset renamed.");
+    } catch (error) {
+      setPresetMessage(error instanceof Error ? error.message : "The preset could not be renamed.");
+    } finally {
+      setPresetBusy(false);
+    }
+  }
+
+  async function removePreset(preset: WallpaperEditorPreset) {
+    if (!editorEntry || presetBusy) return;
+    setPresetBusy(true);
+    setPresetMessage("");
+    try {
+      await hostAdapter.removeEditorPreset(editorEntry.id, preset.name);
+      setEditorPresets(await hostAdapter.listEditorPresets(editorEntry.id));
+      setPresetMessage("Preset removed.");
+    } catch (error) {
+      setPresetMessage(error instanceof Error ? error.message : "The preset could not be removed.");
+    } finally {
+      setPresetBusy(false);
     }
   }
 
@@ -982,6 +1070,39 @@ function App() {
                 ))}
                 <button onClick={() => updateEditorRender({ crop: { x: 0, y: 0, width: 1, height: 1 } })}>Reset crop</button>
               </fieldset>
+              <fieldset className="editor-presets">
+                <legend>Presets</legend>
+                <div className="preset-save-row">
+                  <label>Save current draft
+                    <input maxLength={64} value={presetName} onChange={(event) => setPresetName(event.currentTarget.value)} placeholder="Preset name" />
+                  </label>
+                  <button type="button" disabled={presetBusy || !presetName.trim()} onClick={() => void saveCurrentPreset()}>Save preset</button>
+                </div>
+                {editorPresets.length === 0 ? <p>No saved presets for this wallpaper.</p> : (
+                  <ul className="preset-list">
+                    {editorPresets.map((preset) => (
+                      <li key={preset.name}>
+                        {presetRename?.name === preset.name ? (
+                          <>
+                            <input aria-label={`Rename ${preset.name}`} maxLength={64} value={presetRename.draft} onChange={(event) => setPresetRename({ ...presetRename, draft: event.currentTarget.value })} />
+                            <button type="button" disabled={presetBusy || !presetRename.draft.trim()} onClick={() => void renamePreset(preset)}>Save name</button>
+                            <button type="button" disabled={presetBusy} onClick={() => setPresetRename(null)}>Cancel rename</button>
+                          </>
+                        ) : (
+                          <>
+                            <span>{preset.name}</span>
+                            <button type="button" disabled={presetBusy} onClick={() => loadPresetToDraft(preset)}>Load to draft</button>
+                            <button type="button" disabled={presetBusy} onClick={() => setPresetRename({ name: preset.name, draft: preset.name })}>Rename</button>
+                            <button type="button" disabled={presetBusy} onClick={() => void removePreset(preset)}>Remove</button>
+                          </>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                <p role="status" aria-live="polite">{presetMessage}</p>
+                <p>Loading a preset changes this draft only. Use Apply to update the desktop.</p>
+              </fieldset>
               <button disabled={editorSaveBusy} onClick={() => void saveEditorSettingsDraft()}>
                 {editorSaveBusy ? "Applying and rendering..." : "Apply"}
               </button>
@@ -1003,6 +1124,19 @@ function App() {
             {libraryBusy ? "Refreshing..." : "Refresh library"}
           </button>
         </div>
+        {recentLibrary.length > 0 && (
+          <section className="recent-wallpapers" aria-labelledby="recent-wallpapers-title">
+            <h3 id="recent-wallpapers-title">Recently applied</h3>
+            <ul>
+              {recentLibrary.map((entry) => (
+                <li key={entry.id}>
+                  <span>{entry.displayName}</span>
+                  <button disabled={entry.availability !== "available"} onClick={() => void openEditorPreview(entry)}>Edit</button>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
         <label className="library-search">
           <span>Search by name or path</span>
           <input

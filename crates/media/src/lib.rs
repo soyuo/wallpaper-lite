@@ -4,6 +4,7 @@ use std::path::Path;
 
 use wallpaper_core::error::{AppError, ErrorCode};
 
+mod editor_metadata;
 mod editor_settings;
 mod frame_queue;
 mod import;
@@ -14,6 +15,9 @@ mod video;
 #[cfg(target_os = "windows")]
 mod wic;
 
+pub use editor_metadata::{
+    EditorMetadataError, EditorPresetStore, RecentWallpaperStore, WallpaperEditorPreset,
+};
 pub use editor_settings::{EditorSettingsError, EditorSettingsStore};
 pub use frame_queue::{FrameEnqueueOutcome, FrameQueueError, VideoFrameQueue};
 pub use import::{ImportFailure, ImportResult, ImportStatus, import_local_media};

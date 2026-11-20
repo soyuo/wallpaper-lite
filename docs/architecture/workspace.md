@@ -91,4 +91,6 @@ Per-wallpaper editor defaults, units, validation, and persistence are described
 in [`editor-settings.md`](editor-settings.md). The monitor preview, D3D11
 parity contract, placement/crop/color controls, and bounded edit history are
 described in [`editor-preview.md`](editor-preview.md); transactional apply and
-live application remain later work.
+live application are implemented. Per-wallpaper presets and persisted recent
+wallpaper ordering use the same validated settings snapshot and are documented
+in [`editor-settings.md`](editor-settings.md).
