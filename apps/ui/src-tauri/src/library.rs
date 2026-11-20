@@ -21,6 +21,14 @@ const THUMBNAIL_CACHE_LIMIT_BYTES: u64 = 64 * 1024 * 1024;
 const BITMAP_HEADER_BYTES: usize = 54;
 static THUMBNAIL_NONCE: AtomicU64 = AtomicU64::new(0);
 static THUMBNAIL_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+static CATALOG_MUTATION_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+pub(crate) fn lock_catalog_mutation() -> Result<std::sync::MutexGuard<'static, ()>, AppError> {
+    CATALOG_MUTATION_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .map_err(|_| internal_error("The wallpaper library is busy."))
+}
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -29,6 +37,7 @@ pub struct LibraryEntryView {
     display_name: String,
     source_path: String,
     media_kind: MediaKind,
+    is_favorite: bool,
     availability: Availability,
     size_bytes: Option<u64>,
 }
@@ -64,6 +73,7 @@ pub async fn list_library() -> Result<Vec<LibraryEntryView>, AppError> {
                 display_name: entry.display_name().to_owned(),
                 source_path: entry.source_path().to_string_lossy().into_owned(),
                 media_kind: entry.media_kind(),
+                is_favorite: entry.is_favorite(),
                 availability: entry.availability(),
                 size_bytes: fs::metadata(entry.source_path())
                     .ok()
@@ -88,9 +98,10 @@ pub async fn library_preview(id: u64) -> Result<LibraryPreview, AppError> {
 pub async fn remove_library_entry(id: u64) -> Result<(), AppError> {
     let store = CatalogStore::for_current_user().map_err(|error| error.to_app_error())?;
     tauri::async_runtime::spawn_blocking(move || {
+        let _catalog_lock = lock_catalog_mutation()?;
         let mut library = store.load().map_err(|error| error.to_app_error())?;
         if !library.remove(id) {
-            return Err(internal_error("The wallpaper entry no longer exists."));
+            return Err(invalid_entry_error());
         }
         store.save(&library).map_err(|error| error.to_app_error())
     })
@@ -99,9 +110,40 @@ pub async fn remove_library_entry(id: u64) -> Result<(), AppError> {
 }
 
 #[tauri::command]
+pub async fn rename_library_entry(id: u64, display_name: String) -> Result<(), AppError> {
+    let store = CatalogStore::for_current_user().map_err(|error| error.to_app_error())?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let _catalog_lock = lock_catalog_mutation()?;
+        let mut library = store.load().map_err(|error| error.to_app_error())?;
+        library
+            .rename(id, display_name)
+            .map_err(|error| error.to_app_error())?;
+        store.save(&library).map_err(|error| error.to_app_error())
+    })
+    .await
+    .map_err(|_| internal_error("The wallpaper entry could not be renamed."))?
+}
+
+#[tauri::command]
+pub async fn set_library_favorite(id: u64, favorite: bool) -> Result<(), AppError> {
+    let store = CatalogStore::for_current_user().map_err(|error| error.to_app_error())?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let _catalog_lock = lock_catalog_mutation()?;
+        let mut library = store.load().map_err(|error| error.to_app_error())?;
+        library
+            .set_favorite(id, favorite)
+            .map_err(|error| error.to_app_error())?;
+        store.save(&library).map_err(|error| error.to_app_error())
+    })
+    .await
+    .map_err(|_| internal_error("The wallpaper favorite could not be updated."))?
+}
+
+#[tauri::command]
 pub async fn relocate_library_entry(id: u64, path: String) -> Result<(), AppError> {
     let store = CatalogStore::for_current_user().map_err(|error| error.to_app_error())?;
     tauri::async_runtime::spawn_blocking(move || {
+        let _catalog_lock = lock_catalog_mutation()?;
         let mut library = store.load().map_err(|error| error.to_app_error())?;
         let Some(entry) = library.get_by_raw_id(id) else {
             return Err(internal_error("The wallpaper entry no longer exists."));
@@ -401,6 +443,13 @@ fn encode_thumbnail_bmp(width: u32, height: u32, rgba: &[u8]) -> Option<Vec<u8>>
 
 fn internal_error(message: &'static str) -> AppError {
     AppError::new(ErrorCode::Internal, message)
+}
+
+fn invalid_entry_error() -> AppError {
+    AppError::new(
+        ErrorCode::InvalidLibraryEntry,
+        "The wallpaper library entry no longer exists.",
+    )
 }
 
 #[cfg(test)]
