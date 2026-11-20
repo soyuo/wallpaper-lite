@@ -209,12 +209,13 @@ impl VideoSourceWorker {
                 let mut playing = false;
                 let mut prime_frame = true;
                 let mut generation = 0;
+                let mut pending_frame = None;
                 loop {
                     match stop_receiver.try_recv() {
                         Ok(()) | Err(TryRecvError::Disconnected) => return,
                         Err(TryRecvError::Empty) => {}
                     }
-                    if !playing && !prime_frame {
+                    if !playing && !prime_frame && pending_frame.is_none() {
                         match command_receiver.recv_timeout(TICK_INTERVAL) {
                             Ok(command) => {
                                 if !Self::apply_command(
@@ -223,6 +224,7 @@ impl VideoSourceWorker {
                                     &mut generation,
                                     &mut playing,
                                     &mut prime_frame,
+                                    &mut pending_frame,
                                     &event_sender,
                                 ) {
                                     return;
@@ -242,6 +244,7 @@ impl VideoSourceWorker {
                                 &mut generation,
                                 &mut playing,
                                 &mut prime_frame,
+                                &mut pending_frame,
                                 &event_sender,
                             ) {
                                 return;
@@ -250,28 +253,36 @@ impl VideoSourceWorker {
                         Err(TryRecvError::Disconnected) => return,
                         Err(TryRecvError::Empty) => {}
                     }
-                    if !playing && !prime_frame {
+                    if !playing && !prime_frame && pending_frame.is_none() {
                         continue;
                     }
 
-                    match source.read_next() {
-                        Ok(VideoReadEvent::Frame(frame)) => {
-                            prime_frame = false;
-                            match frame_sender.try_send(VideoFrameMessage { generation, frame }) {
-                                Ok(()) | Err(TrySendError::Full(_)) => {}
-                                Err(TrySendError::Disconnected(_)) => return,
+                    if let Some(message) = pending_frame.take() {
+                        match frame_sender.try_send(message) {
+                            Ok(()) => {}
+                            Err(TrySendError::Full(message)) => {
+                                pending_frame = Some(message);
+                                thread::sleep(TICK_INTERVAL);
                             }
+                            Err(TrySendError::Disconnected(_)) => return,
                         }
-                        Ok(VideoReadEvent::StreamTick { .. }) => {}
-                        Ok(VideoReadEvent::EndOfStream) => {
-                            let _ = event_sender.send(VideoSourceEvent::Ended { generation });
-                            playing = false;
-                            prime_frame = false;
-                        }
-                        Err(error) => {
-                            let _ =
-                                event_sender.send(VideoSourceEvent::Failed { generation, error });
-                            return;
+                    } else {
+                        match source.read_next() {
+                            Ok(VideoReadEvent::Frame(frame)) => {
+                                prime_frame = false;
+                                pending_frame = Some(VideoFrameMessage { generation, frame });
+                            }
+                            Ok(VideoReadEvent::StreamTick { .. }) => {}
+                            Ok(VideoReadEvent::EndOfStream) => {
+                                let _ = event_sender.send(VideoSourceEvent::Ended { generation });
+                                playing = false;
+                                prime_frame = false;
+                            }
+                            Err(error) => {
+                                let _ = event_sender
+                                    .send(VideoSourceEvent::Failed { generation, error });
+                                return;
+                            }
                         }
                     }
                 }
@@ -294,6 +305,7 @@ impl VideoSourceWorker {
         generation: &mut u64,
         playing: &mut bool,
         prime_frame: &mut bool,
+        pending_frame: &mut Option<VideoFrameMessage>,
         event_sender: &mpsc::Sender<VideoSourceEvent>,
     ) -> bool {
         match command {
@@ -304,6 +316,7 @@ impl VideoSourceWorker {
                 generation: requested_generation,
                 response,
             } => {
+                pending_frame.take();
                 *generation = requested_generation;
                 match source.seek(position_100ns) {
                     Ok(()) => {
@@ -804,11 +817,12 @@ impl PlaybackController {
 mod tests {
     use std::{
         path::PathBuf,
+        sync::mpsc::TryRecvError,
         thread,
         time::{Duration, Instant},
     };
 
-    use super::{PlaybackWorker, VideoSourceWorker};
+    use super::{PlaybackWorker, VideoSourceEvent, VideoSourceWorker};
     use crate::recovery::DesktopRecoveryWorker;
     use wallpaper_desktop::discover_desktop_host;
     use wallpaper_ipc::protocol::playback_command_channel;
@@ -865,6 +879,43 @@ mod tests {
             .expect("seek while decoded-frame queue is full");
         let seeked_while_playing = wait_for_frame(&source, source.generation, deadline);
         assert_eq!(seeked_while_playing.frame.pts_100ns(), 0);
+    }
+
+    #[test]
+    fn source_worker_waits_for_frame_queue_capacity_before_reading_to_eos() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../crates/media/tests/fixtures/short-h264.mp4");
+        let mut source = VideoSourceWorker::start(path, None).expect("start source worker");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if source.poll_open().expect("open fixture").is_some() {
+                break;
+            }
+            assert!(Instant::now() < deadline, "source open timed out");
+            thread::sleep(Duration::from_millis(10));
+        }
+
+        source.play().expect("start source worker playback");
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while Instant::now() < deadline {
+            match source.try_event() {
+                Ok(VideoSourceEvent::Ended { .. }) => {
+                    panic!("the source must not reach EOS while its bounded frame queue is full")
+                }
+                Ok(VideoSourceEvent::Failed { error, .. }) => {
+                    panic!("source decoding failed unexpectedly: {error:?}")
+                }
+                Ok(VideoSourceEvent::Opened(_)) | Err(TryRecvError::Empty) => {}
+                Err(TryRecvError::Disconnected) => {
+                    panic!("source worker stopped before a stop request")
+                }
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
+        assert!(
+            source.try_frame().is_ok(),
+            "the source should retain decoded frames while applying backpressure"
+        );
     }
 
     fn wait_for_frame(
