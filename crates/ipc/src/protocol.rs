@@ -2,12 +2,13 @@ use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::{mpsc, oneshot};
 use wallpaper_core::editor_settings::WallpaperEditorSettings;
+use wallpaper_core::playback_settings::PlaybackSettings;
 
 use crate::{IpcError, error::from_io};
 
 pub const PIPE_NAME: &str = r"\\.\pipe\wallpaper-lite";
 pub const PLAYBACK_EVENTS_PIPE_NAME: &str = r"\\.\pipe\wallpaper-lite-playback-events";
-pub const PROTOCOL_VERSION: u16 = 4;
+pub const PROTOCOL_VERSION: u16 = 5;
 pub const MAX_FRAME_BYTES: usize = 4 * 1024;
 pub(crate) const IO_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
 const COMMAND_QUEUE_CAPACITY: usize = 16;
@@ -47,6 +48,10 @@ pub enum Command {
     },
     ApplyEditorSettings {
         settings: WallpaperEditorSettings,
+        source_path: String,
+    },
+    ApplyPlaybackSettings {
+        settings: PlaybackSettings,
         source_path: String,
     },
     Play,
@@ -96,6 +101,7 @@ impl Response {
 pub enum ResponseResult {
     Pong,
     EditorSettingsApplied,
+    PlaybackSettingsApplied,
     PlaybackState(PlaybackStateEvent),
     Error { code: PlaybackCommandErrorCode },
 }
@@ -138,6 +144,9 @@ pub enum PlaybackCommandErrorCode {
     EditorSettingsInvalid,
     EditorSettingsApplyFailed,
     EditorWallpaperNotActive,
+    PlaybackSettingsInvalid,
+    PlaybackSettingsApplyFailed,
+    PlaybackSettingsSourceMismatch,
 }
 
 #[cfg(test)]
@@ -158,7 +167,7 @@ mod editor_settings_tests {
         };
         let encoded = serde_json::to_vec(&request).unwrap();
         let decoded: Request = serde_json::from_slice(&encoded).unwrap();
-        assert_eq!(decoded.version, 4);
+        assert_eq!(decoded.version, 5);
         assert_eq!(decoded.request_id, 42);
         assert_eq!(
             decoded.command,
@@ -171,6 +180,69 @@ mod editor_settings_tests {
             serde_json::to_value(ResponseResult::EditorSettingsApplied).unwrap(),
             serde_json::json!("editor_settings_applied")
         );
+    }
+}
+
+#[cfg(test)]
+mod playback_settings_tests {
+    use super::{Command, PROTOCOL_VERSION, Request, ResponseResult};
+    use wallpaper_core::playback_settings::{LoopMode, PlaybackSettings, SegmentRange};
+
+    #[test]
+    fn playback_settings_update_round_trips_through_typed_ipc() {
+        let settings = PlaybackSettings::new(
+            7,
+            LoopMode::Segment,
+            Some(SegmentRange::new(1_000, 2_000).unwrap()),
+            125,
+            30,
+            100,
+            false,
+        )
+        .unwrap();
+        let request = Request::new(
+            42,
+            Command::ApplyPlaybackSettings {
+                settings: settings.clone(),
+                source_path: r"C:\Wallpapers\active.mp4".to_owned(),
+            },
+        );
+        let encoded = serde_json::to_vec(&request).unwrap();
+        let decoded: Request = serde_json::from_slice(&encoded).unwrap();
+        assert_eq!(decoded.version, PROTOCOL_VERSION);
+        assert_eq!(decoded.command, request.command);
+        assert_eq!(
+            serde_json::to_value(ResponseResult::PlaybackSettingsApplied).unwrap(),
+            serde_json::json!("playback_settings_applied")
+        );
+        assert_eq!(
+            serde_json::to_value(super::PlaybackCommandErrorCode::PlaybackSettingsInvalid).unwrap(),
+            serde_json::json!("playback_settings_invalid")
+        );
+    }
+
+    #[test]
+    fn invalid_playback_settings_are_rejected_during_ipc_deserialization() {
+        let payload = serde_json::json!({
+            "version": PROTOCOL_VERSION,
+            "request_id": 3,
+            "command": {
+                "apply_playback_settings": {
+                    "settings": {
+                        "schemaVersion": 1,
+                        "wallpaperId": 7,
+                        "loopMode": "segment",
+                        "segment": {"startMs": 2_000, "endMs": 2_499},
+                        "speedPercent": 100,
+                        "fpsLimit": 60,
+                        "volumePercent": 100,
+                        "muted": false
+                    },
+                    "source_path": "C:\\Wallpapers\\active.mp4"
+                }
+            }
+        });
+        assert!(serde_json::from_value::<Request>(payload).is_err());
     }
 }
 

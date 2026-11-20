@@ -246,6 +246,7 @@ mod tests {
             Command, IpcPlaybackState, PlaybackCommandErrorCode, PlaybackStateEvent,
             ResponseResult, playback_command_channel,
         };
+        use wallpaper_core::playback_settings::{LoopMode, PlaybackSettings};
 
         run_test(async {
             let pipe_name = test_pipe_name("playback");
@@ -263,6 +264,16 @@ mod tests {
                                     ResponseResult::Error {
                                         code: PlaybackCommandErrorCode::UnsupportedSpeed,
                                     }
+                                }
+                                Command::ApplyPlaybackSettings { source_path, .. }
+                                    if source_path == "invalid" =>
+                                {
+                                    ResponseResult::Error {
+                                        code: PlaybackCommandErrorCode::PlaybackSettingsInvalid,
+                                    }
+                                }
+                                Command::ApplyPlaybackSettings { .. } => {
+                                    ResponseResult::PlaybackSettingsApplied
                                 }
                                 _ => ResponseResult::PlaybackState(PlaybackStateEvent {
                                     sequence: 1,
@@ -318,6 +329,34 @@ mod tests {
                     code: PlaybackCommandErrorCode::UnsupportedSpeed
                 })
             ));
+            let settings = PlaybackSettings::new(7, LoopMode::Full, None, 100, 60, 100, false)
+                .expect("valid playback settings");
+            assert_eq!(
+                super::request_at(
+                    &pipe_name,
+                    Command::ApplyPlaybackSettings {
+                        settings: settings.clone(),
+                        source_path: "C:\\wallpaper\\sample.mp4".to_owned(),
+                    },
+                )
+                .await
+                .expect("typed settings acknowledgement"),
+                ResponseResult::PlaybackSettingsApplied
+            );
+            assert_eq!(
+                super::request_at(
+                    &pipe_name,
+                    Command::ApplyPlaybackSettings {
+                        settings,
+                        source_path: "invalid".to_owned(),
+                    },
+                )
+                .await
+                .expect("typed settings error response"),
+                ResponseResult::Error {
+                    code: PlaybackCommandErrorCode::PlaybackSettingsInvalid,
+                }
+            );
 
             server.abort();
             let _ = server.await;

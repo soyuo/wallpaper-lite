@@ -44,6 +44,34 @@ the timeline remains continuous. The media clock uses exact rational scaling
 with a wide intermediate; frame PTS values are not rewritten. FPS limiting
 continues to use monotonic wall time and is unchanged by speed updates.
 
+## Loop behavior
+
+`PlaybackSettings` selects `Disabled`, `Full`, or `Segment`. The host accepts a
+settings snapshot only for the currently loaded source path and validates it
+against that source's duration before acknowledging it. Segment ranges use
+milliseconds, must be at least 500 ms, and satisfy
+`0 <= start < end <= duration`. The runtime command returns a typed success or
+error; per-wallpaper persistence is handled separately by
+`PlaybackSettingsStore`.
+The runtime currently consumes loop mode, segment, speed, and FPS fields;
+volume and mute values remain persisted preferences until audio output is
+implemented.
+
+- `Disabled` lets the scheduler reach `Ended`. The recovery worker keeps the
+  last presented frame on the desktop after end of stream.
+- `Full` waits until the final frame's presentation interval expires, then
+  seeks both the Media Foundation reader and scheduler to zero and resumes.
+- `Segment` treats the interval as half-open `[start, end)`. Playback wraps
+  when media time reaches `end`; Play from outside the configured range starts
+  at `start`. A seek may land on an earlier keyframe, so the source worker
+  discards decoded frames below the requested start and forwards the first
+  eligible frame in the new generation.
+
+Each wrap advances the source generation and clears scheduled/deferred frames
+from the prior iteration. This prevents old frames from crossing the loop
+boundary. It does not guarantee a visually seamless boundary for every codec;
+bounded boundary predecoding and artifact reduction are addressed separately.
+
 This Phase 3 path is video-only. It decodes or outputs no audio and makes no
 A/V synchronization claim. If audio is added later, it must remain synchronized
 with video or be muted at non-1.0× speed.
@@ -60,7 +88,7 @@ with video or be muted at non-1.0× speed.
 - `restart` clears queued frames and starts playback at zero.
 - End of stream becomes `Ended` after queued frames drain and the final
   presented frame's PTS-plus-duration interval elapses. Playing again from
-  `Ended` restarts at zero.
+  `Ended` restarts at zero, or at the configured segment start in Segment mode.
 
 The API accepts a clock sample on each operation, so tests use integer fake
 clock values and do not sleep. This module does not control the decoder's seek
