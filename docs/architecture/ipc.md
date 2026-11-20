@@ -3,9 +3,9 @@
 `wallpaper-ui` and `wallpaper-host` communicate through the Windows named pipe
 `\\.\pipe\wallpaper-lite` for commands and
 `\\.\pipe\wallpaper-lite-playback-events` for state subscriptions. Protocol
-version 4 supports a liveness ping, Phase 3 video playback controls, and full
-wallpaper editor-settings updates. Version 4 adds editor render settings to
-version 3. Request and response
+version 5 supports a liveness ping, video playback controls, editor settings,
+and per-wallpaper playback-settings updates. Version 5 adds playback settings
+to version 4. Request and response
 decoders reject mismatched versions, so UI and host builds must be deployed
 together. Video decoding, scheduling, and presentation stay in the host.
 
@@ -31,17 +31,17 @@ together. Video decoding, scheduling, and presentation stay in the host.
 
 ## Request and response shapes
 
-Version 4 retains the ping request:
+Version 5 retains the ping request:
 
 ```json
-{"version":4,"request_id":1,"command":"ping"}
+{"version":5,"request_id":1,"command":"ping"}
 ```
 
 Editor Apply sends the complete validated settings snapshot in one command:
 
 ```json
 {
-  "version": 4,
+  "version": 5,
   "request_id": 42,
   "command": {
     "apply_editor_settings": {
@@ -67,27 +67,28 @@ Playback commands use the same request envelope. Enum values are snake case;
 fields use the names below:
 
 ```json
-{"version":3,"request_id":2,"command":{"load_video":{"path":"C:/Media/clip.mp4"}}}
-{"version":3,"request_id":3,"command":"play"}
-{"version":3,"request_id":4,"command":"pause"}
-{"version":3,"request_id":5,"command":"stop"}
-{"version":3,"request_id":6,"command":{"seek":{"position_100ns":5000000}}}
-{"version":3,"request_id":7,"command":{"set_speed":{"percent":125}}}
-{"version":3,"request_id":8,"command":{"set_fps":{"frames_per_second":30}}}
-{"version":3,"request_id":9,"command":"get_playback_state"}
+{"version":5,"request_id":2,"command":{"load_video":{"path":"C:/Media/clip.mp4"}}}
+{"version":5,"request_id":3,"command":"play"}
+{"version":5,"request_id":4,"command":"pause"}
+{"version":5,"request_id":5,"command":"stop"}
+{"version":5,"request_id":6,"command":{"seek":{"position_100ns":5000000}}}
+{"version":5,"request_id":7,"command":{"set_speed":{"percent":125}}}
+{"version":5,"request_id":8,"command":{"set_fps":{"frames_per_second":30}}}
+{"version":5,"request_id":9,"command":"get_playback_state"}
+{"version":5,"request_id":11,"command":{"apply_playback_settings":{"settings":{"schemaVersion":1,"wallpaperId":7,"loopMode":"segment","segment":{"startMs":1000,"endMs":5000},"speedPercent":125,"fpsLimit":30,"volumePercent":100,"muted":false},"source_path":"C:/Media/clip.mp4"}}}
 ```
 
 The playback-events pipe accepts a long-lived subscription request:
 
 ```json
-{"version":4,"request_id":10,"command":"subscribe_playback_state"}
+{"version":5,"request_id":10,"command":"subscribe_playback_state"}
 ```
 
-The response result is either `pong`, a typed playback error, or a
-`playback_state` snapshot:
+The response result can be `pong`, a settings-applied acknowledgement, a typed
+playback error, or a `playback_state` snapshot:
 
 ```json
-{"version":4,"request_id":3,"result":{"playback_state":{"sequence":2,"state":"playing","media_time_100ns":50000,"duration_100ns":120000000,"speed_percent":100,"fps_limit":60,"loading_video":false,"last_error":null}}}
+{"version":5,"request_id":3,"result":{"playback_state":{"sequence":2,"state":"playing","media_time_100ns":50000,"duration_100ns":120000000,"speed_percent":100,"fps_limit":60,"loading_video":false,"last_error":null}}}
 ```
 
 State snapshots are returned with control-command responses and on explicit
@@ -116,6 +117,10 @@ and `last_error` carries a safe typed error from asynchronous work.
 - `set_speed.percent` accepts the scheduler's supported exact speed presets.
   `set_fps.frames_per_second` accepts values from 1 through 120. The two
   settings are independent.
+- `apply_playback_settings` validates the active video path, source duration,
+  segment bounds, speed, and FPS before acknowledging an update. Invalid
+  settings and source mismatches return typed errors. It updates runtime
+  behavior; `PlaybackSettingsStore` owns persistence.
 - If a read/decode or scheduler failure occurs between requests, playback stops
   and the next `get_playback_state` returns a typed `decode_failed` or
   `playback_failed` error once; a later snapshot reports the stopped state.
@@ -127,11 +132,13 @@ and `last_error` carries a safe typed error from asynchronous work.
   only due frames to the recovery worker; static UI/IPC polling does not redraw.
 - The playback scheduler and source-opening coordination live on a dedicated
   playback thread; each Media Foundation source reader stays on its own COM
-  initialized worker thread. Bounded frame queues keep decoding from blocking
-  command processing and drop frames under backpressure. Replacing a source
+  initialized worker thread. Bounded frame queues keep decoding from running
+  ahead of playback when consumers are slow. Replacing a source
   signals the prior reader to stop, waits up to one second for its thread, and
-  clears scheduled frames. Host shutdown explicitly signals the playback
-  thread; each source worker gets a bounded stop and join before recovery
+  clears scheduled frames. The source worker retains at most one pending frame
+  and pauses decoding when the bounded frame channel is full. Host shutdown
+  explicitly signals the playback thread; each source worker gets a bounded
+  stop and join before recovery
   releases its GPU/window resources. A playback worker that exceeds its
   five-second shutdown deadline is detached with a warning, and recovery
   resources stay alive until process termination so an in-flight frame cannot
@@ -154,6 +161,9 @@ or OS diagnostic text:
 | `unsupported_fps` | The requested output cap is outside 1–120 FPS. |
 | `playback_failed` | The scheduler could not apply the transport command. |
 | `decode_failed` | Source decoding stopped after a decode error. |
+| `playback_settings_invalid` | Playback settings are malformed or outside the active source duration. |
+| `playback_settings_apply_failed` | The host could not apply the requested runtime settings. |
+| `playback_settings_source_mismatch` | The request path does not match the active video source. |
 
 Transport-level errors include `host_unavailable`, `timeout`, `disconnected`,
 `malformed_response`, `message_too_large`, `protocol_version_mismatch`,

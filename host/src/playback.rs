@@ -5,6 +5,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use wallpaper_core::playback_settings::{LoopMode, PlaybackSettings, SegmentRange};
 use wallpaper_ipc::protocol::{
     Command, IpcPlaybackState, PlaybackCommandErrorCode, PlaybackCommandReceiver,
     PlaybackCommandRequest, PlaybackStateEvent, ResponseResult,
@@ -21,6 +22,16 @@ const TICK_INTERVAL: Duration = Duration::from_millis(8);
 const QUEUE_TARGET: usize = 3;
 const WORKER_STOP_TIMEOUT: Duration = Duration::from_secs(5);
 const SOURCE_WORKER_STOP_TIMEOUT: Duration = Duration::from_secs(1);
+
+fn segment_bounds_100ns(segment: SegmentRange) -> Result<(i64, i64), PlaybackCommandErrorCode> {
+    let convert = |milliseconds: u64| {
+        milliseconds
+            .checked_mul(10_000)
+            .and_then(|value| i64::try_from(value).ok())
+            .ok_or(PlaybackCommandErrorCode::PlaybackSettingsInvalid)
+    };
+    Ok((convert(segment.start_ms())?, convert(segment.end_ms())?))
+}
 
 pub(crate) struct PlaybackWorker {
     thread: Option<JoinHandle<()>>,
@@ -132,6 +143,7 @@ struct PlaybackController {
     deferred_frame: Option<VideoFrameMessage>,
     eos_pending: bool,
     scheduler: PlaybackScheduler,
+    playback_settings: Option<PlaybackSettings>,
     clock_origin: Instant,
     sequence: u64,
     pending_error: Option<PlaybackCommandErrorCode>,
@@ -177,6 +189,26 @@ struct VideoFrameMessage {
     frame: DecodedVideoFrame,
 }
 
+struct SourceDecodeState {
+    playing: bool,
+    prime_frame: bool,
+    generation: u64,
+    minimum_pts_100ns: i64,
+    pending_frame: Option<VideoFrameMessage>,
+}
+
+impl SourceDecodeState {
+    fn initial() -> Self {
+        Self {
+            playing: false,
+            prime_frame: true,
+            generation: 0,
+            minimum_pts_100ns: 0,
+            pending_frame: None,
+        }
+    }
+}
+
 impl VideoSourceWorker {
     fn start(path: PathBuf, device: Option<ID3D11Device>) -> std::io::Result<Self> {
         let source_path = path.clone();
@@ -208,25 +240,19 @@ impl VideoSourceWorker {
                     return;
                 }
 
-                let mut playing = false;
-                let mut prime_frame = true;
-                let mut generation = 0;
-                let mut pending_frame = None;
+                let mut decode = SourceDecodeState::initial();
                 loop {
                     match stop_receiver.try_recv() {
                         Ok(()) | Err(TryRecvError::Disconnected) => return,
                         Err(TryRecvError::Empty) => {}
                     }
-                    if !playing && !prime_frame && pending_frame.is_none() {
+                    if !decode.playing && !decode.prime_frame && decode.pending_frame.is_none() {
                         match command_receiver.recv_timeout(TICK_INTERVAL) {
                             Ok(command) => {
                                 if !Self::apply_command(
                                     command,
                                     &mut source,
-                                    &mut generation,
-                                    &mut playing,
-                                    &mut prime_frame,
-                                    &mut pending_frame,
+                                    &mut decode,
                                     &event_sender,
                                 ) {
                                     return;
@@ -243,10 +269,7 @@ impl VideoSourceWorker {
                             if !Self::apply_command(
                                 command,
                                 &mut source,
-                                &mut generation,
-                                &mut playing,
-                                &mut prime_frame,
-                                &mut pending_frame,
+                                &mut decode,
                                 &event_sender,
                             ) {
                                 return;
@@ -255,15 +278,15 @@ impl VideoSourceWorker {
                         Err(TryRecvError::Disconnected) => return,
                         Err(TryRecvError::Empty) => {}
                     }
-                    if !playing && !prime_frame && pending_frame.is_none() {
+                    if !decode.playing && !decode.prime_frame && decode.pending_frame.is_none() {
                         continue;
                     }
 
-                    if let Some(message) = pending_frame.take() {
+                    if let Some(message) = decode.pending_frame.take() {
                         match frame_sender.try_send(message) {
                             Ok(()) => {}
                             Err(TrySendError::Full(message)) => {
-                                pending_frame = Some(message);
+                                decode.pending_frame = Some(message);
                                 thread::sleep(TICK_INTERVAL);
                             }
                             Err(TrySendError::Disconnected(_)) => return,
@@ -271,18 +294,27 @@ impl VideoSourceWorker {
                     } else {
                         match source.read_next() {
                             Ok(VideoReadEvent::Frame(frame)) => {
-                                prime_frame = false;
-                                pending_frame = Some(VideoFrameMessage { generation, frame });
+                                if frame.pts_100ns() >= decode.minimum_pts_100ns {
+                                    decode.prime_frame = false;
+                                    decode.pending_frame = Some(VideoFrameMessage {
+                                        generation: decode.generation,
+                                        frame,
+                                    });
+                                }
                             }
                             Ok(VideoReadEvent::StreamTick { .. }) => {}
                             Ok(VideoReadEvent::EndOfStream) => {
-                                let _ = event_sender.send(VideoSourceEvent::Ended { generation });
-                                playing = false;
-                                prime_frame = false;
+                                let _ = event_sender.send(VideoSourceEvent::Ended {
+                                    generation: decode.generation,
+                                });
+                                decode.playing = false;
+                                decode.prime_frame = false;
                             }
                             Err(error) => {
-                                let _ = event_sender
-                                    .send(VideoSourceEvent::Failed { generation, error });
+                                let _ = event_sender.send(VideoSourceEvent::Failed {
+                                    generation: decode.generation,
+                                    error,
+                                });
                                 return;
                             }
                         }
@@ -305,25 +337,23 @@ impl VideoSourceWorker {
     fn apply_command(
         command: VideoSourceCommand,
         source: &mut VideoSource,
-        generation: &mut u64,
-        playing: &mut bool,
-        prime_frame: &mut bool,
-        pending_frame: &mut Option<VideoFrameMessage>,
+        decode: &mut SourceDecodeState,
         event_sender: &mpsc::Sender<VideoSourceEvent>,
     ) -> bool {
         match command {
-            VideoSourceCommand::Play => *playing = true,
-            VideoSourceCommand::Pause => *playing = false,
+            VideoSourceCommand::Play => decode.playing = true,
+            VideoSourceCommand::Pause => decode.playing = false,
             VideoSourceCommand::Seek {
                 position_100ns,
                 generation: requested_generation,
                 response,
             } => {
-                pending_frame.take();
-                *generation = requested_generation;
+                decode.pending_frame.take();
+                decode.generation = requested_generation;
                 match source.seek(position_100ns) {
                     Ok(()) => {
-                        *prime_frame = true;
+                        decode.minimum_pts_100ns = position_100ns;
+                        decode.prime_frame = true;
                         let _ = response.send(Ok(()));
                     }
                     Err(error) => {
@@ -438,6 +468,7 @@ impl PlaybackController {
             deferred_frame: None,
             eos_pending: false,
             scheduler: PlaybackScheduler::new(),
+            playback_settings: None,
             clock_origin: Instant::now(),
             sequence: 0,
             pending_error: None,
@@ -517,6 +548,7 @@ impl PlaybackController {
                 let pending = self.pending_load.take().expect("pending source exists");
                 self.source = Some(pending.source);
                 self.scheduler = PlaybackScheduler::new();
+                self.playback_settings = None;
                 self.deferred_frame = None;
                 self.eos_pending = false;
                 self.loading_video = false;
@@ -529,6 +561,10 @@ impl PlaybackController {
 
     fn execute(&mut self, command: Command) -> ResponseResult {
         let command = match command {
+            Command::ApplyPlaybackSettings {
+                settings,
+                source_path,
+            } => return self.apply_playback_settings(settings, PathBuf::from(source_path)),
             Command::ApplyEditorSettings {
                 settings,
                 source_path,
@@ -572,15 +608,22 @@ impl PlaybackController {
         let result = match command {
             Command::LoadVideo { .. } => Err(PlaybackCommandErrorCode::PlaybackUnavailable),
             Command::Play => self.require_source().and_then(|()| {
-                let source = self.source.as_mut().expect("source checked above");
-                if self.scheduler.state() == PlaybackState::Ended {
-                    source
-                        .seek(0)
+                let restart_position = self.restart_position_for_play(now)?;
+                if let Some(position) = restart_position {
+                    self.source
+                        .as_mut()
+                        .expect("source checked above")
+                        .seek(position)
                         .map_err(|_| PlaybackCommandErrorCode::SeekFailed)?;
                     self.eos_pending = false;
                     self.deferred_frame = None;
+                    self.scheduler
+                        .seek(position, now)
+                        .map_err(|_| PlaybackCommandErrorCode::PlaybackFailed)?;
                 }
-                source
+                self.source
+                    .as_mut()
+                    .expect("source checked above")
                     .play()
                     .map_err(|_| PlaybackCommandErrorCode::PlaybackFailed)?;
                 self.scheduler
@@ -649,6 +692,9 @@ impl PlaybackController {
             Command::ApplyEditorSettings { .. } => {
                 Err(PlaybackCommandErrorCode::EditorSettingsApplyFailed)
             }
+            Command::ApplyPlaybackSettings { .. } => {
+                Err(PlaybackCommandErrorCode::PlaybackSettingsApplyFailed)
+            }
             Command::Ping => return ResponseResult::Pong,
         };
 
@@ -672,6 +718,73 @@ impl PlaybackController {
             .as_ref()
             .map(|_| ())
             .ok_or(PlaybackCommandErrorCode::VideoNotLoaded)
+    }
+
+    fn apply_playback_settings(
+        &mut self,
+        settings: PlaybackSettings,
+        source_path: PathBuf,
+    ) -> ResponseResult {
+        if settings.validate().is_err() {
+            return self.error(PlaybackCommandErrorCode::PlaybackSettingsInvalid);
+        }
+        let Some(source) = self.source.as_ref() else {
+            return self.error(PlaybackCommandErrorCode::VideoNotLoaded);
+        };
+        if source.source_path != source_path {
+            return self.error(PlaybackCommandErrorCode::PlaybackSettingsSourceMismatch);
+        }
+        let Some(metadata) = source.metadata() else {
+            return self.error(PlaybackCommandErrorCode::VideoNotLoaded);
+        };
+        let duration_ms = match u64::try_from(metadata.duration_100ns() / 10_000) {
+            Ok(duration_ms) => duration_ms,
+            Err(_) => return self.error(PlaybackCommandErrorCode::PlaybackSettingsInvalid),
+        };
+        if settings.validate_for_duration(duration_ms).is_err() {
+            return self.error(PlaybackCommandErrorCode::PlaybackSettingsInvalid);
+        }
+        let speed = match VideoPlaybackSpeed::from_percent(settings.speed_percent()) {
+            Ok(speed) => speed,
+            Err(_) => return self.error(PlaybackCommandErrorCode::PlaybackSettingsInvalid),
+        };
+        let fps_limit = match VideoFpsLimit::custom(settings.fps_limit()) {
+            Ok(fps_limit) => fps_limit,
+            Err(_) => return self.error(PlaybackCommandErrorCode::PlaybackSettingsInvalid),
+        };
+        let now = self.now_100ns();
+        if self.scheduler.state() == PlaybackState::Playing
+            && settings.loop_mode() == LoopMode::Segment
+        {
+            let Some(segment) = settings.segment() else {
+                return self.error(PlaybackCommandErrorCode::PlaybackSettingsInvalid);
+            };
+            let (start, end) = match segment_bounds_100ns(segment) {
+                Ok(bounds) => bounds,
+                Err(code) => return self.error(code),
+            };
+            let current = match self.scheduler.media_time_100ns(now) {
+                Ok(position) => position,
+                Err(_) => return self.error(PlaybackCommandErrorCode::PlaybackSettingsApplyFailed),
+            };
+            if current < start || current >= end {
+                let Some(source) = self.source.as_mut() else {
+                    return self.error(PlaybackCommandErrorCode::VideoNotLoaded);
+                };
+                if source.seek(start).is_err() || self.scheduler.seek(start, now).is_err() {
+                    return self.error(PlaybackCommandErrorCode::PlaybackSettingsApplyFailed);
+                }
+                self.deferred_frame = None;
+                self.eos_pending = false;
+            }
+        }
+        if self.scheduler.set_speed(speed, now).is_err() {
+            return self.error(PlaybackCommandErrorCode::PlaybackSettingsApplyFailed);
+        }
+        self.scheduler.set_fps_limit(fps_limit);
+        self.playback_settings = Some(settings);
+        self.publish_event();
+        ResponseResult::PlaybackSettingsApplied
     }
 
     fn present_video_frame(
@@ -785,6 +898,29 @@ impl PlaybackController {
             }
         }
 
+        let now = self.now_100ns();
+        if self.scheduler.state() == PlaybackState::Playing {
+            match self.current_loop_target(now) {
+                Ok(Some(target)) => {
+                    if self.wrap_video_loop(target, now).is_err() {
+                        self.fail_playback(
+                            "video_segment_loop_seek_failed",
+                            PlaybackCommandErrorCode::SeekFailed,
+                        );
+                        return;
+                    }
+                }
+                Ok(None) => {}
+                Err(_) => {
+                    self.fail_playback(
+                        "scheduler_loop_boundary_failed",
+                        PlaybackCommandErrorCode::PlaybackFailed,
+                    );
+                    return;
+                }
+            }
+        }
+
         if self.scheduler.state() == PlaybackState::Playing {
             match self.scheduler.next_due_frame(self.now_100ns()) {
                 Ok(Some(frame)) => {
@@ -804,6 +940,28 @@ impl PlaybackController {
             }
         }
 
+        if self.scheduler.state() == PlaybackState::Ended {
+            match self.current_loop_target(self.now_100ns()) {
+                Ok(Some(target)) => {
+                    if self.wrap_video_loop(target, self.now_100ns()).is_err() {
+                        self.fail_playback(
+                            "video_full_loop_seek_failed",
+                            PlaybackCommandErrorCode::SeekFailed,
+                        );
+                        return;
+                    }
+                }
+                Ok(None) => {}
+                Err(_) => {
+                    self.fail_playback(
+                        "scheduler_loop_boundary_failed",
+                        PlaybackCommandErrorCode::PlaybackFailed,
+                    );
+                    return;
+                }
+            }
+        }
+
         if self.scheduler.state() == PlaybackState::Playing
             && self.last_event_sent.elapsed() >= Duration::from_millis(250)
         {
@@ -820,6 +978,7 @@ impl PlaybackController {
         self.pending_error = Some(code);
         self.last_error = Some(code);
         self.source = None;
+        self.playback_settings = None;
         self.scheduler = PlaybackScheduler::new();
         self.publish_event();
     }
@@ -829,6 +988,69 @@ impl PlaybackController {
             self.event_sender.send_replace(event);
             self.last_event_sent = Instant::now();
         }
+    }
+
+    fn current_loop_target(&mut self, now_100ns: i64) -> Result<Option<i64>, ()> {
+        let Some(settings) = self.playback_settings.as_ref() else {
+            return Ok(None);
+        };
+        self.scheduler
+            .loop_seek_target(settings.loop_mode(), settings.segment(), now_100ns)
+            .map_err(|_| ())
+    }
+
+    fn restart_position_for_play(
+        &mut self,
+        now_100ns: i64,
+    ) -> Result<Option<i64>, PlaybackCommandErrorCode> {
+        let state = self.scheduler.state();
+        if state == PlaybackState::Playing {
+            return Ok(None);
+        }
+        let Some(settings) = self.playback_settings.as_ref() else {
+            return Ok((state == PlaybackState::Ended).then_some(0));
+        };
+        match settings.loop_mode() {
+            LoopMode::Segment => {
+                let Some(segment) = settings.segment() else {
+                    return Err(PlaybackCommandErrorCode::PlaybackSettingsInvalid);
+                };
+                let (start, end) = segment_bounds_100ns(segment)?;
+                let current = self
+                    .scheduler
+                    .media_time_100ns(now_100ns)
+                    .map_err(|_| PlaybackCommandErrorCode::PlaybackFailed)?;
+                Ok((current < start || current >= end).then_some(start))
+            }
+            LoopMode::Full | LoopMode::Disabled => Ok((state == PlaybackState::Ended).then_some(0)),
+        }
+    }
+
+    fn wrap_video_loop(
+        &mut self,
+        position_100ns: i64,
+        now_100ns: i64,
+    ) -> Result<(), PlaybackCommandErrorCode> {
+        let source = self
+            .source
+            .as_mut()
+            .ok_or(PlaybackCommandErrorCode::VideoNotLoaded)?;
+        source
+            .seek(position_100ns)
+            .map_err(|_| PlaybackCommandErrorCode::SeekFailed)?;
+        self.scheduler
+            .seek(position_100ns, now_100ns)
+            .map_err(|_| PlaybackCommandErrorCode::PlaybackFailed)?;
+        self.deferred_frame = None;
+        self.eos_pending = false;
+        source
+            .play()
+            .map_err(|_| PlaybackCommandErrorCode::PlaybackFailed)?;
+        self.scheduler
+            .play(now_100ns)
+            .map_err(|_| PlaybackCommandErrorCode::PlaybackFailed)?;
+        self.publish_event();
+        Ok(())
     }
 
     fn snapshot(&mut self) -> ResponseResult {
@@ -874,10 +1096,15 @@ mod tests {
         time::{Duration, Instant},
     };
 
-    use super::{PlaybackWorker, VideoSourceEvent, VideoSourceWorker};
+    use super::{PlaybackController, PlaybackWorker, VideoSourceEvent, VideoSourceWorker};
     use crate::recovery::DesktopRecoveryWorker;
+    use wallpaper_core::playback_settings::{LoopMode, PlaybackSettings, SegmentRange};
     use wallpaper_desktop::discover_desktop_host;
-    use wallpaper_ipc::protocol::playback_command_channel;
+    use wallpaper_ipc::protocol::{
+        Command, IpcPlaybackState, PlaybackCommandErrorCode, PlaybackStateEvent, ResponseResult,
+        playback_command_channel,
+    };
+    use wallpaper_media::PlaybackState;
     use wallpaper_renderer::D3d11Device;
 
     #[test]
@@ -968,6 +1195,229 @@ mod tests {
             source.try_frame().is_ok(),
             "the source should retain decoded frames while applying backpressure"
         );
+    }
+
+    #[test]
+    fn source_worker_repeats_segment_seeks_without_old_or_pre_start_frames() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../crates/media/tests/fixtures/short-h264.mp4");
+        let mut source = VideoSourceWorker::start(path, None).expect("start source worker");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let metadata = loop {
+            if let Some(metadata) = source.poll_open().expect("open fixture") {
+                break metadata;
+            }
+            assert!(Instant::now() < deadline, "source open timed out");
+            thread::sleep(Duration::from_millis(10));
+        };
+        let start_100ns = metadata.duration_100ns() / 2;
+        assert!(start_100ns > 0 && start_100ns < metadata.duration_100ns());
+
+        source.play().expect("start full source iteration");
+        wait_for_end_of_stream(&source, source.generation, deadline);
+        for _ in 0..3 {
+            let old_generation = source.generation;
+            source.seek(start_100ns).expect("seek to segment start");
+            let generation = source.generation;
+            assert_ne!(generation, old_generation);
+            let first = wait_for_frame(&source, generation, deadline);
+            assert_eq!(first.generation, generation);
+            assert!(
+                first.frame.pts_100ns() >= start_100ns,
+                "a keyframe seek must discard decoded samples before the requested segment start"
+            );
+            source.play().expect("resume segment iteration");
+            wait_for_end_of_stream(&source, generation, deadline);
+        }
+    }
+
+    #[test]
+    fn controller_applies_typed_loop_settings_and_repeats_full_and_segment() {
+        let host = discover_desktop_host().expect("an interactive Windows shell is required");
+        let window = host
+            .attach_wallpaper_window()
+            .expect("the wallpaper child should attach to the desktop host");
+        let device = D3d11Device::create_hardware().expect("hardware D3D11 is required");
+        let media_device = device.device().clone();
+        let mut recovery =
+            DesktopRecoveryWorker::start(window, device).expect("the recovery worker should start");
+        let (event_sender, _event_receiver) = tokio::sync::watch::channel(PlaybackStateEvent {
+            sequence: 0,
+            state: IpcPlaybackState::Stopped,
+            media_time_100ns: 0,
+            duration_100ns: None,
+            speed_percent: 100,
+            fps_limit: 60,
+            loading_video: false,
+            last_error: None,
+        });
+        let mut controller =
+            PlaybackController::new(media_device.clone(), recovery.frame_sender(), event_sender);
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../crates/media/tests/fixtures/short-h264.mp4");
+        let mut source = VideoSourceWorker::start(path.clone(), Some(media_device))
+            .expect("start source worker");
+        let deadline = Instant::now() + Duration::from_secs(15);
+        let metadata = loop {
+            if let Some(metadata) = source.poll_open().expect("open fixture") {
+                break metadata;
+            }
+            assert!(Instant::now() < deadline, "source open timed out");
+            thread::sleep(Duration::from_millis(10));
+        };
+        let duration_ms = u64::try_from(metadata.duration_100ns() / 10_000)
+            .expect("fixture duration is nonnegative");
+        assert!(
+            duration_ms >= 1_000,
+            "fixture must be long enough for a segment"
+        );
+        controller.source = Some(source);
+
+        let invalid = PlaybackSettings::new(
+            1,
+            LoopMode::Segment,
+            Some(SegmentRange::new(duration_ms, duration_ms + 500).unwrap()),
+            200,
+            60,
+            100,
+            false,
+        )
+        .unwrap();
+        assert_eq!(
+            controller.execute(Command::ApplyPlaybackSettings {
+                settings: invalid,
+                source_path: path.to_string_lossy().into_owned(),
+            }),
+            ResponseResult::Error {
+                code: PlaybackCommandErrorCode::PlaybackSettingsInvalid
+            }
+        );
+        assert_eq!(controller.scheduler.speed().percent(), 100);
+
+        let full = PlaybackSettings::new(1, LoopMode::Full, None, 200, 30, 100, false).unwrap();
+        assert_eq!(
+            controller.execute(Command::ApplyPlaybackSettings {
+                settings: full.clone(),
+                source_path: path
+                    .with_file_name("other.mp4")
+                    .to_string_lossy()
+                    .into_owned(),
+            }),
+            ResponseResult::Error {
+                code: PlaybackCommandErrorCode::PlaybackSettingsSourceMismatch
+            }
+        );
+        assert_eq!(controller.scheduler.speed().percent(), 100);
+        let generation_before_full = controller.source.as_ref().unwrap().generation;
+        assert_eq!(
+            controller.execute(Command::ApplyPlaybackSettings {
+                settings: full,
+                source_path: path.to_string_lossy().into_owned(),
+            }),
+            ResponseResult::PlaybackSettingsApplied
+        );
+        assert!(matches!(
+            controller.execute(Command::Play),
+            ResponseResult::PlaybackState(PlaybackStateEvent {
+                speed_percent: 200,
+                fps_limit: 30,
+                ..
+            })
+        ));
+        tick_until(&mut controller, deadline, |controller| {
+            controller
+                .source
+                .as_ref()
+                .is_some_and(|source| source.generation >= generation_before_full + 3)
+        });
+        assert_eq!(controller.scheduler.state(), PlaybackState::Playing);
+
+        let generation_before_segment = controller.source.as_ref().unwrap().generation;
+        let segment = PlaybackSettings::new(
+            1,
+            LoopMode::Segment,
+            Some(SegmentRange::new(500, 1_000).unwrap()),
+            200,
+            60,
+            100,
+            false,
+        )
+        .unwrap();
+        assert_eq!(
+            controller.execute(Command::ApplyPlaybackSettings {
+                settings: segment,
+                source_path: path.to_string_lossy().into_owned(),
+            }),
+            ResponseResult::PlaybackSettingsApplied
+        );
+        tick_until(&mut controller, deadline, |controller| {
+            controller
+                .source
+                .as_ref()
+                .is_some_and(|source| source.generation >= generation_before_segment + 2)
+        });
+        assert_eq!(controller.scheduler.state(), PlaybackState::Playing);
+
+        let generation_before_disabled = controller.source.as_ref().unwrap().generation;
+        let disabled =
+            PlaybackSettings::new(1, LoopMode::Disabled, None, 200, 60, 100, false).unwrap();
+        assert_eq!(
+            controller.execute(Command::ApplyPlaybackSettings {
+                settings: disabled,
+                source_path: path.to_string_lossy().into_owned(),
+            }),
+            ResponseResult::PlaybackSettingsApplied
+        );
+        tick_until(&mut controller, deadline, |controller| {
+            controller.scheduler.state() == PlaybackState::Ended
+        });
+        assert_eq!(
+            controller.source.as_ref().unwrap().generation,
+            generation_before_disabled,
+            "disabled playback reaches EOS without another seek"
+        );
+
+        controller.source = None;
+        assert!(
+            recovery.stop(),
+            "recovery resources should stop after playback"
+        );
+    }
+
+    fn tick_until(
+        controller: &mut PlaybackController,
+        deadline: Instant,
+        mut predicate: impl FnMut(&PlaybackController) -> bool,
+    ) {
+        while !predicate(controller) {
+            assert!(Instant::now() < deadline, "loop transition timed out");
+            controller.tick();
+            thread::sleep(Duration::from_millis(8));
+        }
+    }
+
+    fn wait_for_end_of_stream(source: &VideoSourceWorker, generation: u64, deadline: Instant) {
+        loop {
+            while source.try_frame().is_ok() {}
+            match source.try_event() {
+                Ok(VideoSourceEvent::Ended {
+                    generation: ended_generation,
+                }) if ended_generation == generation => return,
+                Ok(VideoSourceEvent::Failed { error, .. }) => {
+                    panic!("source decoding failed unexpectedly: {error:?}")
+                }
+                Ok(VideoSourceEvent::Opened(_) | VideoSourceEvent::Ended { .. })
+                | Err(TryRecvError::Empty) => {}
+                Err(TryRecvError::Disconnected) => {
+                    panic!("source worker stopped before reporting end-of-stream")
+                }
+            }
+            assert!(
+                Instant::now() < deadline,
+                "source did not reach end-of-stream"
+            );
+            thread::sleep(Duration::from_millis(2));
+        }
     }
 
     fn wait_for_frame(

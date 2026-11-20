@@ -1,4 +1,5 @@
 use crate::{DecodedVideoFrame, FrameEnqueueOutcome, VideoFrameQueue};
+use wallpaper_core::playback_settings::{LoopMode, SegmentRange};
 
 const HUNDRED_NANOSECONDS_PER_SECOND: u32 = 10_000_000;
 const MAX_PRESENTATION_FPS: u16 = 120;
@@ -386,6 +387,45 @@ impl PlaybackScheduler {
         Ok(())
     }
 
+    /// Return the seek target when the configured loop boundary is reached.
+    /// The caller seeks the decoder and scheduler together, then resumes the
+    /// source. Segment end is exclusive.
+    pub fn loop_seek_target(
+        &mut self,
+        mode: LoopMode,
+        segment: Option<SegmentRange>,
+        monotonic_time_100ns: i64,
+    ) -> Result<Option<i64>, PlaybackError> {
+        match mode {
+            LoopMode::Disabled => Ok(None),
+            LoopMode::Full if self.state == PlaybackState::Ended => Ok(Some(0)),
+            LoopMode::Full => Ok(None),
+            LoopMode::Segment => {
+                let Some(segment) = segment else {
+                    return Ok(None);
+                };
+                let start = segment
+                    .start_ms()
+                    .checked_mul(10_000)
+                    .and_then(|value| i64::try_from(value).ok())
+                    .ok_or(PlaybackError::TimeOverflow)?;
+                let end = segment
+                    .end_ms()
+                    .checked_mul(10_000)
+                    .and_then(|value| i64::try_from(value).ok())
+                    .ok_or(PlaybackError::TimeOverflow)?;
+                if self.state == PlaybackState::Ended
+                    || (self.state == PlaybackState::Playing
+                        && self.media_time_100ns(monotonic_time_100ns)? >= end)
+                {
+                    Ok(Some(start))
+                } else {
+                    Ok(None)
+                }
+            }
+        }
+    }
+
     /// Add a decoded frame to the bounded queue using the current media time
     /// to discard frames that have already missed their presentation interval.
     pub fn enqueue_frame(
@@ -507,6 +547,7 @@ mod tests {
         VideoPlaybackSpeed,
     };
     use crate::{DecodedVideoFrame, FrameEnqueueOutcome, VideoPixelFormat};
+    use wallpaper_core::playback_settings::{LoopMode, SegmentRange};
 
     fn frame(pts_100ns: i64, duration_100ns: i64, marker: u8) -> DecodedVideoFrame {
         DecodedVideoFrame {
@@ -517,6 +558,79 @@ mod tests {
             rgba8: vec![marker, 0, 0, 255],
             pts_100ns,
             duration_100ns,
+        }
+    }
+
+    #[test]
+    fn loop_targets_respect_disabled_full_and_exclusive_segment_boundaries() {
+        let segment = SegmentRange::new(500, 1_500).unwrap();
+        let mut scheduler = PlaybackScheduler::new();
+        scheduler.restart(0).unwrap();
+
+        assert_eq!(
+            scheduler
+                .loop_seek_target(LoopMode::Disabled, None, 20_000_000)
+                .unwrap(),
+            None
+        );
+        assert_eq!(
+            scheduler
+                .loop_seek_target(LoopMode::Full, None, 20_000_000)
+                .unwrap(),
+            None,
+            "full loop waits for source EOS and final-frame expiry"
+        );
+        assert_eq!(
+            scheduler
+                .loop_seek_target(LoopMode::Segment, Some(segment), 14_999_999)
+                .unwrap(),
+            None
+        );
+        assert_eq!(
+            scheduler
+                .loop_seek_target(LoopMode::Segment, Some(segment), 15_000_000)
+                .unwrap(),
+            Some(5_000_000),
+            "the exclusive end timestamp wraps to the segment start"
+        );
+
+        scheduler.end_of_stream(15_000_000).unwrap();
+        scheduler
+            .next_due_frame(15_000_000)
+            .expect("end-of-stream evaluation");
+        assert_eq!(scheduler.state(), PlaybackState::Ended);
+        assert_eq!(
+            scheduler
+                .loop_seek_target(LoopMode::Full, None, 15_000_000)
+                .unwrap(),
+            Some(0)
+        );
+        assert_eq!(
+            scheduler
+                .loop_seek_target(LoopMode::Segment, Some(segment), 15_000_000)
+                .unwrap(),
+            Some(5_000_000)
+        );
+    }
+
+    #[test]
+    fn repeated_full_loop_targets_restart_after_each_end_of_stream() {
+        let mut scheduler = PlaybackScheduler::new();
+        let mut now = 0;
+        for _ in 0..5 {
+            scheduler.restart(now).unwrap();
+            scheduler.end_of_stream(now).unwrap();
+            scheduler.next_due_frame(now).unwrap();
+            assert_eq!(scheduler.state(), PlaybackState::Ended);
+            assert_eq!(
+                scheduler
+                    .loop_seek_target(LoopMode::Full, None, now)
+                    .unwrap(),
+                Some(0)
+            );
+            scheduler.restart(now + 1).unwrap();
+            now += 2;
+            assert_eq!(scheduler.state(), PlaybackState::Playing);
         }
     }
 
