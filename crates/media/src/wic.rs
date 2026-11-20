@@ -4,9 +4,10 @@ use windows::{
     Win32::{
         Foundation::{GENERIC_READ, RPC_E_CHANGED_MODE},
         Graphics::Imaging::{
-            CLSID_WICImagingFactory, GUID_ContainerFormatJpeg, GUID_ContainerFormatPng,
-            GUID_WICPixelFormat32bppRGBA, IWICBitmapFrameDecode, IWICImagingFactory,
-            WICBitmapDitherTypeNone, WICBitmapPaletteTypeCustom, WICDecodeMetadataCacheOnDemand,
+            CLSID_WICImagingFactory, GUID_ContainerFormatBmp, GUID_ContainerFormatJpeg,
+            GUID_ContainerFormatPng, GUID_WICPixelFormat32bppRGBA, IWICBitmapFrameDecode,
+            IWICImagingFactory, WICBitmapDitherTypeNone, WICBitmapPaletteTypeCustom,
+            WICDecodeMetadataCacheOnDemand,
         },
         System::Com::{
             CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx,
@@ -78,7 +79,10 @@ pub(super) fn decode_image(path: &Path) -> Result<DecodedImage, MediaError> {
         unsafe { decoder.GetContainerFormat() }.map_err(|error| MediaError::DecoderCreation {
             hresult: error.code().0,
         })?;
-    if container != GUID_ContainerFormatPng && container != GUID_ContainerFormatJpeg {
+    if container != GUID_ContainerFormatPng
+        && container != GUID_ContainerFormatJpeg
+        && container != GUID_ContainerFormatBmp
+    {
         return Err(MediaError::UnsupportedImageFormat);
     }
 

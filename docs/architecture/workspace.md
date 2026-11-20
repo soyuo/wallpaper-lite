@@ -10,7 +10,7 @@ owned by the narrowest crate that can enforce its lifecycle and safety rules.
 | --- | --- | --- |
 | `crates/core` | Platform-independent domain types and shared contracts | None |
 | `crates/desktop` | Windows desktop and shell integration | `core` |
-| `crates/media` | WIC still-image decoding, Media Foundation video-source decoding, and bounded frame queue | `core` |
+| `crates/media` | WIC image decoding, Media Foundation video-source decoding, local catalog/import, and bounded playback queues | `core` |
 | `crates/renderer` | Video-capable D3D11 device and static-image presentation | `core`, `media` |
 | `crates/ipc` | UI-to-host protocol and named-pipe transport | `core` |
 | `host` | `wallpaper-host.exe` composition root and process lifecycle | `core`, `desktop`, `media`, `renderer`, `ipc` |
@@ -72,7 +72,7 @@ child window after shell restart without restarting the host process.
 ## Deferred boundaries
 
 Still-image decoding is implemented in `crates/media` using Windows Imaging
-Component (WIC) for PNG and JPEG. Image placement, transform, and color
+Component (WIC) for PNG, JPEG, and BMP. Image placement, transform, and color
 adjustments are implemented in `crates/renderer`. Media Foundation opens H.264
 sources and decodes timestamped RGBA8 frames, with software decoding and
 D3D11/DXVA-preferred paths. The bounded frame queue, playback scheduler, and
@@ -85,4 +85,5 @@ resource limits, and WIC behavior. See [`video-source.md`](video-source.md)
 for the Media Foundation source-reader, frame-timing, GPU interop, and lifetime contracts. See
 [`video-frame-queue.md`](video-frame-queue.md) for queue ordering, capacity, and late-frame policy.
 See [`media-library.md`](media-library.md) for the local catalog schema,
-source-file preservation, and catalog replacement behavior.
+source-file preservation, catalog replacement behavior, and content-validated
+file/folder import.

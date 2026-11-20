@@ -1,6 +1,6 @@
 # Media Foundation video source
 
-`wallpaper-media::VideoSource::open` opens a local H.264 video source through the Media Foundation Source Reader. It selects the first video stream, deselects other streams, and exposes validated frame dimensions, frame-rate numerator/denominator, duration in 100 ns units, and the stream-selection kind. `read_next` yields decoded RGBA8 frames, stream ticks, and an explicit end-of-stream event. The bounded frame queue, playback scheduling, and D3D11 presentation remain separate Phase 3 responsibilities.
+`wallpaper-media::VideoSource::open` opens a local MP4 source through the Media Foundation Source Reader. It validates the presentation MIME type as `video/mp4` and the first video stream subtype as H.264, then exposes validated frame dimensions, frame-rate numerator/denominator, duration in 100 ns units, and the stream-selection kind. `read_next` yields decoded RGBA8 frames, stream ticks, and an explicit end-of-stream event. The bounded frame queue, playback scheduling, and D3D11 presentation remain separate Phase 3 responsibilities.
 
 ## Lifetime and errors
 
@@ -23,6 +23,12 @@ Width and height must be nonzero, no axis may exceed 16,384 pixels, and the tota
 The Windows integration fixture decodes all 30 timestamped frames through both software and D3D11-device-backed paths. Hardware selection remains a Media Foundation policy decision; the API reports `HardwarePreferred` when configured and never claims hardware-only decoding.
 
 Windows-target fixtures under `crates/media/tests/fixtures` include a one-second 64×48 H.264 MP4 at 30 FPS, a red-to-blue 64×48 H.264 clip for renderer update checks, an 80×64 H.264 clip for texture-dimension changes, an audio-only MP4, and a non-H.264 MPEG-4 MP4. They were generated with FFmpeg from deterministic color, `testsrc2`, and `sine` sources.
+
+Library import checks the Media Foundation source's actual presentation MIME
+type for an MP4 container, then requires an H.264 video stream. A renamed MP4
+remains eligible; an AVI containing H.264 is rejected because the catalog
+import contract currently supports MP4 only. Audio-only MP4 opens as an MP4
+container but is rejected as a wallpaper because it has no video stream.
 
 ## References
 

@@ -33,6 +33,21 @@ The Windows API behavior is documented by Microsoft for
 and
 [`MoveFileExW`](https://learn.microsoft.com/windows/win32/api/winbase/nf-winbase-movefileexw).
 
-The catalog model and persistence boundary do not perform media import,
-thumbnail generation, search, editor settings, or settings backup. Those are
-implemented by later Phase 4 issues.
+## Import
+
+`import_local_media` accepts one or more selected paths. File candidates are
+validated by decoded content: WIC accepts PNG, JPEG, and BMP containers, while
+Media Foundation accepts MP4 containers that expose an H.264 video stream.
+Extensions are not used to classify media. Folder selections are scanned
+recursively without following child symlinks, with a depth limit of 32 and a
+maximum of 4,096 candidates per request.
+
+Each candidate returns its own status and safe failure category. Duplicate
+canonical paths reuse the existing stable ID. Valid additions are saved in one
+catalog transaction; a failed save converts provisional successes to catalog
+write failures and preserves the prior catalog. Source files are read-only and
+are never copied, renamed, or removed.
+
+The Tauri UI provides file and folder selection and displays each import
+result. Thumbnail generation, library browsing/search, editor settings, and
+settings backup remain later Phase 4 work.

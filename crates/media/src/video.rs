@@ -14,7 +14,7 @@ use windows::{
         Media::MediaFoundation::{
             IMFAttributes, IMFDXGIBuffer, IMFDXGIDeviceManager, IMFMediaBuffer, IMFSourceReader,
             MF_E_INVALIDSTREAMNUMBER, MF_MT_DEFAULT_STRIDE, MF_MT_FRAME_RATE, MF_MT_FRAME_SIZE,
-            MF_MT_MAJOR_TYPE, MF_MT_SUBTYPE, MF_PD_DURATION,
+            MF_MT_MAJOR_TYPE, MF_MT_SUBTYPE, MF_PD_DURATION, MF_PD_MIME_TYPE,
             MF_READWRITE_ENABLE_HARDWARE_TRANSFORMS, MF_SOURCE_READER_ALL_STREAMS,
             MF_SOURCE_READER_D3D_MANAGER, MF_SOURCE_READER_DISABLE_DXVA,
             MF_SOURCE_READER_ENABLE_ADVANCED_VIDEO_PROCESSING,
@@ -26,7 +26,9 @@ use windows::{
             MFVideoFormat_H264, MFVideoFormat_RGB32,
         },
         System::{
-            Com::StructuredStorage::{PROPVARIANT, PropVariantClear, PropVariantToInt64},
+            Com::StructuredStorage::{
+                PROPVARIANT, PropVariantClear, PropVariantToInt64, PropVariantToString,
+            },
             Com::{COINIT_MULTITHREADED, CoInitializeEx, CoUninitialize},
         },
     },
@@ -159,6 +161,7 @@ pub(super) fn open(
     let mut reader = reader.ok_or(MediaError::VideoSourceOpenFailed {
         hresult: 0x80004005u32 as i32,
     })?;
+    validate_mp4_container(&reader)?;
     let first_video = MF_SOURCE_READER_FIRST_VIDEO_STREAM.0 as u32;
     let mut media_type = select_h264_video_stream(&reader)?;
 
@@ -259,6 +262,31 @@ pub(super) fn open(
         metadata,
         mode,
     ))
+}
+
+fn validate_mp4_container(reader: &IMFSourceReader) -> Result<(), MediaError> {
+    let mime = unsafe {
+        reader.GetPresentationAttribute(MF_SOURCE_READER_MEDIASOURCE.0 as u32, &MF_PD_MIME_TYPE)
+    }
+    .map_err(|error| MediaError::VideoMetadataUnavailable {
+        hresult: error.code().0,
+    })?;
+    let mime = PropVariantOwner(mime);
+    let mut wide = [0u16; 128];
+    unsafe { PropVariantToString(ptr::from_ref(&mime.0), &mut wide) }.map_err(|error| {
+        MediaError::VideoMetadataUnavailable {
+            hresult: error.code().0,
+        }
+    })?;
+    let end = wide
+        .iter()
+        .position(|unit| *unit == 0)
+        .unwrap_or(wide.len());
+    let mime = String::from_utf16_lossy(&wide[..end]);
+    if !mime.eq_ignore_ascii_case("video/mp4") && !mime.eq_ignore_ascii_case("audio/mp4") {
+        return Err(MediaError::UnsupportedVideoContainer);
+    }
+    Ok(())
 }
 
 fn select_h264_video_stream(

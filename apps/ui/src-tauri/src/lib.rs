@@ -4,6 +4,8 @@ use rolling_file::{BasicRollingFileAppender, RollingConditionBasic};
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::filter::LevelFilter;
 use wallpaper_core::error::AppError;
+use wallpaper_core::error::ErrorCode;
+use wallpaper_media::{CatalogStore, ImportResult, import_local_media};
 
 const APP_LOG_DIRECTORY: &str = "com.soyuo.wallpaper-lite";
 const UI_LOG_FILE_COUNT: usize = 7;
@@ -117,6 +119,22 @@ async fn host_ping() -> Result<(), AppError> {
     }
 }
 
+#[tauri::command]
+async fn import_media(paths: Vec<String>) -> Result<Vec<ImportResult>, AppError> {
+    let store = CatalogStore::for_current_user().map_err(|error| error.to_app_error())?;
+    let paths = paths.into_iter().map(PathBuf::from).collect::<Vec<_>>();
+    tauri::async_runtime::spawn_blocking(move || {
+        import_local_media(&store, &paths).map_err(|error| error.to_app_error())
+    })
+    .await
+    .map_err(|_| {
+        AppError::new(
+            ErrorCode::Internal,
+            "The media import task could not be completed.",
+        )
+    })?
+}
+
 pub fn run() -> process::ExitCode {
     let _logging_guard = initialize_logging();
     tracing::info!(
@@ -126,7 +144,8 @@ pub fn run() -> process::ExitCode {
     );
 
     let result = tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![host_ping])
+        .plugin(tauri_plugin_dialog::init())
+        .invoke_handler(tauri::generate_handler![host_ping, import_media])
         .run(tauri::generate_context!());
 
     match result {
