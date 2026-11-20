@@ -59,6 +59,25 @@ export interface EditorPreview {
   monitorWidth: number;
   monitorHeight: number;
   dataUrl: string;
+  settings: WallpaperEditorSettings;
+}
+
+export interface WallpaperEditorSettings {
+  schemaVersion: number;
+  wallpaperId: number;
+  render: {
+    placementMode: "cover" | "fit" | "stretch" | "center" | "custom";
+    positionPx: { x: number; y: number };
+    sizePx: { width: number; height: number } | null;
+    scale: { x: number; y: number };
+    rotationDegrees: number;
+    anchor: { x: number; y: number };
+    crop: { x: number; y: number; width: number; height: number };
+  };
+  color: {
+    brightness: number; contrast: number; saturation: number; gamma: number;
+    opacity: number; temperature: number; red: number; green: number; blue: number;
+  };
 }
 
 export type AppErrorCode =
@@ -100,6 +119,7 @@ export interface HostAdapter {
   libraryPreview(id: number): Promise<LibraryPreview>;
   editorMonitors(): Promise<EditorMonitor[]>;
   editorPreview(id: number, monitorWidth: number, monitorHeight: number): Promise<EditorPreview>;
+  saveEditorSettings(id: number, settings: WallpaperEditorSettings): Promise<void>;
   removeLibraryEntry(id: number): Promise<void>;
   renameLibraryEntry(id: number, displayName: string): Promise<void>;
   setLibraryFavorite(id: number, favorite: boolean): Promise<void>;
@@ -168,6 +188,9 @@ export const hostAdapter: HostAdapter = {
   },
   editorPreview(id, monitorWidth, monitorHeight) {
     return invoke<EditorPreview>("editor_preview", { wallpaperId: id, monitorWidth, monitorHeight });
+  },
+  saveEditorSettings(id, settings) {
+    return invoke<void>("save_editor_settings", { wallpaperId: id, settings });
   },
   removeLibraryEntry(id) {
     return invoke<void>("remove_library_entry", { id });

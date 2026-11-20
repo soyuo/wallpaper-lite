@@ -26,6 +26,14 @@ use different boundary coverage rules; alpha is ignored because the desktop
 swap chain uses an ignore-alpha mode. A unit check also verifies the preview
 output aspect ratio and 1280-pixel edge cap.
 
-The current video preview uses the first decoded frame. Playback-synchronized
-preview, interactive crop/resize controls, edit history, and applying settings
-to the live desktop remain separate editor work.
+The current video preview uses the first decoded frame. The canvas supports
+all five placement modes, drag-to-position, corner resizing, physical-pixel
+position/size fields, zoom, rotation, normalized crop selection/move/resize,
+aspect presets, and crop reset. Selecting a standard placement mode resets
+custom geometry while preserving the crop; using a transform control enters
+Custom mode. Shift locks the image resize aspect ratio; Alt resizes around its
+center. Edits remain a validated draft until **Save and preview** stores them through
+`EditorSettingsStore` and renders the saved result. Pointer deltas are converted
+from CSS canvas units to monitor physical pixels. Playback-synchronized preview,
+edit history, transactional Apply/Cancel, and applying settings to the live
+desktop remain later work.

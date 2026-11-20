@@ -154,6 +154,7 @@ pub fn run() -> process::ExitCode {
             import_media,
             editor::editor_monitors,
             editor::editor_preview,
+            editor::save_editor_settings,
             library::list_library,
             library::library_preview,
             library::remove_library_entry,

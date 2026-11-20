@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 
 import "./App.css";
@@ -11,6 +11,7 @@ import {
   type ImportResult,
   type LibraryEntry,
   type LibraryPreview,
+  type WallpaperEditorSettings,
 } from "./host-adapter";
 
 const failureLabels: Record<ImportFailure, string> = {
@@ -55,6 +56,21 @@ function availabilityLabel(value: Availability): string {
   if (value === "unavailable") return "Unavailable";
   return "Available";
 }
+
+type EditorPointer = {
+  kind: "move" | "resize";
+  startX: number;
+  startY: number;
+  position: { x: number; y: number };
+  size: { width: number; height: number };
+  aspect: number;
+};
+
+type CropPointer = {
+  kind: "create" | "move" | "resize";
+  startX: number; startY: number;
+  origin: { x: number; y: number; width: number; height: number };
+};
 
 interface LibraryCardProps {
   entry: LibraryEntry;
@@ -216,9 +232,16 @@ function App() {
   const [editorMonitorId, setEditorMonitorId] = useState("");
   const [editorEntry, setEditorEntry] = useState<LibraryEntry | null>(null);
   const [editorPreview, setEditorPreview] = useState<EditorPreview | null>(null);
+  const [editorSettingsDraft, setEditorSettingsDraft] = useState<WallpaperEditorSettings | null>(null);
+  const [editorDirty, setEditorDirty] = useState(false);
+  const [editorSaveBusy, setEditorSaveBusy] = useState(false);
+  const [createCropMode, setCreateCropMode] = useState(false);
   const [editorBusy, setEditorBusy] = useState(false);
   const [editorError, setEditorError] = useState("");
   const previewRequests = useRef(new Set<number>());
+  const editorPointer = useRef<EditorPointer | null>(null);
+  const cropPointer = useRef<CropPointer | null>(null);
+  const selectedEditorMonitor = editorMonitors.find((item) => item.id === editorMonitorId) ?? null;
 
   const refreshLibrary = useCallback(async () => {
     setLibraryBusy(true);
@@ -406,7 +429,14 @@ function App() {
       const monitor = monitors.find((item) => item.id === editorMonitorId) ?? monitors[0];
       setEditorMonitors(monitors);
       setEditorMonitorId(monitor.id);
-      setEditorPreview(await hostAdapter.editorPreview(entry.id, monitor.width, monitor.height));
+      if (!previews[entry.id]) {
+        const sourcePreview = await hostAdapter.libraryPreview(entry.id);
+        setPreviews((current) => ({ ...current, [entry.id]: sourcePreview }));
+      }
+      const result = await hostAdapter.editorPreview(entry.id, monitor.width, monitor.height);
+      setEditorPreview(result);
+      setEditorSettingsDraft(result.settings);
+      setEditorDirty(false);
     } catch {
       setEditorError("The wallpaper preview could not be rendered.");
     } finally {
@@ -417,18 +447,195 @@ function App() {
   async function changeEditorMonitor(monitorId: string) {
     const monitor = editorMonitors.find((item) => item.id === monitorId);
     if (!monitor) return;
-    setEditorMonitorId(monitor.id);
     if (!editorEntry) return;
     setEditorBusy(true);
     setEditorPreview(null);
     setEditorError("");
     try {
-      setEditorPreview(await hostAdapter.editorPreview(editorEntry.id, monitor.width, monitor.height));
+      if (editorDirty && editorSettingsDraft) {
+        await hostAdapter.saveEditorSettings(editorEntry.id, editorSettingsDraft);
+        setEditorDirty(false);
+      }
+      setEditorMonitorId(monitor.id);
+      const result = await hostAdapter.editorPreview(editorEntry.id, monitor.width, monitor.height);
+      setEditorPreview(result);
+      setEditorSettingsDraft(result.settings);
+      setEditorDirty(false);
     } catch {
       setEditorError("The wallpaper preview could not be rendered for this display.");
     } finally {
       setEditorBusy(false);
     }
+  }
+
+  async function saveEditorSettingsDraft() {
+    const monitor = editorMonitors.find((item) => item.id === editorMonitorId);
+    if (!editorEntry || !editorSettingsDraft || !monitor) return;
+    setEditorSaveBusy(true);
+    setEditorError("");
+    let saved = false;
+    try {
+      await hostAdapter.saveEditorSettings(editorEntry.id, editorSettingsDraft);
+      saved = true;
+      setEditorDirty(false);
+      const result = await hostAdapter.editorPreview(editorEntry.id, monitor.width, monitor.height);
+      setEditorPreview(result);
+      setEditorSettingsDraft(result.settings);
+      setEditorDirty(false);
+    } catch {
+      setEditorError(saved
+        ? "Settings were saved, but the preview could not be rendered."
+        : "These edits are invalid or could not be saved. The previous settings remain active.");
+    } finally {
+      setEditorSaveBusy(false);
+    }
+  }
+
+  function beginEditorPointer(event: ReactPointerEvent<HTMLElement>, kind: "move" | "resize") {
+    if (!editorSettingsDraft || !editorPreview) return;
+    const monitor = editorMonitors.find((item) => item.id === editorMonitorId);
+    if (!monitor) return;
+    const size = editorSettingsDraft.render.sizePx ?? { width: monitor.width, height: monitor.height };
+    editorPointer.current = {
+      kind,
+      startX: event.clientX,
+      startY: event.clientY,
+      position: editorSettingsDraft.render.positionPx,
+      size,
+      aspect: size.width / size.height,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+    event.preventDefault();
+  }
+
+  function moveEditorPointer(event: ReactPointerEvent<HTMLDivElement>) {
+    const pointer = editorPointer.current;
+    const monitor = editorMonitors.find((item) => item.id === editorMonitorId);
+    if (!pointer || !monitor || !editorSettingsDraft) return;
+    const bounds = event.currentTarget.getBoundingClientRect();
+    if (bounds.width <= 0 || bounds.height <= 0) return;
+    let dx = Math.round((event.clientX - pointer.startX) * monitor.width / bounds.width);
+    let dy = Math.round((event.clientY - pointer.startY) * monitor.height / bounds.height);
+    if (event.shiftKey && pointer.kind === "resize") {
+      const ratioDelta = Math.abs(dx) > Math.abs(dy * pointer.aspect) ? dx : dy * pointer.aspect;
+      dx = Math.round(ratioDelta);
+      dy = Math.round(ratioDelta / pointer.aspect);
+    }
+    if (pointer.kind === "move") {
+      updateEditorRender({
+        placementMode: "custom",
+        positionPx: {
+          x: Math.max(-32_768, Math.min(32_768, pointer.position.x + dx)),
+          y: Math.max(-32_768, Math.min(32_768, pointer.position.y + dy)),
+        },
+      });
+      return;
+    }
+    const width = Math.max(1, Math.min(32_768, pointer.size.width + dx * (event.altKey ? 2 : 1)));
+    const height = Math.max(1, Math.min(32_768, pointer.size.height + dy * (event.altKey ? 2 : 1)));
+    updateEditorRender({
+      placementMode: "custom",
+      positionPx: event.altKey
+        ? pointer.position
+        : { x: pointer.position.x + Math.round((width - pointer.size.width) / 2), y: pointer.position.y + Math.round((height - pointer.size.height) / 2) },
+      sizePx: { width, height },
+    });
+  }
+
+  function setCropPreset(preset: string) {
+    if (!editorSettingsDraft || !editorEntry) return;
+    const current = editorSettingsDraft.render.crop;
+    const source = previews[editorEntry.id];
+    const sourceAspect = source && source.height > 0 ? source.width / source.height : 1;
+    if (preset === "free") return;
+    const [ratioWidth, ratioHeight] = preset.split(":").map(Number);
+    const targetRatio = ratioWidth / ratioHeight;
+    let width = current.width;
+    let height = current.height;
+    if (width * sourceAspect / height > targetRatio) width = height * targetRatio / sourceAspect;
+    else height = width * sourceAspect / targetRatio;
+    width = Math.min(1, width);
+    height = Math.min(1, height);
+    updateEditorRender({ crop: {
+      x: Math.max(0, Math.min(1 - width, current.x + (current.width - width) / 2)),
+      y: Math.max(0, Math.min(1 - height, current.y + (current.height - height) / 2)),
+      width,
+      height,
+    } });
+  }
+
+  function beginCropPointer(event: ReactPointerEvent<HTMLElement>, kind: CropPointer["kind"]) {
+    if (!editorSettingsDraft) return;
+    const surface = event.currentTarget.closest<HTMLElement>(".editor-source-crop");
+    if (!surface) return;
+    const bounds = surface.getBoundingClientRect();
+    if (!bounds.width || !bounds.height) return;
+    const crop = editorSettingsDraft.render.crop;
+    cropPointer.current = {
+      kind,
+      startX: (event.clientX - bounds.left) / bounds.width,
+      startY: (event.clientY - bounds.top) / bounds.height,
+      origin: crop,
+    };
+    surface.setPointerCapture(event.pointerId);
+    event.preventDefault();
+    event.stopPropagation();
+  }
+
+  function moveCropPointer(event: ReactPointerEvent<HTMLElement>) {
+    const active = cropPointer.current;
+    if (!active || !editorSettingsDraft) return;
+    const bounds = event.currentTarget.getBoundingClientRect();
+    if (!bounds.width || !bounds.height) return;
+    const x = Math.max(0, Math.min(1, (event.clientX - bounds.left) / bounds.width));
+    const y = Math.max(0, Math.min(1, (event.clientY - bounds.top) / bounds.height));
+    const dx = x - active.startX;
+    const dy = y - active.startY;
+    let crop = active.origin;
+    if (active.kind === "create") {
+      const cropX = Math.min(0.99, Math.min(active.startX, x));
+      const cropY = Math.min(0.99, Math.min(active.startY, y));
+      crop = {
+        x: cropX,
+        y: cropY,
+        width: Math.min(1 - cropX, Math.max(0.01, Math.abs(dx))),
+        height: Math.min(1 - cropY, Math.max(0.01, Math.abs(dy))),
+      };
+    } else if (active.kind === "move") {
+      crop = { ...active.origin, x: Math.max(0, Math.min(1 - active.origin.width, active.origin.x + dx)), y: Math.max(0, Math.min(1 - active.origin.height, active.origin.y + dy)) };
+    } else {
+      const maxWidth = 1 - active.origin.x;
+      const maxHeight = 1 - active.origin.y;
+      crop = {
+        ...active.origin,
+        width: Math.min(maxWidth, Math.max(Math.min(0.01, maxWidth), active.origin.width + dx)),
+        height: Math.min(maxHeight, Math.max(Math.min(0.01, maxHeight), active.origin.height + dy)),
+      };
+    }
+    updateEditorRender({ crop });
+  }
+
+  function updateEditorRender(patch: Partial<WallpaperEditorSettings["render"]>) {
+    setEditorDirty(true);
+    setEditorSettingsDraft((current) => current ? {
+      ...current,
+      render: { ...current.render, ...patch },
+    } : current);
+  }
+
+  function selectPlacementMode(mode: WallpaperEditorSettings["render"]["placementMode"]) {
+    if (mode === "custom") {
+      updateEditorRender({ placementMode: mode });
+      return;
+    }
+    updateEditorRender({
+      placementMode: mode,
+      positionPx: { x: 0, y: 0 },
+      sizePx: null,
+      scale: { x: 1, y: 1 },
+      rotationDegrees: 0,
+      anchor: { x: 0.5, y: 0.5 },
+    });
   }
 
   return (
@@ -488,14 +695,94 @@ function App() {
             <div
               className="editor-preview-canvas"
               aria-label={`Preview canvas ${editorPreview.monitorWidth} by ${editorPreview.monitorHeight}`}
+              onPointerDown={(event) => beginEditorPointer(event, "move")}
+              onPointerMove={moveEditorPointer}
+              onPointerUp={() => { editorPointer.current = null; }}
+              onPointerCancel={() => { editorPointer.current = null; }}
               style={{
                 aspectRatio: `${editorPreview.width} / ${editorPreview.height}`,
                 width: `min(100%, ${Math.min(56, 32 * editorPreview.width / editorPreview.height)}rem)`,
               }}
             >
-              <img src={editorPreview.dataUrl} alt={`Rendered ${editorEntry.displayName}`} />
+              <img draggable={false} src={editorPreview.dataUrl} alt={`Rendered ${editorEntry.displayName}`} />
+              <button
+                className="editor-resize-handle"
+                aria-label="Resize wallpaper; hold Shift to lock aspect ratio and Alt to resize from center"
+                onPointerDown={(event) => { event.stopPropagation(); beginEditorPointer(event, "resize"); }}
+              />
             </div>
           ) : null}
+          {editorSettingsDraft && editorPreview && !editorBusy && (
+            <div className="editor-controls">
+              <label>Placement
+                <select value={editorSettingsDraft.render.placementMode} onChange={(event) => selectPlacementMode(event.currentTarget.value as WallpaperEditorSettings["render"]["placementMode"])}>
+                  <option value="cover">Cover</option><option value="fit">Fit</option><option value="stretch">Stretch</option><option value="center">Center</option><option value="custom">Custom</option>
+                </select>
+              </label>
+              <label>Zoom
+                <input type="range" min="0.01" max="8" step="0.01" value={editorSettingsDraft.render.scale.x} onChange={(event) => { const value = Number(event.currentTarget.value); updateEditorRender({ placementMode: "custom", scale: { x: value, y: value } }); }} />
+                <output>{editorSettingsDraft.render.scale.x.toFixed(2)}×</output>
+              </label>
+              <label>Rotation
+                <input type="number" min="-3600" max="3600" step="0.5" value={editorSettingsDraft.render.rotationDegrees} onChange={(event) => updateEditorRender({ placementMode: "custom", rotationDegrees: Number(event.currentTarget.value) || 0 })} />
+              </label>
+              <label>Position X (physical px)
+                <input type="number" min="-32768" max="32768" value={editorSettingsDraft.render.positionPx.x} onChange={(event) => updateEditorRender({ placementMode: "custom", positionPx: { ...editorSettingsDraft.render.positionPx, x: Number(event.currentTarget.value) || 0 } })} />
+              </label>
+              <label>Position Y (physical px)
+                <input type="number" min="-32768" max="32768" value={editorSettingsDraft.render.positionPx.y} onChange={(event) => updateEditorRender({ placementMode: "custom", positionPx: { ...editorSettingsDraft.render.positionPx, y: Number(event.currentTarget.value) || 0 } })} />
+              </label>
+              {editorSettingsDraft.render.placementMode === "custom" && (
+                <>
+                  <label>Width (physical px)
+                    <input type="number" min="1" max="32768" value={editorSettingsDraft.render.sizePx?.width ?? selectedEditorMonitor?.width ?? 1} onChange={(event) => updateEditorRender({ sizePx: { width: Math.max(1, Number(event.currentTarget.value) || 1), height: editorSettingsDraft.render.sizePx?.height ?? selectedEditorMonitor?.height ?? 1 } })} />
+                  </label>
+                  <label>Height (physical px)
+                    <input type="number" min="1" max="32768" value={editorSettingsDraft.render.sizePx?.height ?? selectedEditorMonitor?.height ?? 1} onChange={(event) => updateEditorRender({ sizePx: { width: editorSettingsDraft.render.sizePx?.width ?? selectedEditorMonitor?.width ?? 1, height: Math.max(1, Number(event.currentTarget.value) || 1) } })} />
+                  </label>
+                </>
+              )}
+              <fieldset className="editor-crop-controls">
+                <legend>Normalized crop</legend>
+                {previews[editorEntry.id] && (
+                  <div
+                    className="editor-source-crop"
+                    aria-label="Crop source image; drag to select a crop, drag inside the box to move it"
+                    style={{ aspectRatio: `${previews[editorEntry.id].width} / ${previews[editorEntry.id].height}` }}
+                    onPointerDown={(event) => { if (createCropMode) beginCropPointer(event, "create"); }}
+                    onPointerMove={moveCropPointer}
+                    onPointerUp={() => { cropPointer.current = null; setCreateCropMode(false); }}
+                    onPointerCancel={() => { cropPointer.current = null; setCreateCropMode(false); }}
+                  >
+                    <img draggable={false} src={previews[editorEntry.id].thumbnailDataUrl} alt="Original source crop" />
+                    <div
+                      className={`editor-crop-selection${createCropMode ? " is-disabled" : ""}`}
+                      style={{ left: `${editorSettingsDraft.render.crop.x * 100}%`, top: `${editorSettingsDraft.render.crop.y * 100}%`, width: `${editorSettingsDraft.render.crop.width * 100}%`, height: `${editorSettingsDraft.render.crop.height * 100}%` }}
+                      onPointerDown={(event) => { if (!createCropMode) beginCropPointer(event, "move"); }}
+                    >
+                      <button aria-label="Resize crop selection" onPointerDown={(event) => { event.stopPropagation(); beginCropPointer(event, "resize"); }} />
+                    </div>
+                  </div>
+                )}
+                <label>Aspect preset
+                  <select defaultValue="free" onChange={(event) => setCropPreset(event.currentTarget.value)}>
+                    <option value="free">Free</option><option value="16:9">16:9</option><option value="4:3">4:3</option><option value="1:1">1:1</option><option value="9:16">9:16</option>
+                  </select>
+                </label>
+                <button type="button" onClick={() => setCreateCropMode(true)}>Select crop</button>
+                {(["x", "y", "width", "height"] as const).map((key) => (
+                  <label key={key}>{key}
+                    <input type="number" min="0" max="1" step="0.01" value={editorSettingsDraft.render.crop[key]} onChange={(event) => updateEditorRender({ crop: { ...editorSettingsDraft.render.crop, [key]: Number(event.currentTarget.value) || 0 } })} />
+                  </label>
+                ))}
+                <button onClick={() => updateEditorRender({ crop: { x: 0, y: 0, width: 1, height: 1 } })}>Reset crop</button>
+              </fieldset>
+              <button disabled={editorSaveBusy} onClick={() => void saveEditorSettingsDraft()}>
+                {editorSaveBusy ? "Saving and rendering..." : "Save and preview"}
+              </button>
+              <p>Drag the preview to position. Drag the corner handle to resize; hold Shift to lock its aspect ratio or Alt to resize around its center.</p>
+            </div>
+          )}
           <p className="editor-preview-note">Resizing this application window only scales the preview display; it does not change saved wallpaper settings.</p>
         </section>
       )}

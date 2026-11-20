@@ -39,7 +39,7 @@ silently apply to the wrong catalog item.
 
 | Property | Unit and valid range | Default |
 | --- | --- | --- |
-| `placementMode` | `cover`, `fit`, `stretch`, or `center` | `cover` |
+| `placementMode` | `cover`, `fit`, `stretch`, `center`, or `custom` | `cover` |
 | `positionPx.x/y` | Physical output pixels, each `-32768..=32768`; positive X is right, positive Y is down | `0, 0` |
 | `sizePx` | Optional physical output size; width and height each `1..=32768`; `null` uses the placement mode's computed size | `null` |
 | `scale.x/y` | Relative to the selected output size, each `0.01..=8.0` | `1.0, 1.0` |
@@ -69,6 +69,10 @@ not write or replace the last valid settings; replacement failures return a
 typed storage error.
 
 Saving editor settings never rewrites `library.json`, changes catalog IDs, or
-opens or modifies the source media. This per-wallpaper store does not implement
-global-settings backup/restore. Editor UI, edit history, Apply/Cancel, and live
-host application remain separate work.
+opens or modifies the source media. The `custom` placement mode starts from
+Cover geometry and applies stored physical size, position, scale, rotation,
+anchor, and crop. Canvas pointer deltas are converted from CSS dimensions to
+selected-monitor physical pixels before position and size are stored. This
+per-wallpaper store does not implement global-settings backup/restore. Edit
+history, transactional Apply/Cancel, and live host application remain separate
+work.

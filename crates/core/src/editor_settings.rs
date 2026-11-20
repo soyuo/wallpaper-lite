@@ -13,6 +13,8 @@ pub enum PlacementMode {
     Fit,
     Stretch,
     Center,
+    /// User-defined physical bounds and transforms, initialized from Cover.
+    Custom,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
