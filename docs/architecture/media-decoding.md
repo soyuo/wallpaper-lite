@@ -2,7 +2,7 @@
 
 Phase 2 introduces `crates/media` as the boundary between a source file and the
 renderer. The current `decode_image` implementation uses Windows Imaging
-Component (WIC) for PNG and JPEG files and returns owned CPU pixels. It does not
+Component (WIC) for PNG, JPEG, and BMP files and returns owned CPU pixels. It does not
 upload textures, create windows, render frames, or modify source files.
 
 ## Decoded image contract
@@ -35,4 +35,5 @@ cargo +stable test -p wallpaper-media --target x86_64-pc-windows-msvc -- --test-
 ```
 
 The current fixtures cover exact PNG RGBA/alpha output, JPEG channel values,
-malformed input, source preservation, dimension limits, and a 3840×2160 PNG.
+BMP decoding, GIF container rejection, malformed input, source preservation,
+dimension limits, and a 3840×2160 PNG.

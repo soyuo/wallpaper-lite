@@ -5,6 +5,7 @@ use std::path::Path;
 use wallpaper_core::error::{AppError, ErrorCode};
 
 mod frame_queue;
+mod import;
 mod library;
 mod playback;
 #[cfg(target_os = "windows")]
@@ -13,6 +14,7 @@ mod video;
 mod wic;
 
 pub use frame_queue::{FrameEnqueueOutcome, FrameQueueError, VideoFrameQueue};
+pub use import::{ImportFailure, ImportResult, ImportStatus, import_local_media};
 pub use library::{
     Availability, CatalogStore, LibraryError, MediaKind, WallpaperEntry, WallpaperId,
     WallpaperLibrary,
@@ -67,6 +69,7 @@ pub enum MediaError {
     VideoSourceOpenFailed { hresult: i32 },
     VideoStreamNotFound { hresult: i32 },
     UnsupportedVideoFormat,
+    UnsupportedVideoContainer,
     VideoMetadataUnavailable { hresult: i32 },
     InvalidVideoMetadata,
     InvalidVideoPath,
@@ -109,6 +112,7 @@ impl MediaError {
             | Self::VideoSourceOpenFailed { .. }
             | Self::VideoStreamNotFound { .. }
             | Self::UnsupportedVideoFormat
+            | Self::UnsupportedVideoContainer
             | Self::VideoMetadataUnavailable { .. }
             | Self::InvalidVideoMetadata
             | Self::InvalidVideoPath => AppError::new(
@@ -158,6 +162,9 @@ impl MediaError {
             ),
             Self::UnsupportedVideoFormat => {
                 "stage=video_open reason=unsupported_video_format".into()
+            }
+            Self::UnsupportedVideoContainer => {
+                "stage=video_open reason=unsupported_video_container".into()
             }
             Self::VideoMetadataUnavailable { hresult } => format!(
                 "stage=video_open reason=video_metadata_unavailable hresult=0x{:08X}",
@@ -407,7 +414,7 @@ impl VideoSource {
     }
 }
 
-/// Decode the first frame of a PNG or JPEG file into an owned RGBA8 pixel buffer.
+/// Decode the first frame of a PNG, JPEG, or BMP file into an owned RGBA8 pixel buffer.
 ///
 /// Dimensions are limited to 16,384 per axis and 67,108,864 pixels before allocating the buffer.
 /// The source file is opened for reading only and is never modified.

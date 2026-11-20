@@ -1,5 +1,30 @@
 import { invoke } from "@tauri-apps/api/core";
 
+export type ImportStatus =
+  | "imported"
+  | "already_present"
+  | "rejected"
+  | "unavailable"
+  | "scan_failed"
+  | "limit_reached";
+
+export type ImportFailure =
+  | "unsupported_format"
+  | "invalid_media"
+  | "codec_unavailable"
+  | "source_unavailable"
+  | "directory_unreadable"
+  | "directory_depth_exceeded"
+  | "candidate_limit_reached"
+  | "catalog_write_failed";
+
+export interface ImportResult {
+  fileName: string;
+  status: ImportStatus;
+  failure: ImportFailure | null;
+  wallpaperId: number | null;
+}
+
 export type AppErrorCode =
   | "host_unavailable"
   | "timeout"
@@ -31,6 +56,7 @@ export class HostAdapterError extends Error {
 
 export interface HostAdapter {
   ping(): Promise<void>;
+  importMedia(paths: string[]): Promise<ImportResult[]>;
 }
 
 function isAppErrorPayload(value: unknown): value is AppErrorPayload {
@@ -77,5 +103,8 @@ export const hostAdapter: HostAdapter = {
         "Could not check the wallpaper host.",
       );
     }
+  },
+  importMedia(paths) {
+    return invoke<ImportResult[]>("import_media", { paths });
   },
 };

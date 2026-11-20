@@ -80,10 +80,16 @@ fn malformed_input_returns_a_safe_typed_error() {
 
 #[test]
 fn rejects_other_wic_supported_formats() {
-    let path = fixture("unsupported.bmp");
-
-    let error = decode_image(&path).expect_err("BMP is outside the PNG/JPEG contract");
-
+    let path = fixture("unsupported.gif");
+    let error = decode_image(&path).expect_err("GIF is outside the supported image contract");
     assert_eq!(error, MediaError::UnsupportedImageFormat);
-    assert!(!error.diagnostic_summary().contains("unsupported.bmp"));
+    assert!(!error.diagnostic_summary().contains("unsupported.gif"));
+}
+
+#[test]
+fn decodes_bmp_by_container_even_when_named_with_an_unrelated_extension() {
+    let path = fixture("tiny.bmp");
+    let image = decode_image(&path).expect("WIC should decode BMP by its container");
+    assert_eq!((image.width(), image.height(), image.stride()), (1, 1, 4));
+    assert_eq!(image.rgba8(), &[1, 2, 3, 255]);
 }

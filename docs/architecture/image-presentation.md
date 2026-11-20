@@ -100,7 +100,7 @@ For the current renderer acceptance path, the host accepts one optional image:
 wallpaper-host.exe --image C:\path\to\wallpaper.png
 ```
 
-PNG and JPEG files use the WIC decoder described in
+PNG, JPEG, and BMP files use the WIC decoder described in
 [`media-decoding.md`](media-decoding.md). The path is never included in logs and
 the source file is opened read-only. With no argument, the host starts the
 background-layer child without creating a swap chain; UI selection and

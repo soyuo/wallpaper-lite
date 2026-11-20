@@ -89,6 +89,13 @@ fn rejects_non_h264_video_as_unsupported() {
 
 #[cfg(target_os = "windows")]
 #[test]
+fn rejects_h264_in_a_non_mp4_container() {
+    let error = open_error(fixture("h264-avi.avi"));
+    assert_eq!(error, MediaError::UnsupportedVideoContainer);
+}
+
+#[cfg(target_os = "windows")]
+#[test]
 fn rejects_embedded_nul_in_path_before_calling_media_foundation() {
     let error = open_error(std::path::Path::new("invalid\0video.mp4"));
     assert_eq!(error, MediaError::InvalidVideoPath);
