@@ -7,6 +7,8 @@ use wallpaper_core::error::AppError;
 use wallpaper_core::error::ErrorCode;
 use wallpaper_media::{CatalogStore, ImportResult, import_local_media};
 
+mod library;
+
 const APP_LOG_DIRECTORY: &str = "com.soyuo.wallpaper-lite";
 const UI_LOG_FILE_COUNT: usize = 7;
 const UI_LOG_MAX_SIZE_BYTES: u64 = 5 * 1024 * 1024;
@@ -145,7 +147,14 @@ pub fn run() -> process::ExitCode {
 
     let result = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![host_ping, import_media])
+        .invoke_handler(tauri::generate_handler![
+            host_ping,
+            import_media,
+            library::list_library,
+            library::library_preview,
+            library::remove_library_entry,
+            library::relocate_library_entry,
+        ])
         .run(tauri::generate_context!());
 
     match result {

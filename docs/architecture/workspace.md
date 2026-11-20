@@ -85,5 +85,5 @@ resource limits, and WIC behavior. See [`video-source.md`](video-source.md)
 for the Media Foundation source-reader, frame-timing, GPU interop, and lifetime contracts. See
 [`video-frame-queue.md`](video-frame-queue.md) for queue ordering, capacity, and late-frame policy.
 See [`media-library.md`](media-library.md) for the local catalog schema,
-source-file preservation, catalog replacement behavior, and content-validated
-file/folder import.
+content-validated import, library browsing/search, metadata, missing-file
+actions, and bounded cached thumbnails.

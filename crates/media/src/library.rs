@@ -105,6 +105,37 @@ impl WallpaperLibrary {
         self.entries.iter().find(|entry| entry.id == id)
     }
 
+    pub fn get_by_raw_id(&self, id: u64) -> Option<&WallpaperEntry> {
+        self.entries.iter().find(|entry| entry.id.get() == id)
+    }
+
+    pub fn remove(&mut self, id: u64) -> bool {
+        let Some(index) = self.entries.iter().position(|entry| entry.id.get() == id) else {
+            return false;
+        };
+        self.entries.remove(index);
+        true
+    }
+
+    pub fn relocate(
+        &mut self,
+        id: u64,
+        source_path: impl Into<PathBuf>,
+    ) -> Result<bool, LibraryError> {
+        let source_path = source_path.into();
+        validate_source_path(&source_path)?;
+        let metadata = fs::metadata(&source_path).map_err(|_| LibraryError::InvalidSourcePath)?;
+        if !metadata.is_file() {
+            return Err(LibraryError::InvalidSourcePath);
+        }
+        let Some(entry) = self.entries.iter_mut().find(|entry| entry.id.get() == id) else {
+            return Ok(false);
+        };
+        entry.source_path = source_path;
+        entry.availability = Availability::Available;
+        Ok(true)
+    }
+
     /// Add a reference to an absolute path; this never copies or opens the source.
     pub fn add(
         &mut self,
@@ -538,6 +569,71 @@ mod tests {
             fs::read(&source).expect("source remains readable"),
             original
         );
+    }
+
+    #[test]
+    fn removing_entry_does_not_touch_source_and_preserves_monotonic_ids() {
+        let directory = TestDirectory::new();
+        let first_source = directory.path().join("first.png");
+        let second_source = directory.path().join("second.png");
+        fs::write(&first_source, b"first source").expect("first source should be written");
+        fs::write(&second_source, b"second source").expect("second source should be written");
+        let mut library = WallpaperLibrary::default();
+        let first_id = library
+            .add(&first_source, "First", MediaKind::Image)
+            .expect("first source should be catalogued");
+        let second_id = library
+            .add(&second_source, "Second", MediaKind::Image)
+            .expect("second source should be catalogued");
+
+        assert!(library.remove(first_id.get()));
+        assert!(!library.remove(first_id.get()));
+        let third_id = library
+            .add(
+                directory.path().join("third.png"),
+                "Third",
+                MediaKind::Image,
+            )
+            .expect("a missing absolute path can remain catalogued");
+
+        assert!(library.get_by_raw_id(first_id.get()).is_none());
+        assert_eq!(
+            library.get_by_raw_id(second_id.get()).unwrap().id(),
+            second_id
+        );
+        assert!(third_id.get() > second_id.get());
+        assert_eq!(fs::read(first_source).unwrap(), b"first source");
+        assert_eq!(fs::read(second_source).unwrap(), b"second source");
+    }
+
+    #[test]
+    fn relocating_entry_keeps_id_and_does_not_modify_either_source() {
+        let directory = TestDirectory::new();
+        let missing_source = directory.path().join("missing.png");
+        let located_source = directory.path().join("located.png");
+        fs::write(&located_source, b"replacement image bytes")
+            .expect("replacement source should be written");
+        let mut library = WallpaperLibrary::default();
+        let id = library
+            .add(&missing_source, "Moved image", MediaKind::Image)
+            .expect("missing absolute path should be catalogued");
+
+        assert!(library.relocate(id.get(), &located_source).unwrap());
+        assert_eq!(library.get(id).unwrap().source_path(), located_source);
+        assert_eq!(
+            library.get(id).unwrap().availability(),
+            Availability::Available
+        );
+        assert!(!library.relocate(u64::MAX, &located_source).unwrap());
+        assert_eq!(
+            library.relocate(id.get(), directory.path()),
+            Err(LibraryError::InvalidSourcePath)
+        );
+        assert_eq!(
+            fs::read(located_source).unwrap(),
+            b"replacement image bytes"
+        );
+        assert!(!missing_source.exists());
     }
 
     #[test]

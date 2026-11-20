@@ -3904,7 +3904,10 @@ dependencies = [
 name = "wallpaper-ui"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "rolling-file",
+ "serde",
+ "serde_json",
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",
