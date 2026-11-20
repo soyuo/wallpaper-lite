@@ -264,7 +264,7 @@ mod tests {
             queue.enqueue(frame(20, 10, 2), 30),
             FrameEnqueueOutcome::DroppedLate
         );
-        assert_eq!(queued_pts(&queue), []);
+        assert!(queued_pts(&queue).is_empty());
         assert_eq!(
             queue.enqueue(frame(25, 10, 3), 30),
             FrameEnqueueOutcome::Queued

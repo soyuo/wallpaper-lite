@@ -3801,6 +3801,8 @@ dependencies = [
 name = "wallpaper-media"
 version = "0.1.0"
 dependencies = [
+ "serde",
+ "serde_json",
  "wallpaper-core",
  "windows",
 ]

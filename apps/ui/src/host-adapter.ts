@@ -11,6 +11,7 @@ export type AppErrorCode =
   | "protocol_version_mismatch"
   | "unsupported_platform"
   | "transport_error"
+  | "library_storage_failed"
   | "internal";
 
 interface AppErrorPayload {
@@ -54,6 +55,7 @@ function isAppErrorCode(value: unknown): value is AppErrorCode {
     value === "protocol_version_mismatch" ||
     value === "unsupported_platform" ||
     value === "transport_error" ||
+    value === "library_storage_failed" ||
     value === "internal"
   );
 }
