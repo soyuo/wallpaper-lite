@@ -7,10 +7,10 @@ use std::{
 use windows::{
     Win32::{
         Foundation::{
-            ERROR_CLASS_ALREADY_EXISTS, GetLastError, HINSTANCE, HWND, LPARAM, LRESULT, RECT,
-            WPARAM,
+            ERROR_CLASS_ALREADY_EXISTS, GetLastError, HINSTANCE, HWND, LPARAM, LRESULT, POINT,
+            RECT, SetLastError, WIN32_ERROR, WPARAM,
         },
-        Graphics::Gdi::{HBRUSH, ValidateRect},
+        Graphics::Gdi::{HBRUSH, MapWindowPoints, ValidateRect},
         System::{
             LibraryLoader::{GetModuleHandleW, GetProcAddress},
             Threading::{GetCurrentProcessId, GetCurrentThreadId},
@@ -32,6 +32,7 @@ use windows::{
 };
 
 use crate::{DesktopError, DesktopHost};
+use wallpaper_display::DisplayRect;
 
 const WINDOW_CLASS_NAME: PCWSTR = w!("WallpaperLiteDesktopChild");
 
@@ -52,12 +53,26 @@ pub struct AttachedDesktopWindow {
 
 impl AttachedDesktopWindow {
     pub(crate) fn attach(parent: DesktopHost) -> Result<Self, DesktopError> {
+        Self::attach_with_bounds(parent, None)
+    }
+
+    pub(crate) fn attach_for_display(
+        parent: DesktopHost,
+        bounds: DisplayRect,
+    ) -> Result<Self, DesktopError> {
+        Self::attach_with_bounds(parent, Some(bounds))
+    }
+
+    fn attach_with_bounds(
+        parent: DesktopHost,
+        bounds: Option<DisplayRect>,
+    ) -> Result<Self, DesktopError> {
         parent.validate_current()?;
 
         let (ready_tx, ready_rx) = mpsc::sync_channel(1);
         let thread = thread::Builder::new()
             .name("wallpaper-desktop-window".into())
-            .spawn(move || run_window_thread(parent, ready_tx))
+            .spawn(move || run_window_thread(parent, bounds, ready_tx))
             .map_err(|error| DesktopError::DesktopWindowThreadFailed {
                 os_error_code: error.raw_os_error(),
             })?;
@@ -123,6 +138,7 @@ impl Drop for AttachedDesktopWindow {
 
 fn run_window_thread(
     parent: DesktopHost,
+    bounds: Option<DisplayRect>,
     ready_tx: mpsc::SyncSender<Result<(isize, u32), DesktopError>>,
 ) {
     let thread_id = unsafe { GetCurrentThreadId() };
@@ -132,7 +148,7 @@ fn run_window_thread(
         let _ = PeekMessageW(&mut message, None, 0, 0, PM_NOREMOVE);
     }
 
-    let hwnd = match create_and_attach_window(parent) {
+    let hwnd = match create_and_attach_window(parent, bounds) {
         Ok(hwnd) => hwnd,
         Err(error) => {
             let _ = ready_tx.send(Err(error));
@@ -165,13 +181,16 @@ fn run_window_thread(
     }
 }
 
-fn create_and_attach_window(parent: DesktopHost) -> Result<HWND, DesktopError> {
+fn create_and_attach_window(
+    parent: DesktopHost,
+    bounds: Option<DisplayRect>,
+) -> Result<HWND, DesktopError> {
     parent.validate_current()?;
     register_window_class()?;
 
     let parent_hwnd = crate::shell::wallpaper_layer(parent)?;
     let previous_dpi_context = set_parent_dpi_context(parent_hwnd)?;
-    let result = create_positioned_window(parent, parent_hwnd);
+    let result = create_positioned_window(parent, parent_hwnd, bounds);
     let restore_result = restore_dpi_context(previous_dpi_context);
 
     match (result, restore_result) {
@@ -186,16 +205,56 @@ fn create_and_attach_window(parent: DesktopHost) -> Result<HWND, DesktopError> {
     }
 }
 
-fn create_positioned_window(parent: DesktopHost, parent_hwnd: HWND) -> Result<HWND, DesktopError> {
+fn create_positioned_window(
+    parent: DesktopHost,
+    parent_hwnd: HWND,
+    display_bounds: Option<DisplayRect>,
+) -> Result<HWND, DesktopError> {
     crate::shell::validate_wallpaper_layer(parent, parent_hwnd.0 as isize)?;
-    let mut bounds = RECT::default();
-    unsafe { GetClientRect(parent_hwnd, &mut bounds) }.map_err(|error| {
-        DesktopError::WindowPositionFailed {
-            hresult: error.code().0,
+    let (left, top, width, height) = match display_bounds {
+        Some(bounds) => {
+            let mut origin = POINT {
+                x: bounds.left(),
+                y: bounds.top(),
+            };
+            let mut end = POINT {
+                x: bounds.right(),
+                y: bounds.bottom(),
+            };
+            unsafe { SetLastError(WIN32_ERROR(0)) };
+            let origin_offset = unsafe {
+                MapWindowPoints(None, Some(parent_hwnd), std::slice::from_mut(&mut origin))
+            };
+            if origin_offset == 0 && unsafe { GetLastError() } != WIN32_ERROR(0) {
+                return Err(DesktopError::WindowPositionFailed {
+                    hresult: unsafe { GetLastError() }.0 as i32,
+                });
+            }
+            unsafe { SetLastError(WIN32_ERROR(0)) };
+            let end_offset =
+                unsafe { MapWindowPoints(None, Some(parent_hwnd), std::slice::from_mut(&mut end)) };
+            if end_offset == 0 && unsafe { GetLastError() } != WIN32_ERROR(0) {
+                return Err(DesktopError::WindowPositionFailed {
+                    hresult: unsafe { GetLastError() }.0 as i32,
+                });
+            }
+            (origin.x, origin.y, end.x - origin.x, end.y - origin.y)
         }
-    })?;
-    let width = bounds.right - bounds.left;
-    let height = bounds.bottom - bounds.top;
+        None => {
+            let mut bounds = RECT::default();
+            unsafe { GetClientRect(parent_hwnd, &mut bounds) }.map_err(|error| {
+                DesktopError::WindowPositionFailed {
+                    hresult: error.code().0,
+                }
+            })?;
+            (
+                bounds.left,
+                bounds.top,
+                bounds.right - bounds.left,
+                bounds.bottom - bounds.top,
+            )
+        }
+    };
     if width <= 0 || height <= 0 {
         return Err(DesktopError::DesktopWindowBoundsUnavailable);
     }
@@ -211,8 +270,8 @@ fn create_positioned_window(parent: DesktopHost, parent_hwnd: HWND) -> Result<HW
             WINDOW_CLASS_NAME,
             w!(""),
             WINDOW_STYLE(WS_CHILD.0 | WS_CLIPSIBLINGS.0),
-            0,
-            0,
+            left,
+            top,
             width,
             height,
             Some(parent_hwnd),
@@ -236,8 +295,8 @@ fn create_positioned_window(parent: DesktopHost, parent_hwnd: HWND) -> Result<HW
         SetWindowPos(
             hwnd,
             Some(HWND_BOTTOM),
-            0,
-            0,
+            left,
+            top,
             width,
             height,
             SWP_NOACTIVATE | SWP_SHOWWINDOW,

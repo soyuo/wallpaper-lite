@@ -301,6 +301,9 @@ impl fmt::Display for DisplayError {
 impl std::error::Error for DisplayError {}
 
 /// Enumerates the currently active desktop display targets.
+///
+/// Callers must configure per-monitor DPI awareness before enumeration so GDI monitor
+/// rectangles are returned in physical desktop pixels rather than virtualized coordinates.
 #[cfg(target_os = "windows")]
 pub fn enumerate_displays() -> Result<DisplaySnapshot, DisplayError> {
     windows::enumerate_displays()

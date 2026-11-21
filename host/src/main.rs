@@ -8,6 +8,7 @@ use tracing_subscriber::filter::LevelFilter;
 use wallpaper_desktop::{ShellLifecycleEvent, ShellLifecycleMonitor};
 use wallpaper_media::{DecodedImage, MediaError, decode_image};
 
+mod independent_displays;
 mod playback;
 mod recovery;
 
@@ -101,6 +102,7 @@ fn main() -> process::ExitCode {
             return process::ExitCode::FAILURE;
         }
     };
+    let has_explicit_startup_image = initial_image.is_some();
 
     if let Err(error) = wallpaper_desktop::initialize_windows() {
         tracing::error!(
@@ -117,6 +119,14 @@ fn main() -> process::ExitCode {
         event = "windows_initialized",
         "Windows desktop process initialized"
     );
+    // Monitor rectangles must be queried after the process enters per-monitor DPI awareness;
+    // otherwise Windows can virtualize them for an unaware caller.
+    let display_assignments = independent_displays::load_display_assignments();
+    let has_secondary_assignment = display_assignments
+        .profiles
+        .iter()
+        .any(|assignment| !assignment.display.is_primary());
+    let has_independent_assignment = !display_assignments.profiles.is_empty();
 
     let desktop_host = match wallpaper_desktop::discover_desktop_host() {
         Ok(desktop_host) => desktop_host,
@@ -157,7 +167,22 @@ fn main() -> process::ExitCode {
         feature_level = format!("0x{:04X}", graphics_device.feature_level()),
         "D3D11 device and immediate context initialized"
     );
-    let wallpaper_window = match desktop_host.attach_wallpaper_window() {
+    let wallpaper_window_result = if has_independent_assignment {
+        match display_assignments.primary_bounds {
+            Some(bounds) => desktop_host.attach_wallpaper_window_for_display(bounds),
+            None => {
+                tracing::error!(
+                    component = "display",
+                    event = "primary_display_bounds_unavailable",
+                    "Secondary independent assignments cannot start without primary display bounds"
+                );
+                desktop_host.attach_wallpaper_window()
+            }
+        }
+    } else {
+        desktop_host.attach_wallpaper_window()
+    };
+    let wallpaper_window = match wallpaper_window_result {
         Ok(window) => window,
         Err(error) => {
             tracing::error!(
@@ -217,7 +242,7 @@ fn main() -> process::ExitCode {
         "Desktop host recovery worker started"
     );
     let (command_sender, command_receiver) = wallpaper_ipc::protocol::playback_command_channel();
-    let (mut playback_worker, playback_events) =
+    let (mut playback_worker, mut playback_events) =
         match PlaybackWorker::start(command_receiver, media_device, &desktop_recovery) {
             Ok(worker) => worker,
             Err(error) => {
@@ -282,6 +307,55 @@ fn main() -> process::ExitCode {
         }
     };
 
+    if !has_explicit_startup_image {
+        if let Some(primary) = display_assignments
+            .profiles
+            .iter()
+            .find(|assignment| assignment.display.is_primary())
+        {
+            match primary.wallpaper.media_kind() {
+                wallpaper_media::MediaKind::Image => {
+                    if let Err(stage) = independent_displays::present_assigned_primary_image(
+                        primary,
+                        &desktop_recovery,
+                    ) {
+                        tracing::warn!(
+                            component = "display",
+                            event = "primary_assignment_start_failed",
+                            stage,
+                            "Primary display profile could not be started"
+                        );
+                    }
+                }
+                wallpaper_media::MediaKind::Video => {
+                    if let Err(stage) = independent_displays::start_assigned_primary_video(
+                        &runtime,
+                        &command_sender,
+                        &mut playback_events,
+                        &desktop_recovery,
+                        primary,
+                    ) {
+                        tracing::warn!(
+                            component = "display",
+                            event = "primary_assignment_start_failed",
+                            stage,
+                            "Primary display profile could not be started"
+                        );
+                    }
+                }
+            }
+        }
+    }
+    let mut independent_displays = independent_displays::IndependentDisplayManager::start(
+        &runtime,
+        if has_secondary_assignment && display_assignments.primary_bounds.is_some() {
+            &display_assignments.profiles
+        } else {
+            &[]
+        },
+        display_assignments.primary_bounds,
+    );
+
     let run_result = runtime.block_on(async {
         let server = wallpaper_ipc::server::run_with_commands_and_events(
             command_sender,
@@ -307,10 +381,10 @@ fn main() -> process::ExitCode {
                                 tracing::error!(
                                     component = "desktop",
                                     event = "desktop_recovery_worker_stopped",
-                                    "Desktop recovery worker stopped unexpectedly"
+                                    "Primary display recovery stopped; independent targets will continue"
                                 );
-                                return Err(());
                             }
+                            independent_displays.explorer_exited();
                         }
                         Ok(ShellLifecycleEvent::ExplorerRestarted { shell_process_id, host_kind }) => {
                             tracing::info!(
@@ -324,10 +398,10 @@ fn main() -> process::ExitCode {
                                 tracing::error!(
                                     component = "desktop",
                                     event = "desktop_recovery_worker_stopped",
-                                    "Desktop recovery worker stopped unexpectedly"
+                                    "Primary display recovery remains unavailable; independent targets continue"
                                 );
-                                return Err(());
                             }
+                            independent_displays.explorer_restarted();
                         }
                         Ok(ShellLifecycleEvent::MonitorFailed { stage, error_code }) => {
                             tracing::error!(
@@ -353,7 +427,9 @@ fn main() -> process::ExitCode {
             }
         }
     });
-    if !playback_worker.stop() {
+    let playback_stopped = playback_worker.stop();
+    let independent_stopped = independent_displays.stop();
+    if !playback_stopped {
         tracing::error!(
             component = "media",
             event = "playback_worker_join_failed",
@@ -366,6 +442,13 @@ fn main() -> process::ExitCode {
     } else {
         stop_desktop_recovery(&mut desktop_recovery);
         drop(desktop_recovery);
+    }
+    if !independent_stopped {
+        tracing::error!(
+            component = "display",
+            event = "independent_display_shutdown_incomplete",
+            "At least one independent display worker did not stop cleanly"
+        );
     }
     drop(shell_lifecycle_monitor);
 
