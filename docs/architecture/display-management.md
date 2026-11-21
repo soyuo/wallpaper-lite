@@ -40,29 +40,40 @@ file replacement helper. `upsert()` updates a single identity while retaining
 all other records, including displays absent from the current enumeration.
 Profiles are not filtered by current topology, so a returning display matches
 its prior stable ID. This store persists assignment intent only; applying a
-profile to desktop windows is handled by the Windows host at startup for
-Independent mode. Profile storage never opens or modifies source media.
+profile to desktop windows is handled by the Windows host at startup. Profile
+storage never opens or modifies source media.
 
-## Independent mode startup
+## Startup mode resolution
 
-The host enables per-monitor DPI awareness before enumerating displays. It then
+The host enables per-monitor DPI awareness before enumerating displays, then
 matches profiles by stable display ID and resolves each wallpaper ID against
-the catalog. Missing, unavailable, or invalid targets are logged and skipped
-without preventing other targets from starting. Clone/overlapping geometry is
-skipped to avoid one child surface obscuring another.
+the catalog. Missing, unavailable, or invalid targets are skipped without
+preventing other targets from starting. Clone/overlapping geometry is skipped
+to avoid overlapping child surfaces.
 
-The primary display reuses the existing host playback actor and window. When
-Independent assignments exist, its child is confined to the primary display
-bounds. Each assigned secondary display owns a child window positioned in that
-display's physical desktop bounds, a D3D11 device, a recovery worker, and—when
-the assignment is video—its own playback worker and bounded frame queues. Its
-FPS override is applied only to that playback worker. Explorer exit/restart
-events are forwarded to every recovery worker, and shutdown joins playback
-workers before releasing their windows and renderer resources.
+If an active profile selects Duplicate mode, the primary display's Duplicate
+profile supplies the shared wallpaper when present. Otherwise, the first active
+Duplicate profile in stable display-ID order supplies it. The selected source
+is assigned to every active display, while each display retains its own FPS
+override. Conflicting wallpaper IDs in Duplicate profiles are logged and
+resolved to that shared source. Without an active Duplicate profile, the host
+uses the persisted Independent assignments.
 
-Topology changes are not re-enumerated at runtime; that remains issue #96.
-Duplicate and Span presentation modes remain later work.
+The primary display reuses the existing host playback actor and window. Its
+child is confined to primary display bounds when secondary targets are active.
+Each assigned secondary display owns a child window at that display's physical
+desktop bounds, its own D3D11 device and recovery worker, and a separate video
+playback worker with bounded frame queues when its assignment is video. Its FPS
+override is applied only to that playback worker. Target startup failures are
+isolated. Explorer exit/restart events are forwarded to every recovery worker,
+and shutdown joins playback workers before releasing their windows and
+renderer resources.
 
+The host loads the saved mode when it starts. Restarting after profile changes
+releases the previous target set during shutdown and creates targets for the
+new mode. Live profile editing is part of the Monitor Manager work in issue #97.
+Topology changes are not re-enumerated at runtime; that remains issue #96. Span
+mode remains later work.
 ## Current runtime evidence
 
 Windows 11 Education 10.0.26300 x64 with Intel Arc 140T exposed one active
@@ -77,9 +88,12 @@ Windows monitor device path and does not depend on `HMONITOR` lifetime.
 This enumeration run covered one attached display only. Multiple-display
 geometry is covered with synthetic model tests. The host applies a persisted
 primary Independent profile in the Phase 6 runtime report; a simultaneous
-two-physical-display run is unavailable in this environment. Duplicate, Span,
-and topology recovery remain separate Phase 6 work. Windows 10 was not available
-for these runtime checks.
+two-physical-display run is unavailable in this environment. A persisted
+Duplicate profile reload on the single display is documented in the Duplicate
+acceptance report; simultaneous two-display Duplicate behavior remains
+unverified and is tracked separately in issue #98. Span and topology recovery
+remain separate Phase 6 work. Windows 10 was not available for these runtime
+checks.
 
 ## Platform API references
 
