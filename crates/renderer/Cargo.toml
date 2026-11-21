@@ -10,6 +10,7 @@ path = "src/lib.rs"
 
 [dependencies]
 wallpaper-core = { workspace = true }
+wallpaper-display = { workspace = true }
 wallpaper-media = { workspace = true }
 
 [dev-dependencies]

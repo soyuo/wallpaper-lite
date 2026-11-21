@@ -1,4 +1,5 @@
 use crate::RendererError;
+use wallpaper_display::SpanBounds;
 
 /// How a source image is mapped into the physical client area.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -283,6 +284,14 @@ impl ImagePlacement {
         }
     }
 
+    fn from_corners(destination_corners: [PlacementPoint; 4], source_uv: PlacementRect) -> Self {
+        Self {
+            destination: bounds(&destination_corners),
+            destination_corners,
+            source_uv,
+        }
+    }
+
     /// Axis-aligned bounds around the destination quad; transformed corners can extend beyond it.
     pub const fn destination(self) -> PlacementRect {
         self.destination
@@ -373,6 +382,36 @@ pub fn calculate_transformed_image_placement(
     placement.destination_corners = transformed;
     placement.destination = bounds(&transformed);
     Ok(placement)
+}
+
+/// Calculate one display's clipped view of a placement mapped over the full virtual desktop.
+///
+/// The transform, crop, and placement mode are evaluated once in virtual-desktop physical
+/// pixels. The resulting quad is then expressed in the target display's local normalized
+/// coordinates; portions outside that output are clipped by its render target.
+pub fn calculate_span_image_placement(
+    source: PlacementDimensions,
+    bounds: SpanBounds,
+    mode: PlacementMode,
+    transform: ImageTransform,
+) -> Result<ImagePlacement, RendererError> {
+    let virtual_bounds = bounds.virtual_desktop();
+    let target_bounds = bounds.target();
+    let virtual_size = PlacementDimensions::new(virtual_bounds.width(), virtual_bounds.height())?;
+    let global = calculate_transformed_image_placement(source, virtual_size, mode, transform)?;
+    let global_width = f64::from(virtual_size.width());
+    let global_height = f64::from(virtual_size.height());
+    let target_width = f64::from(target_bounds.width());
+    let target_height = f64::from(target_bounds.height());
+    let corners = global.destination_corners();
+    let mut mapped = [PlacementPoint { x: 0.0, y: 0.0 }; 4];
+    for (destination, source_point) in mapped.iter_mut().zip(corners) {
+        let screen_x = f64::from(virtual_bounds.left()) + f64::from(source_point.x) * global_width;
+        let screen_y = f64::from(virtual_bounds.top()) + f64::from(source_point.y) * global_height;
+        destination.x = finite_f32((screen_x - f64::from(target_bounds.left())) / target_width)?;
+        destination.y = finite_f32((screen_y - f64::from(target_bounds.top())) / target_height)?;
+    }
+    Ok(ImagePlacement::from_corners(mapped, global.source_uv()))
 }
 
 fn calculate_for_dimensions(
@@ -471,10 +510,11 @@ fn finite_f32(value: f64) -> Result<f32, RendererError> {
 mod tests {
     use super::{
         ImageTransform, NormalizedCrop, PlacementDimensions as D, PlacementMode as M,
-        calculate_image_placement as calculate,
+        calculate_image_placement as calculate, calculate_span_image_placement as calculate_span,
         calculate_transformed_image_placement as calculate_transformed,
     };
     use crate::RendererError;
+    use wallpaper_display::{DisplayRect, SpanBounds};
 
     fn d(width: u32, height: u32) -> D {
         D::new(width, height).expect("dimensions should be positive")
@@ -786,5 +826,87 @@ mod tests {
             calculate_transformed(d(1, 1), d(1, 1), M::Stretch, transform),
             Err(RendererError::InvalidTransformParameters)
         ));
+    }
+
+    #[test]
+    fn span_horizontal_negative_origin_keeps_source_coordinates_continuous() {
+        let virtual_bounds = DisplayRect::new(-1_920, 0, 1_920, 1_080).unwrap();
+        let left = SpanBounds::new(
+            virtual_bounds,
+            DisplayRect::new(-1_920, 0, 0, 1_080).unwrap(),
+        )
+        .unwrap();
+        let right = SpanBounds::new(
+            virtual_bounds,
+            DisplayRect::new(0, 0, 1_920, 1_080).unwrap(),
+        )
+        .unwrap();
+        let source = d(3_840, 1_080);
+        let left_placement =
+            calculate_span(source, left, M::Cover, ImageTransform::default()).unwrap();
+        let right_placement =
+            calculate_span(source, right, M::Cover, ImageTransform::default()).unwrap();
+
+        let left_corners = left_placement.destination_corners();
+        let right_corners = right_placement.destination_corners();
+        close(left_corners[0].x(), 0.0);
+        close(left_corners[1].x(), 2.0);
+        close(right_corners[0].x(), -1.0);
+        close(right_corners[1].x(), 1.0);
+        // The shared physical edge is x=1 on the left output and x=0 on the right.
+        close(
+            (1.0 - left_corners[0].x()) / 2.0,
+            (0.0 - right_corners[0].x()) / 2.0,
+        );
+        close(
+            left_placement.source_uv().left(),
+            right_placement.source_uv().left(),
+        );
+        close(
+            left_placement.source_uv().right(),
+            right_placement.source_uv().right(),
+        );
+    }
+
+    #[test]
+    fn span_preserves_global_crop_and_transform_across_mixed_viewports_and_gaps() {
+        let virtual_bounds = DisplayRect::new(-1_280, -720, 2_560, 1_440).unwrap();
+        let upper = SpanBounds::new(
+            virtual_bounds,
+            DisplayRect::new(-1_280, -720, 0, 0).unwrap(),
+        )
+        .unwrap();
+        let lower = SpanBounds::new(
+            virtual_bounds,
+            DisplayRect::new(0, 360, 2_560, 1_440).unwrap(),
+        )
+        .unwrap();
+        let transform = ImageTransform::new(
+            (80.0, -40.0),
+            (1.1, 0.9),
+            7.0,
+            (0.4, 0.6),
+            NormalizedCrop::new(0.1, 0.05, 0.8, 0.9).unwrap(),
+        )
+        .unwrap();
+        let source = d(3_840, 2_160);
+        let upper_placement = calculate_span(source, upper, M::Cover, transform).unwrap();
+        let lower_placement = calculate_span(source, lower, M::Cover, transform).unwrap();
+
+        for placement in [upper_placement, lower_placement] {
+            for point in placement.destination_corners() {
+                assert!(point.x().is_finite() && point.y().is_finite());
+            }
+            close(
+                placement.source_uv().left(),
+                upper_placement.source_uv().left(),
+            );
+            close(
+                placement.source_uv().right(),
+                lower_placement.source_uv().right(),
+            );
+        }
+        assert!(upper_placement.destination().right() > 1.0);
+        assert!(lower_placement.destination().left() < 0.0);
     }
 }
