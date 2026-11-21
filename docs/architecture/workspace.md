@@ -8,10 +8,10 @@ owned by the narrowest crate that can enforce its lifecycle and safety rules.
 
 | Path | Responsibility | Dependencies |
 | --- | --- | --- |
-| `crates/core` | Platform-independent domain types and shared contracts | None |
+| `crates/core` | Platform-independent domain types, editor/playback settings, and performance policy model | None |
 | `crates/desktop` | Windows desktop and shell integration | `core` |
 | `crates/display` | Stable display identities, physical geometry, refresh rate, scale metadata, and validated profile contracts | Windows display APIs, `serde` |
-| `crates/media` | WIC image decoding, Media Foundation video-source decoding, local catalog/import, bounded playback queues, and atomic display-profile storage | `core`, `display` |
+| `crates/media` | WIC image decoding, Media Foundation video-source decoding, local catalog/import, bounded playback queues, and atomic settings/profile storage | `core`, `display` |
 | `crates/renderer` | Video-capable D3D11 device and static-image presentation | `core`, `media` |
 | `crates/ipc` | UI-to-host protocol and named-pipe transport | `core` |
 | `host` | `wallpaper-host.exe` composition root and process lifecycle | `core`, `desktop`, `media`, `renderer`, `ipc` |
@@ -79,8 +79,10 @@ sources and decodes timestamped RGBA8 frames, with software decoding and
 D3D11/DXVA-preferred paths. The bounded frame queue, playback scheduler, and
 D3D11 video-frame presentation, active display enumeration, and atomic
 stable-ID keyed display-profile persistence are implemented. Applying display
-assignments to windows, topology-change recovery, and performance policy remain
-later boundaries in `crates/display` and `crates/performance`.
+assignments to windows and topology-change recovery remain later boundaries in
+`crates/display`. The shared performance policy model is in `crates/core` and
+its validated per-user persistence is in `crates/media`; Windows signal
+detection and policy execution remain future runtime work.
 
 See [`display-management.md`](display-management.md) for stable target IDs,
 physical bounds, refresh rate, DPI scale, profile validation and persistence,
