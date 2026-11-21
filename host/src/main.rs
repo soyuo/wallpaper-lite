@@ -8,9 +8,11 @@ use tracing_subscriber::filter::LevelFilter;
 use wallpaper_desktop::{ShellLifecycleEvent, ShellLifecycleMonitor};
 use wallpaper_media::{DecodedImage, MediaError, decode_image};
 
+mod performance_signals;
 mod playback;
 mod recovery;
 
+use performance_signals::{PerformanceSignalMonitor, PerformanceSignalSnapshot};
 use playback::PlaybackWorker;
 use recovery::DesktopRecoveryWorker;
 
@@ -282,6 +284,30 @@ fn main() -> process::ExitCode {
         }
     };
 
+    let signal_monitor = match PerformanceSignalMonitor::start() {
+        Ok(monitor) => {
+            tracing::info!(
+                component = "performance",
+                event = "signal_monitor_started",
+                "Fullscreen, session, and power signal monitor started"
+            );
+            Some(monitor)
+        }
+        Err(error) => {
+            tracing::warn!(
+                component = "performance",
+                event = "signal_monitor_start_failed",
+                stage = error.stage,
+                error_code = ?error.error_code,
+                "Performance signal monitoring is unavailable; wallpaper rendering will continue"
+            );
+            None
+        }
+    };
+    let mut signal_receiver = signal_monitor
+        .as_ref()
+        .map(PerformanceSignalMonitor::subscribe);
+
     let run_result = runtime.block_on(async {
         let server = wallpaper_ipc::server::run_with_commands_and_events(
             command_sender,
@@ -289,11 +315,46 @@ fn main() -> process::ExitCode {
         );
         tokio::pin!(server);
         let mut lifecycle_poll = tokio::time::interval(Duration::from_millis(100));
+        let mut last_signal_snapshot: Option<PerformanceSignalSnapshot> = None;
 
         loop {
             tokio::select! {
                 result = &mut server => break Ok(result),
-                _ = lifecycle_poll.tick() => loop {
+                _ = lifecycle_poll.tick() => {
+                    if let Some(receiver) = signal_receiver.as_mut() {
+                        match receiver.has_changed() {
+                            Ok(true) => {
+                                let snapshot = receiver.borrow_and_update().clone();
+                                if last_signal_snapshot.as_ref() != Some(&snapshot) {
+                                    tracing::info!(
+                                        component = "performance",
+                                        event = "performance_signals_changed",
+                                        revision = snapshot.revision,
+                                        fullscreen = ?snapshot.fullscreen,
+                                        session_locked = ?snapshot.session_locked,
+                                        on_battery = ?snapshot.on_battery,
+                                        power_state = ?snapshot.power_state,
+                                        fullscreen_error_code = ?snapshot.health.fullscreen_error_code,
+                                        session_error_code = ?snapshot.health.session_error_code,
+                                        power_error_code = ?snapshot.health.power_error_code,
+                                        power_notification_error_code = ?snapshot.health.power_notification_error_code,
+                                        "Performance signal snapshot changed"
+                                    );
+                                    last_signal_snapshot = Some(snapshot);
+                                }
+                            }
+                            Ok(false) => {}
+                            Err(_) => {
+                                tracing::warn!(
+                                    component = "performance",
+                                    event = "signal_monitor_stopped",
+                                    "Performance signal monitor stopped; wallpaper rendering will continue"
+                                );
+                                signal_receiver = None;
+                            }
+                        }
+                    }
+                    loop {
                     match shell_lifecycle_monitor.try_recv() {
                         Ok(ShellLifecycleEvent::ExplorerExited { shell_process_id, host_kind }) => {
                             tracing::warn!(
@@ -349,10 +410,21 @@ fn main() -> process::ExitCode {
                             return Err(());
                         }
                     }
+                    }
                 }
             }
         }
     });
+
+    if let Some(monitor) = signal_monitor {
+        if !monitor.stop() {
+            tracing::warn!(
+                component = "performance",
+                event = "signal_monitor_join_failed",
+                "Performance signal monitor did not stop cleanly"
+            );
+        }
+    }
     if !playback_worker.stop() {
         tracing::error!(
             component = "media",
