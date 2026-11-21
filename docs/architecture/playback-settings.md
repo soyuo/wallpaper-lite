@@ -34,6 +34,6 @@ stages.
 Playback settings contain no media bytes or paths. Loading and saving them
 never modifies the catalog record or original image/video. This document
 describes the persisted settings contract. Host application, looping, timeline
-controls, and rational-frame stepping are described in
-[`video-playback.md`](video-playback.md). Audio output and loop-boundary
-optimization remain separate work.
+controls, rational-frame stepping, audio output, and the non-1x audio policy
+are described in [`video-playback.md`](video-playback.md). Loop-boundary
+optimization remains separate work.

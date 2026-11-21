@@ -1217,6 +1217,11 @@ function App() {
                 )}
                 <label><span>Speed</span><select value={playbackSettingsDraft.speedPercent} onChange={(event) => setPlaybackSettingsDraft({ ...playbackSettingsDraft, speedPercent: Number(event.currentTarget.value) })}>{[25, 50, 75, 100, 125, 150, 200].map((value) => <option key={value} value={value}>{value}%</option>)}</select></label>
                 <label><span>Frame rate limit</span><select value={playbackSettingsDraft.fpsLimit} onChange={(event) => setPlaybackSettingsDraft({ ...playbackSettingsDraft, fpsLimit: Number(event.currentTarget.value) })}>{[15, 24, 30, 60, 120].map((value) => <option key={value} value={value}>{value} FPS</option>)}</select></label>
+                <label><span>Volume ({playbackSettingsDraft.volumePercent}%)</span><input aria-label="Playback volume" type="range" min="0" max="100" step="1" value={playbackSettingsDraft.volumePercent} onChange={(event) => setPlaybackSettingsDraft({ ...playbackSettingsDraft, volumePercent: Number(event.currentTarget.value) })} /></label>
+                <label className="playback-mute"><input type="checkbox" checked={playbackSettingsDraft.muted} onChange={(event) => setPlaybackSettingsDraft({ ...playbackSettingsDraft, muted: event.currentTarget.checked })} /><span>Mute audio</span></label>
+                {!playbackState.audioAvailable && <p>This video has no audio track.</p>}
+                {playbackState.audioAvailable && playbackState.audioEffectiveMuted && playbackSettingsDraft.muted && <p>Audio is muted.</p>}
+                {playbackState.audioAvailable && playbackState.audioEffectiveMuted && !playbackSettingsDraft.muted && playbackState.speedPercent !== 100 && <p>Audio is muted while video runs at non-1x speed.</p>}
                 <button disabled={playbackBusy} onClick={() => void applyPlaybackSettingsDraft()}>Apply playback settings</button>
               </fieldset>
             )}

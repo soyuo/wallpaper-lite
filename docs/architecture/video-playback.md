@@ -44,6 +44,29 @@ the timeline remains continuous. The media clock uses exact rational scaling
 with a wide intermediate; frame PTS values are not rewritten. FPS limiting
 continues to use monotonic wall time and is unchanged by speed updates.
 
+## Audio output and clock
+
+On Windows, the source worker checks whether the selected video contains an
+audio stream. For sources with audio, it opens a Media Foundation Media Engine
+in audio-only mode on the same COM-owned worker. The engine decodes audio and
+outputs it through the system's default audio endpoint; silent videos remain
+valid and do not create an audio engine.
+
+At 100% speed, the Media Engine's 100 ns media position is the video scheduler
+clock. Source-reader frames continue to be selected by their own PTS and are
+synchronized to that audio position. Seek and loop operations reposition both
+the video reader and audio engine. The persisted volume percentage maps to the
+Media Engine's 0.0–1.0 volume range; mute changes the engine mute state without
+pausing it.
+
+At any other supported speed, the audio engine is paused and muted while the
+video scheduler uses its speed-scaled monotonic clock. Playback state reports
+both audio-track availability and whether audio is effectively muted, so the
+UI distinguishes user mute from this speed policy. Replacing a source releases
+its audio engine with the source worker; engine shutdown is explicit on drop.
+Audio codec support follows the installed Media Foundation components; no
+promise is made for codecs unavailable on the system.
+
 ## Loop behavior
 
 `PlaybackSettings` selects `Disabled`, `Full`, or `Segment`. The host accepts a
@@ -53,9 +76,7 @@ milliseconds, must be at least 500 ms, and satisfy
 `0 <= start < end <= duration`. The runtime command returns a typed success or
 error; per-wallpaper persistence is handled separately by
 `PlaybackSettingsStore`.
-The runtime currently consumes loop mode, segment, speed, and FPS fields;
-volume and mute values remain persisted preferences until audio output is
-implemented.
+The runtime consumes loop mode, segment, speed, FPS, volume, and mute fields.
 
 - `Disabled` lets the scheduler reach `Ended`. The recovery worker keeps the
   last presented frame on the desktop after end of stream.
@@ -111,5 +132,7 @@ settings are applied. Playback settings are persisted per wallpaper only after
 the host accepts them; if persistence fails, the UI requests restoration of the
 previous host settings and reports the failure.
 
-The Windows 11 manual verification record is in
-[`../development/phase-5-playback-acceptance.md`](../development/phase-5-playback-acceptance.md).
+Windows 11 timeline verification is in
+[`../development/phase-5-playback-acceptance.md`](../development/phase-5-playback-acceptance.md);
+audio and mute verification is in
+[`../development/phase-5-audio-acceptance.md`](../development/phase-5-audio-acceptance.md).

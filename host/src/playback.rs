@@ -1,6 +1,10 @@
 use std::{
     path::PathBuf,
-    sync::mpsc::{self, Receiver, SyncSender, TryRecvError, TrySendError},
+    sync::{
+        Arc,
+        atomic::{AtomicI64, Ordering},
+        mpsc::{self, Receiver, SyncSender, TryRecvError, TrySendError},
+    },
     thread::{self, JoinHandle},
     time::{Duration, Instant},
 };
@@ -53,6 +57,8 @@ impl PlaybackWorker {
             duration_100ns: None,
             frame_rate_numerator: None,
             frame_rate_denominator: None,
+            audio_available: false,
+            audio_effective_muted: false,
             speed_percent: 100,
             fps_limit: 60,
             loading_video: false,
@@ -171,11 +177,20 @@ struct VideoSourceWorker {
     thread: Option<JoinHandle<()>>,
     generation: u64,
     metadata: Option<VideoMetadata>,
+    audio_available: bool,
+    audio_clock: Arc<AtomicI64>,
 }
 
 enum VideoSourceCommand {
     Play,
     Pause,
+    ConfigureAudio {
+        volume_percent: u8,
+        muted: bool,
+        speed_percent: u16,
+        playing: bool,
+        response: SyncSender<Result<(), ()>>,
+    },
     Seek {
         position_100ns: i64,
         generation: u64,
@@ -184,7 +199,7 @@ enum VideoSourceCommand {
 }
 
 enum VideoSourceEvent {
-    Opened(VideoMetadata),
+    Opened(VideoMetadata, bool),
     Ended { generation: u64 },
     Failed { generation: u64, error: MediaError },
 }
@@ -200,6 +215,9 @@ struct SourceDecodeState {
     generation: u64,
     minimum_pts_100ns: i64,
     pending_frame: Option<VideoFrameMessage>,
+    volume_percent: u8,
+    muted: bool,
+    speed_percent: u16,
 }
 
 impl SourceDecodeState {
@@ -210,6 +228,9 @@ impl SourceDecodeState {
             generation: 0,
             minimum_pts_100ns: 0,
             pending_frame: None,
+            volume_percent: 100,
+            muted: false,
+            speed_percent: 100,
         }
     }
 }
@@ -221,6 +242,8 @@ impl VideoSourceWorker {
         let (stop_sender, stop_receiver) = mpsc::sync_channel(1);
         let (event_sender, event_receiver) = mpsc::channel();
         let (frame_sender, frame_receiver) = mpsc::sync_channel(QUEUE_TARGET);
+        let audio_clock = Arc::new(AtomicI64::new(-1));
+        let worker_audio_clock = Arc::clone(&audio_clock);
         let thread = thread::Builder::new()
             .name("wallpaper-video-source".to_owned())
             .spawn(move || {
@@ -238,8 +261,16 @@ impl VideoSourceWorker {
                         return;
                     }
                 };
+                let audio_available = source.has_audio();
+                if let Err(error) = source.configure_audio(100, false, 100, false) {
+                    let _ = event_sender.send(VideoSourceEvent::Failed {
+                        generation: 0,
+                        error,
+                    });
+                    return;
+                }
                 if event_sender
-                    .send(VideoSourceEvent::Opened(source.metadata()))
+                    .send(VideoSourceEvent::Opened(source.metadata(), audio_available))
                     .is_err()
                 {
                     return;
@@ -247,6 +278,9 @@ impl VideoSourceWorker {
 
                 let mut decode = SourceDecodeState::initial();
                 loop {
+                    if let Some(media_time) = source.audio_time_100ns() {
+                        worker_audio_clock.store(media_time, Ordering::Release);
+                    }
                     match stop_receiver.try_recv() {
                         Ok(()) | Err(TryRecvError::Disconnected) => return,
                         Err(TryRecvError::Empty) => {}
@@ -309,6 +343,9 @@ impl VideoSourceWorker {
                             }
                             Ok(VideoReadEvent::StreamTick { .. }) => {}
                             Ok(VideoReadEvent::EndOfStream) => {
+                                // The reader can reach EOS while the scheduler still has
+                                // buffered frames to present. Keep the audio clock running
+                                // until playback itself reaches its end or loop boundary.
                                 let _ = event_sender.send(VideoSourceEvent::Ended {
                                     generation: decode.generation,
                                 });
@@ -336,6 +373,8 @@ impl VideoSourceWorker {
             thread: Some(thread),
             generation: 0,
             metadata: None,
+            audio_available: false,
+            audio_clock,
         })
     }
 
@@ -346,8 +385,58 @@ impl VideoSourceWorker {
         event_sender: &mpsc::Sender<VideoSourceEvent>,
     ) -> bool {
         match command {
-            VideoSourceCommand::Play => decode.playing = true,
-            VideoSourceCommand::Pause => decode.playing = false,
+            VideoSourceCommand::Play => {
+                if let Err(error) = source.configure_audio(
+                    decode.volume_percent,
+                    decode.muted,
+                    decode.speed_percent,
+                    true,
+                ) {
+                    let _ = event_sender.send(VideoSourceEvent::Failed {
+                        generation: decode.generation,
+                        error,
+                    });
+                    return false;
+                }
+                decode.playing = true;
+            }
+            VideoSourceCommand::Pause => {
+                if let Err(error) = source.configure_audio(
+                    decode.volume_percent,
+                    decode.muted,
+                    decode.speed_percent,
+                    false,
+                ) {
+                    let _ = event_sender.send(VideoSourceEvent::Failed {
+                        generation: decode.generation,
+                        error,
+                    });
+                    return false;
+                }
+                decode.playing = false;
+            }
+            VideoSourceCommand::ConfigureAudio {
+                volume_percent,
+                muted,
+                speed_percent,
+                playing,
+                response,
+            } => {
+                let result = source.configure_audio(volume_percent, muted, speed_percent, playing);
+                if result.is_ok() {
+                    decode.volume_percent = volume_percent;
+                    decode.muted = muted;
+                    decode.speed_percent = speed_percent;
+                }
+                let _ = response.send(result.as_ref().map(|_| ()).map_err(|_| ()));
+                if let Err(error) = result {
+                    let _ = event_sender.send(VideoSourceEvent::Failed {
+                        generation: decode.generation,
+                        error,
+                    });
+                    return false;
+                }
+            }
             VideoSourceCommand::Seek {
                 position_100ns,
                 generation: requested_generation,
@@ -377,8 +466,9 @@ impl VideoSourceWorker {
 
     fn poll_open(&mut self) -> Result<Option<VideoMetadata>, MediaError> {
         match self.event_receiver.try_recv() {
-            Ok(VideoSourceEvent::Opened(metadata)) => {
+            Ok(VideoSourceEvent::Opened(metadata, audio_available)) => {
                 self.metadata = Some(metadata);
+                self.audio_available = audio_available;
                 Ok(Some(metadata))
             }
             Ok(VideoSourceEvent::Failed { error, .. }) => Err(error),
@@ -407,6 +497,28 @@ impl VideoSourceWorker {
             .map_err(|_| ())
     }
 
+    fn configure_audio(
+        &self,
+        volume_percent: u8,
+        muted: bool,
+        speed_percent: u16,
+        playing: bool,
+    ) -> Result<(), ()> {
+        let (response, result) = mpsc::sync_channel(1);
+        self.command_sender
+            .try_send(VideoSourceCommand::ConfigureAudio {
+                volume_percent,
+                muted,
+                speed_percent,
+                playing,
+                response,
+            })
+            .map_err(|_| ())?;
+        result
+            .recv_timeout(Duration::from_secs(1))
+            .map_err(|_| ())?
+    }
+
     fn seek(&mut self, position_100ns: i64) -> Result<(), ()> {
         let generation = self.generation.wrapping_add(1);
         let (response, result) = mpsc::sync_channel(1);
@@ -425,6 +537,11 @@ impl VideoSourceWorker {
 
     fn metadata(&self) -> Option<VideoMetadata> {
         self.metadata
+    }
+
+    fn audio_time_100ns(&self) -> Option<i64> {
+        let value = self.audio_clock.load(Ordering::Acquire);
+        (self.audio_available && value >= 0).then_some(value)
     }
 }
 
@@ -687,6 +804,20 @@ impl PlaybackController {
                     .map_err(|_| PlaybackCommandErrorCode::UnsupportedSpeed)?;
                 self.scheduler
                     .set_speed(speed, now)
+                    .map_err(|_| PlaybackCommandErrorCode::PlaybackFailed)?;
+                let (volume, muted) = self
+                    .playback_settings
+                    .as_ref()
+                    .map_or((100, false), |s| (s.volume_percent(), s.muted()));
+                self.source
+                    .as_ref()
+                    .expect("source checked above")
+                    .configure_audio(
+                        volume,
+                        muted,
+                        percent,
+                        self.scheduler.state() == PlaybackState::Playing,
+                    )
                     .map_err(|_| PlaybackCommandErrorCode::PlaybackFailed)
             }),
             Command::SetFps { frames_per_second } => self.require_source().and_then(|()| {
@@ -791,6 +922,18 @@ impl PlaybackController {
         if self.scheduler.set_speed(speed, now).is_err() {
             return self.error(PlaybackCommandErrorCode::PlaybackSettingsApplyFailed);
         }
+        if self.source.as_ref().is_none_or(|source| {
+            source
+                .configure_audio(
+                    settings.volume_percent(),
+                    settings.muted(),
+                    settings.speed_percent(),
+                    self.scheduler.state() == PlaybackState::Playing,
+                )
+                .is_err()
+        }) {
+            return self.error(PlaybackCommandErrorCode::PlaybackSettingsApplyFailed);
+        }
         self.scheduler.set_fps_limit(fps_limit);
         self.playback_settings = Some(settings);
         self.publish_event();
@@ -867,7 +1010,7 @@ impl PlaybackController {
         if let Some(source) = self.source.as_mut() {
             while let Ok(event) = source.try_event() {
                 match event {
-                    VideoSourceEvent::Opened(_) => {}
+                    VideoSourceEvent::Opened(_, _) => {}
                     VideoSourceEvent::Ended { generation } => {
                         if generation == source.generation {
                             self.eos_pending = true;
@@ -909,6 +1052,23 @@ impl PlaybackController {
         }
 
         let now = self.now_100ns();
+        if self.scheduler.state() == PlaybackState::Playing
+            && self.scheduler.speed().percent() == 100
+            && let Some(audio_time) = self
+                .source
+                .as_ref()
+                .and_then(VideoSourceWorker::audio_time_100ns)
+            && self
+                .scheduler
+                .synchronize_media_time(audio_time, now)
+                .is_err()
+        {
+            self.fail_playback(
+                "audio_clock_rejected",
+                PlaybackCommandErrorCode::PlaybackFailed,
+            );
+            return;
+        }
         if self.scheduler.state() == PlaybackState::Playing {
             match self.current_loop_target(now) {
                 Ok(Some(target)) => {
@@ -1066,6 +1226,15 @@ impl PlaybackController {
     fn snapshot(&mut self) -> ResponseResult {
         self.sequence = self.sequence.wrapping_add(1);
         let now = self.now_100ns();
+        if self.scheduler.state() == PlaybackState::Playing
+            && self.scheduler.speed().percent() == 100
+            && let Some(audio_time) = self
+                .source
+                .as_ref()
+                .and_then(VideoSourceWorker::audio_time_100ns)
+        {
+            let _ = self.scheduler.synchronize_media_time(audio_time, now);
+        }
         let media_time = self.scheduler.media_time_100ns(now).unwrap_or(0);
         let state = match self.scheduler.state() {
             PlaybackState::Stopped => IpcPlaybackState::Stopped,
@@ -1090,6 +1259,18 @@ impl PlaybackController {
                 .source
                 .as_ref()
                 .and_then(|source| source.metadata().map(VideoMetadata::frame_rate_denominator)),
+            audio_available: self
+                .source
+                .as_ref()
+                .is_some_and(|source| source.audio_available),
+            audio_effective_muted: self.source.as_ref().is_some_and(|source| {
+                source.audio_available
+                    && (self.scheduler.speed().percent() != 100
+                        || self
+                            .playback_settings
+                            .as_ref()
+                            .is_some_and(PlaybackSettings::muted))
+            }),
             speed_percent: self.scheduler.speed().percent(),
             fps_limit: self.scheduler.fps_limit().frames_per_second(),
             loading_video: self.loading_video,
@@ -1203,7 +1384,7 @@ mod tests {
                 Ok(VideoSourceEvent::Failed { error, .. }) => {
                     panic!("source decoding failed unexpectedly: {error:?}")
                 }
-                Ok(VideoSourceEvent::Opened(_)) | Err(TryRecvError::Empty) => {}
+                Ok(VideoSourceEvent::Opened(_, _)) | Err(TryRecvError::Empty) => {}
                 Err(TryRecvError::Disconnected) => {
                     panic!("source worker stopped before a stop request")
                 }
@@ -1268,6 +1449,8 @@ mod tests {
             duration_100ns: None,
             frame_rate_numerator: None,
             frame_rate_denominator: None,
+            audio_available: false,
+            audio_effective_muted: false,
             speed_percent: 100,
             fps_limit: 60,
             loading_video: false,
@@ -1428,7 +1611,7 @@ mod tests {
                 Ok(VideoSourceEvent::Failed { error, .. }) => {
                     panic!("source decoding failed unexpectedly: {error:?}")
                 }
-                Ok(VideoSourceEvent::Opened(_) | VideoSourceEvent::Ended { .. })
+                Ok(VideoSourceEvent::Opened(_, _) | VideoSourceEvent::Ended { .. })
                 | Err(TryRecvError::Empty) => {}
                 Err(TryRecvError::Disconnected) => {
                     panic!("source worker stopped before reporting end-of-stream")

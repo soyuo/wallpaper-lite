@@ -4,6 +4,8 @@ use std::path::Path;
 
 use wallpaper_core::error::{AppError, ErrorCode};
 
+#[cfg(target_os = "windows")]
+mod audio_engine;
 mod editor_metadata;
 mod editor_settings;
 mod frame_queue;
@@ -100,6 +102,8 @@ pub enum MediaError {
     InvalidVideoSample,
     InvalidVideoTimestamp,
     VideoFrameAllocationFailed,
+    AudioPlaybackInitializationFailed { hresult: i32 },
+    AudioPlaybackControlFailed { hresult: i32 },
     ComInitialization { hresult: i32 },
     FactoryCreation { hresult: i32 },
     DecoderCreation { hresult: i32 },
@@ -131,6 +135,7 @@ impl MediaError {
             | Self::UnsupportedVideoFormat
             | Self::UnsupportedVideoContainer
             | Self::VideoMetadataUnavailable { .. }
+            | Self::AudioPlaybackInitializationFailed { .. }
             | Self::InvalidVideoMetadata
             | Self::InvalidVideoPath => AppError::new(
                 ErrorCode::VideoSourceOpenFailed,
@@ -148,6 +153,10 @@ impl MediaError {
             | Self::VideoFrameAllocationFailed => AppError::new(
                 ErrorCode::VideoDecodeFailed,
                 "The video frame could not be decoded.",
+            ),
+            Self::AudioPlaybackControlFailed { .. } => AppError::new(
+                ErrorCode::VideoDecodeFailed,
+                "Video audio playback could not be controlled.",
             ),
             _ => AppError::new(
                 ErrorCode::ImageDecodeFailed,
@@ -191,6 +200,14 @@ impl MediaError {
             Self::InvalidVideoPath => "stage=video_open reason=invalid_path".into(),
             Self::VideoSampleDecodeFailed { hresult } => format!(
                 "stage=video_decode reason=sample_decode_failed hresult=0x{:08X}",
+                hresult as u32
+            ),
+            Self::AudioPlaybackInitializationFailed { hresult } => format!(
+                "stage=audio_open reason=media_engine_initialization_failed hresult=0x{:08X}",
+                hresult as u32
+            ),
+            Self::AudioPlaybackControlFailed { hresult } => format!(
+                "stage=audio_playback reason=media_engine_control_failed hresult=0x{:08X}",
                 hresult as u32
             ),
             Self::VideoSampleBufferAccess { hresult } => format!(
@@ -386,6 +403,89 @@ impl VideoSource {
 
     pub const fn decoder_mode(&self) -> VideoDecoderMode {
         self.decoder_mode
+    }
+
+    pub fn has_audio(&self) -> bool {
+        #[cfg(target_os = "windows")]
+        {
+            self._platform
+                .audio_engine
+                .as_ref()
+                .is_some_and(|engine| engine.has_audio())
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            false
+        }
+    }
+
+    pub fn audio_time_100ns(&self) -> Option<i64> {
+        #[cfg(target_os = "windows")]
+        {
+            self._platform.audio_engine.as_ref()?.time_100ns()
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            None
+        }
+    }
+
+    /// Current Media Engine audio volume in the range 0.0–1.0, if this source has audio.
+    pub fn audio_volume(&self) -> Option<f64> {
+        #[cfg(target_os = "windows")]
+        {
+            self._platform
+                .audio_engine
+                .as_ref()
+                .filter(|engine| engine.has_audio())
+                .map(|engine| engine.volume())
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            None
+        }
+    }
+
+    /// Effective Media Engine mute state, if this source has audio.
+    pub fn audio_is_muted(&self) -> Option<bool> {
+        #[cfg(target_os = "windows")]
+        {
+            self._platform
+                .audio_engine
+                .as_ref()
+                .filter(|engine| engine.has_audio())
+                .map(|engine| engine.is_muted())
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            None
+        }
+    }
+
+    pub fn configure_audio(
+        &mut self,
+        volume_percent: u8,
+        muted: bool,
+        speed_percent: u16,
+        playing: bool,
+    ) -> Result<(), MediaError> {
+        #[cfg(target_os = "windows")]
+        {
+            let Some(engine) = self._platform.audio_engine.as_ref() else {
+                return Ok(());
+            };
+            engine.configure(volume_percent, muted || speed_percent != 100)?;
+            if speed_percent == 100 && playing {
+                engine.play()
+            } else {
+                engine.pause()
+            }
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = (volume_percent, muted, speed_percent, playing);
+            Err(MediaError::UnsupportedVideoPlatform)
+        }
     }
 
     /// Reads until the next frame, stream tick, or end-of-stream marker.

@@ -35,6 +35,7 @@ use windows::{
     core::{GUID, Interface, PCWSTR},
 };
 
+use super::audio_engine::AudioEngine;
 use crate::{
     DecodedVideoFrame, MAX_IMAGE_DIMENSION, MAX_IMAGE_PIXELS, MediaError, VideoDecoderMode,
     VideoMetadata, VideoPixelFormat, VideoReadEvent, VideoStreamSelection,
@@ -109,6 +110,7 @@ impl Drop for PropVariantOwner {
 /// Keep the source reader alive until before its Media Foundation runtime is shut down.
 pub(super) struct VideoSourceHandle {
     reader: IMFSourceReader,
+    pub(super) audio_engine: Option<AudioEngine>,
     _device_manager: Option<IMFDXGIDeviceManager>,
     d3d11_device: Option<ID3D11Device>,
     _runtime: MediaFoundationRuntime,
@@ -162,6 +164,13 @@ pub(super) fn open(
         hresult: 0x80004005u32 as i32,
     })?;
     validate_mp4_container(&reader)?;
+    let has_audio_stream = unsafe {
+        reader.GetNativeMediaType(
+            windows::Win32::Media::MediaFoundation::MF_SOURCE_READER_FIRST_AUDIO_STREAM.0 as u32,
+            0,
+        )
+    }
+    .is_ok();
     let first_video = MF_SOURCE_READER_FIRST_VIDEO_STREAM.0 as u32;
     let mut media_type = select_h264_video_stream(&reader)?;
 
@@ -247,10 +256,16 @@ pub(super) fn open(
         duration_100ns,
         selected_stream: VideoStreamSelection::FirstVideo,
     };
+    let audio_engine = if has_audio_stream {
+        Some(AudioEngine::open(path)?)
+    } else {
+        None
+    };
 
     Ok((
         VideoSourceHandle {
             reader,
+            audio_engine,
             _device_manager: device_manager,
             d3d11_device: retained_device,
             _runtime: runtime,
@@ -429,6 +444,9 @@ pub(super) fn read_next(handle: &mut VideoSourceHandle) -> Result<VideoReadEvent
 }
 
 pub(super) fn seek(handle: &mut VideoSourceHandle, position_100ns: i64) -> Result<(), MediaError> {
+    if let Some(audio_engine) = handle.audio_engine.as_ref() {
+        audio_engine.seek(position_100ns)?;
+    }
     let position = PROPVARIANT::from(position_100ns);
     let time_format = GUID::zeroed();
     unsafe {
