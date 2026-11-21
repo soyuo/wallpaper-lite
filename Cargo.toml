@@ -3,6 +3,7 @@ resolver = "3"
 members = [
     "crates/core",
     "crates/desktop",
+    "crates/display",
     "crates/media",
     "crates/renderer",
     "crates/ipc",
@@ -19,6 +20,7 @@ rust-version = "1.85"
 [workspace.dependencies]
 wallpaper-core = { path = "crates/core" }
 wallpaper-desktop = { path = "crates/desktop" }
+wallpaper-display = { path = "crates/display" }
 wallpaper-media = { path = "crates/media" }
 wallpaper-renderer = { path = "crates/renderer" }
 wallpaper-ipc = { path = "crates/ipc" }
@@ -38,6 +40,7 @@ windows = { version = "=0.61.3", features = [
     "Win32_Graphics_Dxgi",
     "Win32_Graphics_Dxgi_Common",
     "Win32_Graphics_Gdi",
+    "Win32_Devices_Display",
     "Win32_Graphics_Imaging",
     "Win32_Media_MediaFoundation",
     "Win32_System_LibraryLoader",
@@ -47,6 +50,8 @@ windows = { version = "=0.61.3", features = [
     "Win32_System_Variant",
     "Win32_Storage_FileSystem",
     "Win32_UI_HiDpi",
+    "Win32_UI_Shell",
+    "Win32_UI_Shell_Common",
     "Win32_UI_WindowsAndMessaging",
 ] }
 windows-core = "=0.61.2"

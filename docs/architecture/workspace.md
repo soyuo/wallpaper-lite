@@ -10,6 +10,7 @@ owned by the narrowest crate that can enforce its lifecycle and safety rules.
 | --- | --- | --- |
 | `crates/core` | Platform-independent domain types and shared contracts | None |
 | `crates/desktop` | Windows desktop and shell integration | `core` |
+| `crates/display` | Stable display identities, physical geometry, refresh rate, and scale metadata | Windows display APIs, `serde` |
 | `crates/media` | WIC image decoding, Media Foundation video-source decoding, local catalog/import, and bounded playback queues | `core` |
 | `crates/renderer` | Video-capable D3D11 device and static-image presentation | `core`, `media` |
 | `crates/ipc` | UI-to-host protocol and named-pipe transport | `core` |
@@ -76,9 +77,13 @@ Component (WIC) for PNG, JPEG, and BMP. Image placement, transform, and color
 adjustments are implemented in `crates/renderer`. Media Foundation opens H.264
 sources and decodes timestamped RGBA8 frames, with software decoding and
 D3D11/DXVA-preferred paths. The bounded frame queue, playback scheduler, and
-D3D11 video-frame presentation are implemented. Display topology and
-performance policy remain later boundaries in `crates/display` and
-`crates/performance`.
+D3D11 video-frame presentation and active display enumeration are implemented.
+Display assignments, topology-change recovery, and performance policy remain
+later boundaries in `crates/display` and `crates/performance`.
+
+See [`display-management.md`](display-management.md) for stable target IDs,
+physical bounds, refresh rate, DPI scale, and the current Windows enumeration
+limit.
 
 See [`media-decoding.md`](media-decoding.md) for the still-image pixel contract,
 resource limits, and WIC behavior. See [`video-source.md`](video-source.md)
