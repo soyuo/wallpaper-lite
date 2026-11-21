@@ -117,6 +117,51 @@ export interface PlaybackPanel {
   settings: PlaybackSettings | null;
 }
 
+export type DisplayPresentationMode = "independent" | "duplicate" | "span";
+
+export interface DisplayProfile {
+  displayId: string;
+  wallpaperId: number;
+  presentationMode: DisplayPresentationMode;
+  fpsOverride: number | null;
+}
+
+export interface DisplayTargetFailure {
+  deviceName: string;
+  stage: string;
+}
+
+export interface DisplayProfileApplyOutcome {
+  applied: boolean;
+  failedTargets: DisplayTargetFailure[];
+}
+
+export interface DisplayManagerDisplay {
+  id: string;
+  name: string;
+  deviceName: string;
+  width: number;
+  height: number;
+  dpiScalePercent: number;
+  effectiveDpi: number;
+  refreshRate: string | null;
+  isPrimary: boolean;
+}
+
+export interface DisplayManagerWallpaper {
+  id: number;
+  name: string;
+  mediaKind: MediaKind;
+  availability: Availability;
+}
+
+export interface DisplayManagerSnapshot {
+  displays: DisplayManagerDisplay[];
+  profiles: DisplayProfile[];
+  wallpapers: DisplayManagerWallpaper[];
+  targetFailures: DisplayTargetFailure[];
+}
+
 export type AppErrorCode =
   | "host_unavailable"
   | "timeout"
@@ -139,6 +184,11 @@ export type AppErrorCode =
   | "invalid_playback_settings"
   | "playback_control_failed"
   | "playback_settings_rollback_failed"
+  | "display_enumeration_failed"
+  | "display_profiles_storage_failed"
+  | "invalid_display_profiles"
+  | "display_profiles_apply_failed"
+  | "display_profiles_rollback_failed"
   | "internal";
 
 interface AppErrorPayload {
@@ -180,6 +230,8 @@ export interface HostAdapter {
   seekPlayback(positionMs: number): Promise<PlaybackState>;
   seekPlayback100ns(position100ns: number): Promise<PlaybackState>;
   applyPlaybackSettings(id: number, settings: PlaybackSettings): Promise<PlaybackPanel>;
+  displayManagerSnapshot(): Promise<DisplayManagerSnapshot>;
+  applyDisplayProfiles(profiles: DisplayProfile[]): Promise<DisplayProfileApplyOutcome>;
 }
 
 function isAppErrorPayload(value: unknown): value is AppErrorPayload {
@@ -229,6 +281,11 @@ function isAppErrorCode(value: unknown): value is AppErrorCode {
     value === "invalid_playback_settings" ||
     value === "playback_control_failed" ||
     value === "playback_settings_rollback_failed" ||
+    value === "display_enumeration_failed" ||
+    value === "display_profiles_storage_failed" ||
+    value === "invalid_display_profiles" ||
+    value === "display_profiles_apply_failed" ||
+    value === "display_profiles_rollback_failed" ||
     value === "internal"
   );
 }
@@ -316,5 +373,11 @@ export const hostAdapter: HostAdapter = {
   },
   applyPlaybackSettings(id, settings) {
     return invokeAppCommand<PlaybackPanel>("apply_playback_settings", { wallpaperId: id, settings });
+  },
+  displayManagerSnapshot() {
+    return invokeAppCommand<DisplayManagerSnapshot>("display_manager_snapshot");
+  },
+  applyDisplayProfiles(profiles) {
+    return invokeAppCommand<DisplayProfileApplyOutcome>("apply_display_profiles", { profiles });
   },
 };

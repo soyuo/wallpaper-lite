@@ -30,6 +30,11 @@ pub enum ErrorCode {
     InvalidPlaybackSettings,
     PlaybackControlFailed,
     PlaybackSettingsRollbackFailed,
+    DisplayEnumerationFailed,
+    DisplayProfilesStorageFailed,
+    InvalidDisplayProfiles,
+    DisplayProfilesApplyFailed,
+    DisplayProfilesRollbackFailed,
     DesktopHostUnavailable,
     Internal,
 }
@@ -63,6 +68,11 @@ impl ErrorCode {
             Self::InvalidPlaybackSettings => "invalid_playback_settings",
             Self::PlaybackControlFailed => "playback_control_failed",
             Self::PlaybackSettingsRollbackFailed => "playback_settings_rollback_failed",
+            Self::DisplayEnumerationFailed => "display_enumeration_failed",
+            Self::DisplayProfilesStorageFailed => "display_profiles_storage_failed",
+            Self::InvalidDisplayProfiles => "invalid_display_profiles",
+            Self::DisplayProfilesApplyFailed => "display_profiles_apply_failed",
+            Self::DisplayProfilesRollbackFailed => "display_profiles_rollback_failed",
             Self::DesktopHostUnavailable => "desktop_host_unavailable",
             Self::Internal => "internal",
         }

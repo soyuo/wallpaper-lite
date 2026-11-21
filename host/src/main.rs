@@ -6,6 +6,7 @@ use tracing_appender::{
 };
 use tracing_subscriber::filter::LevelFilter;
 use wallpaper_desktop::{ShellLifecycleEvent, ShellLifecycleMonitor};
+use wallpaper_ipc::protocol::DisplayTargetFailure;
 use wallpaper_media::{DecodedImage, MediaError, decode_image};
 
 mod independent_displays;
@@ -253,8 +254,15 @@ fn main() -> process::ExitCode {
         "Desktop host recovery worker started"
     );
     let (command_sender, command_receiver) = wallpaper_ipc::protocol::playback_command_channel();
+    let (display_refresh_sender, mut display_refresh_receiver) =
+        tokio::sync::mpsc::unbounded_channel();
     let (mut playback_worker, mut playback_events) =
-        match PlaybackWorker::start(command_receiver, media_device, &desktop_recovery) {
+        match PlaybackWorker::start_with_display_refresh(
+            command_receiver,
+            media_device,
+            &desktop_recovery,
+            Some(display_refresh_sender),
+        ) {
             Ok(worker) => worker,
             Err(error) => {
                 tracing::error!(
@@ -418,6 +426,135 @@ fn main() -> process::ExitCode {
         loop {
             tokio::select! {
                 result = &mut server => break Ok(result),
+                request = display_refresh_receiver.recv() => {
+                    if let Some(request) = request {
+                        match independent_displays::try_load_display_assignments() {
+                            Ok(assignments) => {
+                                let mut failures = Vec::new();
+                                let geometry_completion = if let Some(bounds) = assignments.primary_bounds {
+                                    let span_bounds = assignments.profiles.iter()
+                                        .find(|assignment| assignment.display.is_primary())
+                                        .and_then(|assignment| assignment.span_bounds);
+                                    match desktop_recovery.request_display_geometry(bounds, span_bounds) {
+                                        Ok(completion) => Some(completion),
+                                        Err(_) => {
+                                            failures.push(DisplayTargetFailure {
+                                                device_name: "primary display".to_owned(),
+                                                stage: "geometry_queue".to_owned(),
+                                            });
+                                            None
+                                        }
+                                    }
+                                } else {
+                                    None
+                                };
+                                let primary_completion = if let Some(primary) = assignments.profiles.iter()
+                                    .find(|assignment| assignment.display.is_primary())
+                                {
+                                    let device_name = primary.display.device_name().to_owned();
+                                    match primary_assignment_reconciler.reconcile_with_result(primary.clone()) {
+                                        Ok(receiver) => Some((device_name, receiver)),
+                                        Err(()) => {
+                                            failures.push(DisplayTargetFailure {
+                                                device_name,
+                                                stage: "primary_worker_unavailable".to_owned(),
+                                            });
+                                            None
+                                        }
+                                    }
+                                } else {
+                                    None
+                                };
+                                let secondary_completion = match display_targets.reconcile_with_result(&assignments) {
+                                    Ok(receiver) => Some(receiver),
+                                    Err(()) => {
+                                        failures.push(DisplayTargetFailure {
+                                            device_name: "secondary displays".to_owned(),
+                                            stage: "display_manager_unavailable".to_owned(),
+                                        });
+                                        None
+                                    }
+                                };
+                                let response = request.response;
+                                tokio::spawn(async move {
+                                    let geometry = async move {
+                                        if let Some(completion) = geometry_completion {
+                                            tokio::task::spawn_blocking(move || {
+                                                completion.recv_timeout(Duration::from_millis(1_250))
+                                            })
+                                            .await
+                                            .ok()
+                                            .and_then(Result::ok)
+                                            .and_then(Result::ok)
+                                            .is_none()
+                                        } else {
+                                            false
+                                        }
+                                    };
+                                    let primary = async move {
+                                        match primary_completion {
+                                            Some((device_name, completion)) => {
+                                                let result = completion.await;
+                                                Some((device_name, result))
+                                            }
+                                            None => None,
+                                        }
+                                    };
+                                    let secondary = async move {
+                                        match secondary_completion {
+                                            Some(completion) => Some(completion.await),
+                                            None => None,
+                                        }
+                                    };
+                                    let (geometry_failed, primary_result, secondary_result) =
+                                        tokio::join!(geometry, primary, secondary);
+                                    if geometry_failed {
+                                        failures.push(DisplayTargetFailure {
+                                            device_name: "primary display".to_owned(),
+                                            stage: "geometry_apply_failed".to_owned(),
+                                        });
+                                    }
+                                    if let Some((device_name, result)) = primary_result {
+                                        match result {
+                                            Ok(Ok(())) => {}
+                                            Ok(Err(stage)) => failures.push(DisplayTargetFailure {
+                                                device_name,
+                                                stage: stage.to_owned(),
+                                            }),
+                                            Err(_) => failures.push(DisplayTargetFailure {
+                                                device_name,
+                                                stage: "primary_worker_stopped".to_owned(),
+                                            }),
+                                        }
+                                    }
+                                    if let Some(result) = secondary_result {
+                                        match result {
+                                            Ok(target_failures) => failures.extend(target_failures),
+                                            Err(_) => failures.push(DisplayTargetFailure {
+                                                device_name: "secondary displays".to_owned(),
+                                                stage: "display_manager_stopped".to_owned(),
+                                            }),
+                                        }
+                                    }
+                                    failures.truncate(16);
+                                    let _ = response.try_send(failures);
+                                });
+                            }
+                            Err(stage) => {
+                                tracing::warn!(
+                                    component = "display",
+                                    event = "display_profile_apply_failed",
+                                    stage,
+                                    "Could not load display profiles for the requested apply"
+                                );
+                                let _ = request.response.try_send(vec![DisplayTargetFailure {
+                                    device_name: "display profiles".to_owned(),
+                                    stage: stage.to_owned(),
+                                }]);
+                            }
+                        }
+                    }
+                }
                 _ = lifecycle_poll.tick() => {
                     if let Some(receiver) = display_change_receiver.as_mut() {
                         match receiver.has_changed() {

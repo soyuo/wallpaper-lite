@@ -3,12 +3,15 @@ import { open } from "@tauri-apps/plugin-dialog";
 
 import "./App.css";
 import { EditorHistory, resolveEditorShortcut } from "./editor-history.mjs";
+import { applyDisplayProfiles, buildDisplayProfiles, makeDisplayEdits } from "./display-manager.mjs";
 import {
   HostAdapterError,
   hostAdapter,
   type Availability,
   type EditorMonitor,
   type EditorPreview,
+  type DisplayManagerSnapshot,
+  type DisplayPresentationMode,
   type ImportFailure,
   type ImportResult,
   type LibraryEntry,
@@ -267,6 +270,12 @@ function LibraryCard({
 function App() {
   const [checkingHost, setCheckingHost] = useState(false);
   const [hostStatus, setHostStatus] = useState("Host connection has not been checked.");
+  const [displaySnapshot, setDisplaySnapshot] = useState<DisplayManagerSnapshot | null>(null);
+  const [displayMode, setDisplayMode] = useState<DisplayPresentationMode>("independent");
+  const [displayEdits, setDisplayEdits] = useState<Record<string, { wallpaperId: number | ""; fpsOverride: string }>>({});
+  const [displayStatus, setDisplayStatus] = useState("Display assignments have not been loaded.");
+  const [displayLoading, setDisplayLoading] = useState(false);
+  const [displaySaving, setDisplaySaving] = useState(false);
   const [playbackPanel, setPlaybackPanel] = useState<PlaybackPanel | null>(null);
   const [playbackSettingsDraft, setPlaybackSettingsDraft] = useState<PlaybackSettings | null>(null);
   const [playbackMessage, setPlaybackMessage] = useState("");
@@ -387,6 +396,10 @@ function App() {
   }, []);
 
   useEffect(() => {
+    void refreshDisplayManager();
+  }, []);
+
+  useEffect(() => {
     function handleEditorShortcut(event: KeyboardEvent) {
       if (!editorEntry || !editorSettingsDraft) return;
       if (event.key === "Escape") {
@@ -459,6 +472,41 @@ function App() {
     } finally {
       setCheckingHost(false);
     }
+  }
+
+  async function refreshDisplayManager() {
+    setDisplayLoading(true);
+    try {
+      const snapshot = await hostAdapter.displayManagerSnapshot();
+      const state = makeDisplayEdits(snapshot);
+      setDisplaySnapshot(snapshot);
+      setDisplayMode(state.mode);
+      setDisplayEdits(state.edits);
+      const loadedMessage = `Loaded ${snapshot.displays.length} connected display${snapshot.displays.length === 1 ? "" : "s"}.`;
+      setDisplayStatus(snapshot.targetFailures.length === 0
+        ? loadedMessage
+        : `${loadedMessage} ${snapshot.targetFailures.length} target${snapshot.targetFailures.length === 1 ? "" : "s"} could not apply their assignments.`);
+    } catch (error) {
+      setDisplayStatus(error instanceof Error ? error.message : "Display information could not be loaded.");
+    } finally {
+      setDisplayLoading(false);
+    }
+  }
+
+  async function saveDisplayAssignments() {
+    if (!displaySnapshot) return;
+    let profiles;
+    try {
+      profiles = buildDisplayProfiles(displaySnapshot, displayMode, displayEdits);
+    } catch (error) {
+      setDisplayStatus(error instanceof Error ? error.message : "Display assignments are invalid.");
+      return;
+    }
+    setDisplaySaving(true);
+    const result = await applyDisplayProfiles(profiles, (candidate) => hostAdapter.applyDisplayProfiles(candidate));
+    setDisplayStatus(result.message);
+    if (result.ok) await refreshDisplayManager();
+    setDisplaySaving(false);
   }
 
   async function startPlayback(entry: LibraryEntry) {
@@ -1096,6 +1144,135 @@ function App() {
         {checkingHost ? "Checking..." : "Check wallpaper host"}
       </button>
       <p aria-live="polite" className="host-status" role="status">{hostStatus}</p>
+
+      <section className="display-manager" aria-labelledby="display-manager-title">
+        <div className="display-manager-heading">
+          <div>
+            <h2 id="display-manager-title">Displays</h2>
+            <p>Assign wallpapers and per-display frame-rate limits.</p>
+          </div>
+          <button disabled={displayLoading || displaySaving} onClick={() => void refreshDisplayManager()}>
+            {displayLoading ? "Refreshing..." : "Refresh displays"}
+          </button>
+        </div>
+        {displaySnapshot ? (
+          <>
+            <label className="display-mode-control">
+              Presentation mode
+              <select
+                aria-label="Presentation mode"
+                disabled={displaySaving}
+                value={displayMode}
+                onChange={(event) => setDisplayMode(event.currentTarget.value as DisplayPresentationMode)}
+              >
+                <option value="independent">Independent</option>
+                <option value="duplicate">Duplicate</option>
+                <option value="span">Span</option>
+              </select>
+            </label>
+            <div className="display-manager-list">
+              {displaySnapshot.displays.map((display) => {
+                const edit = displayEdits[display.id] ?? { wallpaperId: "", fpsOverride: "" };
+                const savedProfile = displaySnapshot.profiles.find((profile) => profile.displayId === display.id);
+                const assignedWallpaper = savedProfile
+                  ? displaySnapshot.wallpapers.find((wallpaper) => wallpaper.id === savedProfile.wallpaperId)
+                  : null;
+                const showWallpaper = displayMode === "independent" || display.isPrimary;
+                return (
+                  <article className="display-manager-card" key={display.id}>
+                    <h3>{display.name}{display.isPrimary ? " · Primary" : ""}</h3>
+                    <code className="display-stable-id" title={display.id}>Stable ID: {display.id}</code>
+                    <p>{display.deviceName} · {display.width} × {display.height} · {display.refreshRate ?? "Refresh rate unavailable"} · {display.dpiScalePercent}% scale ({display.effectiveDpi.toFixed(1)} DPI)</p>
+                    <p className={savedProfile && assignedWallpaper?.availability !== "available" ? "display-assignment-warning" : "display-assignment-state"}>
+                      {savedProfile
+                        ? assignedWallpaper?.availability === "available"
+                          ? `Connected · ${assignedWallpaper.name} assigned`
+                          : "Connected · assigned wallpaper is missing from the library or unavailable"
+                        : "Connected · no saved assignment"}
+                    </p>
+                    {showWallpaper && (
+                      <label>
+                        {displayMode === "independent" ? "Wallpaper" : "Shared wallpaper"}
+                        <select
+                          aria-label={`${display.name} wallpaper`}
+                          disabled={displaySaving}
+                          value={edit.wallpaperId}
+                          onChange={(event) => {
+                            const value = event.currentTarget.value;
+                            setDisplayEdits((current) => ({
+                              ...current,
+                              [display.id]: {
+                                ...(current[display.id] ?? edit),
+                                wallpaperId: value === "" ? "" : Number(value),
+                              },
+                            }));
+                          }}
+                        >
+                          <option value="">Choose wallpaper</option>
+                          {displaySnapshot.wallpapers.filter((wallpaper) => wallpaper.availability === "available").map((wallpaper) => (
+                            <option key={wallpaper.id} value={wallpaper.id}>{wallpaper.name} · {wallpaper.mediaKind}</option>
+                          ))}
+                        </select>
+                      </label>
+                    )}
+                    <label>
+                      FPS override
+                      <input
+                        aria-label={`${display.name} FPS override`}
+                        type="number"
+                        min={1}
+                        max={120}
+                        step={1}
+                        placeholder="Default"
+                        disabled={displaySaving}
+                        value={edit.fpsOverride}
+                        onChange={(event) => {
+                          const value = event.currentTarget.value;
+                          setDisplayEdits((current) => ({
+                            ...current,
+                            [display.id]: {
+                              ...(current[display.id] ?? edit),
+                              fpsOverride: value,
+                            },
+                          }));
+                        }}
+                      />
+                    </label>
+                  </article>
+                );
+              })}
+            </div>
+            {displaySnapshot.profiles.filter((profile) => !displaySnapshot.displays.some((display) => display.id === profile.displayId)).length > 0 && (
+              <div className="display-disconnected">
+                <h3>Disconnected display assignments</h3>
+                <p>These stable identities are retained and will be restored when their displays reconnect.</p>
+                <ul>
+                  {displaySnapshot.profiles.filter((profile) => !displaySnapshot.displays.some((display) => display.id === profile.displayId)).map((profile) => (
+                    <li key={profile.displayId}>
+                      {profile.displayId} · {displaySnapshot.wallpapers.find((wallpaper) => wallpaper.id === profile.wallpaperId)?.name ?? `wallpaper ${profile.wallpaperId}`}
+                      {displaySnapshot.wallpapers.find((wallpaper) => wallpaper.id === profile.wallpaperId)?.availability !== "available" ? " (media missing/unavailable)" : ""}
+                      {` · ${profile.presentationMode}`}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            <div className="display-manager-actions">
+              <button disabled={displaySaving || displayLoading} onClick={() => void saveDisplayAssignments()}>
+                {displaySaving ? "Applying..." : "Save and apply"}
+              </button>
+            </div>
+          </>
+        ) : (
+          <p>No display state is available yet.</p>
+        )}
+        {displaySnapshot?.targetFailures.map((failure) => (
+          <p className="display-manager-error" role="alert" key={`${failure.deviceName}:${failure.stage}`}>
+            {failure.deviceName}: {failure.stage}
+          </p>
+        ))}
+        <p className="display-manager-status" aria-live="polite" role="status">{displayStatus}</p>
+      </section>
 
       <section className="playback-panel" aria-labelledby="playback-title">
         <h2 id="playback-title">Video playback</h2>

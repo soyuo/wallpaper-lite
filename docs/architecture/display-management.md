@@ -43,6 +43,31 @@ its prior stable ID. This store persists assignment intent only; applying a
 profile to desktop windows is handled by the Windows host at startup. Profile
 storage never opens or modifies source media.
 
+## Display manager UI
+
+The Tauri display-manager snapshot combines the current connected-display
+enumeration, saved profiles (including disconnected stable IDs), and catalog
+availability and current host-reconciliation failures. Opening or refreshing the
+manager asks the host to reconcile saved assignments and includes failed target
+stages in the snapshot; an unavailable host is shown as a refresh failure. The
+UI shows the runtime device name, resolution, refresh rate, scale percentage,
+effective DPI, and primary status for each connected target.
+Disconnected records stay visible and are preserved when connected profiles
+are edited.
+
+Independent mode exposes a wallpaper choice per display. Duplicate and Span
+use the primary display's wallpaper choice while retaining a separate optional
+FPS override for each target. The UI only offers available catalog entries and
+validates FPS overrides from 1 to 120 before submission. Applying profiles
+validates and atomically stores the complete candidate, waits for every target
+worker to reconcile, and restores the last saved profile file and host state if
+any target fails or the host cannot confirm the refresh. Errors remain visible in the manager status; source
+media is never modified. Single-display UI persistence and host-refresh rollback
+smoke results are recorded in
+[`phase-6-display-manager-acceptance.md`](../development/phase-6-display-manager-acceptance.md).
+Physical multi-display rendering and mode behavior are verified separately in
+the Phase 6 acceptance issue #98.
+
 ## Startup mode resolution
 
 The host enables per-monitor DPI awareness before enumerating displays, then
