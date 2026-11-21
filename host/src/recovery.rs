@@ -36,6 +36,7 @@ pub(crate) enum RecoveryCommand {
     UpdateDisplayGeometry {
         bounds: DisplayRect,
         span_bounds: Option<SpanBounds>,
+        response: Sender<Result<(), RendererError>>,
     },
     Shutdown,
 }
@@ -119,13 +120,16 @@ impl DesktopRecoveryWorker {
         &self,
         bounds: DisplayRect,
         span_bounds: Option<SpanBounds>,
-    ) -> Result<(), RendererError> {
+    ) -> Result<Receiver<Result<(), RendererError>>, RendererError> {
+        let (response, completion) = mpsc::channel();
         self.commands
             .send(RecoveryCommand::UpdateDisplayGeometry {
                 bounds,
                 span_bounds,
+                response,
             })
-            .map_err(|_| RendererError::WindowUnavailable)
+            .map_err(|_| RendererError::WindowUnavailable)?;
+        Ok(completion)
     }
 
     #[cfg(test)]
@@ -413,6 +417,7 @@ fn recovery_loop(
             Some(RecoveryCommand::UpdateDisplayGeometry {
                 bounds,
                 span_bounds: next_span_bounds,
+                response,
             }) => {
                 let result: Result<(), RendererError> = (|| {
                     // Retain the requested geometry even if the current HWND or swap
@@ -437,7 +442,7 @@ fn recovery_loop(
                     next_retry = Some(Instant::now() + retry_delay);
                     retry_delay = next_retry_delay(retry_delay);
                 }
-                if let Err(error) = result {
+                if let Err(error) = &result {
                     tracing::warn!(
                         component = "display",
                         event = "display_geometry_update_failed",
@@ -445,6 +450,7 @@ fn recovery_loop(
                         "The desktop wallpaper will retry attachment with the requested geometry"
                     );
                 }
+                let _ = response.send(result);
             }
             Some(RecoveryCommand::Shutdown) => break,
             None if recovery_pending

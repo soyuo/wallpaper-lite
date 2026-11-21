@@ -8,7 +8,7 @@ use crate::{IpcError, error::from_io};
 
 pub const PIPE_NAME: &str = r"\\.\pipe\wallpaper-lite";
 pub const PLAYBACK_EVENTS_PIPE_NAME: &str = r"\\.\pipe\wallpaper-lite-playback-events";
-pub const PROTOCOL_VERSION: u16 = 7;
+pub const PROTOCOL_VERSION: u16 = 9;
 pub const MAX_FRAME_BYTES: usize = 4 * 1024;
 pub(crate) const IO_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
 const COMMAND_QUEUE_CAPACITY: usize = 16;
@@ -69,6 +69,7 @@ pub enum Command {
     },
     GetPlaybackState,
     SubscribePlaybackState,
+    RefreshDisplayAssignments,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -103,8 +104,20 @@ pub enum ResponseResult {
     Pong,
     EditorSettingsApplied,
     PlaybackSettingsApplied,
+    DisplayAssignmentsRefreshed {
+        failed_targets: Vec<DisplayTargetFailure>,
+    },
     PlaybackState(PlaybackStateEvent),
-    Error { code: PlaybackCommandErrorCode },
+    Error {
+        code: PlaybackCommandErrorCode,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DisplayTargetFailure {
+    pub device_name: String,
+    pub stage: String,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -153,6 +166,7 @@ pub enum PlaybackCommandErrorCode {
     PlaybackSettingsInvalid,
     PlaybackSettingsApplyFailed,
     PlaybackSettingsSourceMismatch,
+    DisplayAssignmentsApplyFailed,
 }
 
 #[cfg(test)]
@@ -249,6 +263,35 @@ mod playback_settings_tests {
             }
         });
         assert!(serde_json::from_value::<Request>(payload).is_err());
+    }
+}
+
+#[cfg(test)]
+mod display_refresh_tests {
+    use super::{Command, DisplayTargetFailure, PROTOCOL_VERSION, Request, ResponseResult};
+
+    #[test]
+    fn display_assignment_refresh_round_trips_through_typed_ipc() {
+        let request = Request::new(42, Command::RefreshDisplayAssignments);
+        let encoded = serde_json::to_vec(&request).unwrap();
+        let decoded: Request = serde_json::from_slice(&encoded).unwrap();
+        assert_eq!(decoded.version, PROTOCOL_VERSION);
+        assert_eq!(decoded.request_id, 42);
+        assert_eq!(decoded.command, Command::RefreshDisplayAssignments);
+        assert_eq!(
+            serde_json::to_value(ResponseResult::DisplayAssignmentsRefreshed {
+                failed_targets: vec![DisplayTargetFailure {
+                    device_name: r"\\.\DISPLAY2".to_owned(),
+                    stage: "video_load".to_owned(),
+                }],
+            })
+            .unwrap(),
+            serde_json::json!({
+                "display_assignments_refreshed": {
+                    "failed_targets": [{"deviceName": r"\\.\DISPLAY2", "stage": "video_load"}]
+                }
+            })
+        );
     }
 }
 

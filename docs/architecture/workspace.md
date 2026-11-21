@@ -92,7 +92,8 @@ work.
 
 See [`display-management.md`](display-management.md) for stable target IDs,
 physical bounds, refresh rate, DPI scale, profile validation/persistence,
-Independent, Duplicate, and Span startup behavior, topology reconciliation, and
+Independent, Duplicate, and Span startup behavior, the Tauri display manager,
+topology reconciliation, and
 current Windows multi-display limits. See
 [`phase-6-independent-display-acceptance.md`](../development/phase-6-independent-display-acceptance.md)
 for Independent runtime evidence and outstanding physical dual-display checks; see
@@ -104,6 +105,9 @@ verification remains outstanding. Topology reconciliation implementation and
 synthetic/local evidence are recorded in
 [`phase-6-topology-recovery.md`](../development/phase-6-topology-recovery.md);
 physical hotplug and DPI verification is reserved for issue #98.
+The Monitor Manager persistence and host-refresh rollback smoke is recorded in
+[`phase-6-display-manager-acceptance.md`](../development/phase-6-display-manager-acceptance.md);
+physical multi-display UI verification is reserved for issue #98.
 
 See [`media-decoding.md`](media-decoding.md) for the still-image pixel contract,
 resource limits, and WIC behavior. See [`video-source.md`](video-source.md)

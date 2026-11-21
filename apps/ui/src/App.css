@@ -633,3 +633,33 @@ body {
 .playback-segment-fields { grid-column: 1 / -1; }
 .playback-segment-fields p { color: #526174; }
 .playback-message { min-height: 1.25em; color: #8b2525; }
+
+.display-manager {
+  display: grid;
+  gap: 0.9rem;
+  margin: 1rem 0;
+  padding: 1rem;
+  border: 1px solid #c8ced8;
+  border-radius: 0.75rem;
+  background: #fff;
+}
+.display-manager h2,
+.display-manager h3,
+.display-manager p { margin: 0; }
+.display-manager-heading,
+.display-manager-actions { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; }
+.display-manager-heading > div { display: grid; gap: 0.25rem; }
+.display-mode-control,
+.display-manager-card label { display: grid; gap: 0.3rem; }
+.display-mode-control { max-width: 24rem; }
+.display-manager-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr)); gap: 0.75rem; }
+.display-manager-card { display: grid; align-content: start; gap: 0.55rem; padding: 0.8rem; border: 1px solid #d8dde5; border-radius: 0.6rem; }
+.display-stable-id { overflow-wrap: anywhere; color: #526174; font-size: 0.8rem; }
+.display-manager-card > p { color: #526174; font-size: 0.9rem; overflow-wrap: anywhere; }
+.display-manager-card > .display-assignment-warning { color: #8b4b10; }
+.display-disconnected { padding-top: 0.5rem; border-top: 1px solid #e1e5eb; }
+.display-disconnected p { margin-top: 0.3rem; color: #526174; }
+.display-disconnected ul { margin: 0.4rem 0 0; padding-left: 1.25rem; overflow-wrap: anywhere; }
+.display-manager-status { min-height: 1.25rem; color: #526174; }
+.display-manager-status[role="status"] { overflow-wrap: anywhere; }
+.display-manager-error { color: #b42318; overflow-wrap: anywhere; }

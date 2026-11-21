@@ -7,6 +7,7 @@ use wallpaper_core::error::AppError;
 use wallpaper_core::error::ErrorCode;
 use wallpaper_media::{CatalogStore, ImportResult, import_local_media};
 
+mod displays;
 mod editor;
 mod library;
 mod playback;
@@ -161,6 +162,8 @@ pub fn run() -> process::ExitCode {
             editor::rename_editor_preset,
             editor::remove_editor_preset,
             editor::recent_wallpaper_ids,
+            displays::display_manager_snapshot,
+            displays::apply_display_profiles,
             library::list_library,
             library::library_preview,
             library::remove_library_entry,

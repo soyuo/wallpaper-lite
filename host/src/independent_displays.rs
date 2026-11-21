@@ -18,8 +18,8 @@ use wallpaper_display::{
     virtual_desktop_bounds,
 };
 use wallpaper_ipc::protocol::{
-    Command, IpcPlaybackState, PlaybackCommandErrorCode, PlaybackCommandSender, PlaybackStateEvent,
-    ResponseResult, playback_command_channel,
+    Command, DisplayTargetFailure, IpcPlaybackState, PlaybackCommandErrorCode,
+    PlaybackCommandSender, PlaybackStateEvent, ResponseResult, playback_command_channel,
 };
 use wallpaper_media::{
     Availability, CatalogStore, DisplayProfileStore, EditorSettingsStore, MediaKind,
@@ -31,6 +31,17 @@ use crate::{
     playback::PlaybackWorker,
     recovery::{ApplySettingsError, DesktopRecoveryWorker, RecoveryFrameSender},
 };
+
+pub(crate) struct DisplayRefreshRequest {
+    pub(crate) response: SyncSender<Vec<DisplayTargetFailure>>,
+}
+
+fn target_failure(device_name: &str, stage: &str) -> DisplayTargetFailure {
+    DisplayTargetFailure {
+        device_name: device_name.chars().take(64).collect(),
+        stage: stage.chars().take(48).collect(),
+    }
+}
 
 #[derive(Clone, Debug)]
 pub(crate) struct ResolvedDisplayAssignment {
@@ -460,7 +471,10 @@ pub(crate) fn start_assigned_primary_video(
 }
 
 enum PrimaryAssignmentCommand {
-    Reconcile(Box<ResolvedDisplayAssignment>),
+    Reconcile {
+        assignment: Box<ResolvedDisplayAssignment>,
+        completion: Option<tokio::sync::oneshot::Sender<Result<(), &'static str>>>,
+    },
     Shutdown,
 }
 
@@ -480,12 +494,18 @@ impl PrimaryAssignmentReconciler {
         let mut active_identity = initial_assignment.map(PrimaryAssignmentIdentity::from);
         let task = tokio::spawn(async move {
             while let Some(command) = receiver.recv().await {
-                let assignment = match command {
-                    PrimaryAssignmentCommand::Reconcile(assignment) => *assignment,
+                let (assignment, completion) = match command {
+                    PrimaryAssignmentCommand::Reconcile {
+                        assignment,
+                        completion,
+                    } => (*assignment, completion),
                     PrimaryAssignmentCommand::Shutdown => break,
                 };
                 let candidate_identity = PrimaryAssignmentIdentity::from(&assignment);
                 if active_identity.as_ref() == Some(&candidate_identity) {
+                    if let Some(completion) = completion {
+                        let _ = completion.send(Ok(()));
+                    }
                     continue;
                 }
                 let result = match assignment.wallpaper.media_kind() {
@@ -513,15 +533,35 @@ impl PrimaryAssignmentReconciler {
                         "The primary display kept its last successfully applied wallpaper"
                     ),
                 }
+                if let Some(completion) = completion {
+                    let _ = completion.send(result);
+                }
             }
         });
         Self { sender, task }
     }
 
-    pub(crate) fn reconcile(&self, assignment: ResolvedDisplayAssignment) {
-        let _ = self
-            .sender
-            .send(PrimaryAssignmentCommand::Reconcile(Box::new(assignment)));
+    pub(crate) fn reconcile(&self, assignment: ResolvedDisplayAssignment) -> bool {
+        self.sender
+            .send(PrimaryAssignmentCommand::Reconcile {
+                assignment: Box::new(assignment),
+                completion: None,
+            })
+            .is_ok()
+    }
+
+    pub(crate) fn reconcile_with_result(
+        &self,
+        assignment: ResolvedDisplayAssignment,
+    ) -> Result<tokio::sync::oneshot::Receiver<Result<(), &'static str>>, ()> {
+        let (completion, receiver) = tokio::sync::oneshot::channel();
+        self.sender
+            .send(PrimaryAssignmentCommand::Reconcile {
+                assignment: Box::new(assignment),
+                completion: Some(completion),
+            })
+            .map_err(|_| ())?;
+        Ok(receiver)
     }
 
     pub(crate) async fn stop(self) -> bool {
@@ -590,9 +630,10 @@ impl DisplayTargetSet {
         &mut self,
         runtime: &tokio::runtime::Runtime,
         assignments: &ResolvedDisplayAssignments,
-    ) {
+    ) -> Vec<DisplayTargetFailure> {
+        let mut failures = Vec::new();
         if self.stopped {
-            return;
+            return vec![target_failure("display manager", "stopped")];
         }
         let desired =
             select_secondary_assignments(&assignments.profiles, assignments.primary_bounds);
@@ -641,16 +682,20 @@ impl DisplayTargetSet {
                             display_id = display_id.as_str(),
                             "Replaced target worker did not stop cleanly"
                         );
+                        failures.push(target_failure(&old.device_name, "replace_cleanup"));
                     }
                 }
                 Ok(new_target) => self.targets.push(new_target),
-                Err((device_name, stage)) => tracing::error!(
-                    component = "display",
-                    event = "display_target_rebuild_failed",
-                    %device_name,
-                    stage,
-                    "Keeping the previous target while this display rebuild is unavailable"
-                ),
+                Err((device_name, stage)) => {
+                    tracing::error!(
+                        component = "display",
+                        event = "display_target_rebuild_failed",
+                        %device_name,
+                        stage,
+                        "Keeping the previous target while this display rebuild is unavailable"
+                    );
+                    failures.push(target_failure(&device_name, stage));
+                }
             }
         }
 
@@ -668,9 +713,11 @@ impl DisplayTargetSet {
                         display_id = display_id.as_str(),
                         "Removed display target resources could not be joined cleanly"
                     );
+                    failures.push(target_failure(&removed.device_name, "remove_cleanup"));
                 }
             }
         }
+        failures
     }
 
     pub(crate) fn stop(&mut self) -> bool {
@@ -702,7 +749,10 @@ pub(crate) struct DisplayTargetManager {
 enum DisplayTargetCommand {
     ExplorerExited,
     ExplorerRestarted,
-    Reconcile(ResolvedDisplayAssignments),
+    Reconcile {
+        assignments: ResolvedDisplayAssignments,
+        completion: Option<tokio::sync::oneshot::Sender<Vec<DisplayTargetFailure>>>,
+    },
     Stop(SyncSender<bool>),
 }
 
@@ -736,18 +786,40 @@ impl DisplayTargetManager {
         self.send(DisplayTargetCommand::ExplorerRestarted);
     }
 
-    pub(crate) fn reconcile(&self, assignments: &ResolvedDisplayAssignments) {
-        self.send(DisplayTargetCommand::Reconcile(assignments.clone()));
+    pub(crate) fn reconcile(&self, assignments: &ResolvedDisplayAssignments) -> bool {
+        self.send(DisplayTargetCommand::Reconcile {
+            assignments: assignments.clone(),
+            completion: None,
+        })
     }
 
-    fn send(&self, command: DisplayTargetCommand) {
-        if !self.stopped && self.commands.send(command).is_err() {
+    pub(crate) fn reconcile_with_result(
+        &self,
+        assignments: &ResolvedDisplayAssignments,
+    ) -> Result<tokio::sync::oneshot::Receiver<Vec<DisplayTargetFailure>>, ()> {
+        let (completion, receiver) = tokio::sync::oneshot::channel();
+        self.commands
+            .send(DisplayTargetCommand::Reconcile {
+                assignments: assignments.clone(),
+                completion: Some(completion),
+            })
+            .map_err(|_| ())?;
+        Ok(receiver)
+    }
+
+    fn send(&self, command: DisplayTargetCommand) -> bool {
+        if self.stopped {
+            return false;
+        }
+        if self.commands.send(command).is_err() {
             tracing::warn!(
                 component = "display",
                 event = "display_target_worker_unavailable",
                 "Display target management is unavailable"
             );
+            return false;
         }
+        true
     }
 
     pub(crate) fn stop(&mut self) -> bool {
@@ -808,8 +880,14 @@ fn run_display_target_worker(
         match command {
             DisplayTargetCommand::ExplorerExited => targets.explorer_exited(),
             DisplayTargetCommand::ExplorerRestarted => targets.explorer_restarted(),
-            DisplayTargetCommand::Reconcile(assignments) => {
-                targets.reconcile(&runtime, &assignments)
+            DisplayTargetCommand::Reconcile {
+                assignments,
+                completion,
+            } => {
+                let failures = targets.reconcile(&runtime, &assignments);
+                if let Some(completion) = completion {
+                    let _ = completion.send(failures);
+                }
             }
             DisplayTargetCommand::Stop(response) => {
                 let stopped = targets.stop();

@@ -22,6 +22,7 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "~2.11.6", features = [] }
 tauri-plugin-dialog = "=2.5.0"
 wallpaper-core = { workspace = true }
+wallpaper-display = { workspace = true }
 wallpaper-ipc = { workspace = true }
 wallpaper-media = { workspace = true }
 wallpaper-renderer = { workspace = true }

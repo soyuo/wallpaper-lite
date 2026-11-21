@@ -3930,6 +3930,7 @@ dependencies = [
  "tracing-appender",
  "tracing-subscriber",
  "wallpaper-core",
+ "wallpaper-display",
  "wallpaper-ipc",
  "wallpaper-media",
  "wallpaper-renderer",

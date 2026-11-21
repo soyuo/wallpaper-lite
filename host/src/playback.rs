@@ -20,6 +20,7 @@ use wallpaper_media::{
 };
 use windows::Win32::Graphics::Direct3D11::ID3D11Device;
 
+use crate::independent_displays::DisplayRefreshRequest;
 use crate::recovery::{ApplySettingsError, DesktopRecoveryWorker, RecoveryFrameSender};
 
 const TICK_INTERVAL: Duration = Duration::from_millis(8);
@@ -44,9 +45,18 @@ pub(crate) struct PlaybackWorker {
 
 impl PlaybackWorker {
     pub(crate) fn start(
+        commands: PlaybackCommandReceiver,
+        device: ID3D11Device,
+        recovery: &DesktopRecoveryWorker,
+    ) -> std::io::Result<(Self, tokio::sync::watch::Receiver<PlaybackStateEvent>)> {
+        Self::start_with_display_refresh(commands, device, recovery, None)
+    }
+
+    pub(crate) fn start_with_display_refresh(
         mut commands: PlaybackCommandReceiver,
         device: ID3D11Device,
         recovery: &DesktopRecoveryWorker,
+        display_refresh_sender: Option<tokio::sync::mpsc::UnboundedSender<DisplayRefreshRequest>>,
     ) -> std::io::Result<(Self, tokio::sync::watch::Receiver<PlaybackStateEvent>)> {
         let frame_sender = recovery.frame_sender();
         let (event_sender, event_receiver) = tokio::sync::watch::channel(PlaybackStateEvent {
@@ -68,7 +78,12 @@ impl PlaybackWorker {
         let thread = thread::Builder::new()
             .name("wallpaper-video-playback".to_owned())
             .spawn(move || {
-                let mut controller = PlaybackController::new(device, frame_sender, event_sender);
+                let mut controller = PlaybackController::new_with_display_refresh(
+                    device,
+                    frame_sender,
+                    event_sender,
+                    display_refresh_sender,
+                );
                 loop {
                     match stop_receiver.try_recv() {
                         Ok(()) | Err(TryRecvError::Disconnected) => break,
@@ -161,6 +176,7 @@ struct PlaybackController {
     last_error: Option<PlaybackCommandErrorCode>,
     event_sender: tokio::sync::watch::Sender<PlaybackStateEvent>,
     last_event_sent: Instant,
+    display_refresh_sender: Option<tokio::sync::mpsc::UnboundedSender<DisplayRefreshRequest>>,
 }
 
 struct PendingVideoLoad {
@@ -577,10 +593,20 @@ impl Drop for VideoSourceWorker {
 }
 
 impl PlaybackController {
+    #[cfg(test)]
     fn new(
         device: ID3D11Device,
         frame_sender: RecoveryFrameSender,
         event_sender: tokio::sync::watch::Sender<PlaybackStateEvent>,
+    ) -> Self {
+        Self::new_with_display_refresh(device, frame_sender, event_sender, None)
+    }
+
+    fn new_with_display_refresh(
+        device: ID3D11Device,
+        frame_sender: RecoveryFrameSender,
+        event_sender: tokio::sync::watch::Sender<PlaybackStateEvent>,
+        display_refresh_sender: Option<tokio::sync::mpsc::UnboundedSender<DisplayRefreshRequest>>,
     ) -> Self {
         Self {
             device,
@@ -599,6 +625,7 @@ impl PlaybackController {
             last_error: None,
             event_sender,
             last_event_sent: Instant::now(),
+            display_refresh_sender,
         }
     }
 
@@ -687,6 +714,27 @@ impl PlaybackController {
     }
 
     fn execute(&mut self, command: Command) -> ResponseResult {
+        if matches!(command, Command::RefreshDisplayAssignments) {
+            let Some(sender) = &self.display_refresh_sender else {
+                return ResponseResult::Error {
+                    code: PlaybackCommandErrorCode::DisplayAssignmentsApplyFailed,
+                };
+            };
+            let (response, receiver) = std::sync::mpsc::sync_channel(1);
+            if sender.send(DisplayRefreshRequest { response }).is_err() {
+                return ResponseResult::Error {
+                    code: PlaybackCommandErrorCode::DisplayAssignmentsApplyFailed,
+                };
+            }
+            return match receiver.recv_timeout(Duration::from_millis(1_750)) {
+                Ok(failed_targets) => {
+                    ResponseResult::DisplayAssignmentsRefreshed { failed_targets }
+                }
+                Err(_) => ResponseResult::Error {
+                    code: PlaybackCommandErrorCode::DisplayAssignmentsApplyFailed,
+                },
+            };
+        }
         let command = match command {
             Command::ApplyPlaybackSettings {
                 settings,
@@ -835,6 +883,9 @@ impl PlaybackController {
             }
             Command::ApplyPlaybackSettings { .. } => {
                 Err(PlaybackCommandErrorCode::PlaybackSettingsApplyFailed)
+            }
+            Command::RefreshDisplayAssignments => {
+                Err(PlaybackCommandErrorCode::DisplayAssignmentsApplyFailed)
             }
             Command::Ping => return ResponseResult::Pong,
         };
