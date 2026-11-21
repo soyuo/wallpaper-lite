@@ -6,6 +6,7 @@ use wallpaper_core::error::{AppError, ErrorCode};
 
 #[cfg(target_os = "windows")]
 mod audio_engine;
+mod display_profiles;
 mod editor_metadata;
 mod editor_settings;
 mod frame_queue;
@@ -18,6 +19,7 @@ mod video;
 #[cfg(target_os = "windows")]
 mod wic;
 
+pub use display_profiles::{DisplayProfileStore, DisplayProfileStoreError};
 pub use editor_metadata::{
     EditorMetadataError, EditorPresetStore, RecentWallpaperStore, WallpaperEditorPreset,
 };
@@ -41,6 +43,10 @@ pub use wallpaper_core::editor_settings::{
 pub use wallpaper_core::playback_settings::{
     LoopMode, MIN_SEGMENT_DURATION_MS, PLAYBACK_SETTINGS_SCHEMA_VERSION, PlaybackSettings,
     PlaybackSettingsValidationError, SegmentRange,
+};
+pub use wallpaper_display::{
+    DISPLAY_PROFILE_SCHEMA_VERSION, DisplayPresentationMode, DisplayProfile, DisplayProfileSet,
+    DisplayProfileValidationError,
 };
 
 #[cfg(any(target_os = "windows", test))]
