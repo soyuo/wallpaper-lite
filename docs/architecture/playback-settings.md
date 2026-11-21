@@ -32,6 +32,8 @@ replacement path. Failures return safe typed errors with path-free diagnostic
 stages.
 
 Playback settings contain no media bytes or paths. Loading and saving them
-never modifies the catalog record or original image/video. This issue provides
-the settings contract only; host application, looping, timeline UI, audio
-output, and loop-boundary optimization are tracked separately.
+never modifies the catalog record or original image/video. This document
+describes the persisted settings contract. Host application, looping, timeline
+controls, and rational-frame stepping are described in
+[`video-playback.md`](video-playback.md). Audio output and loop-boundary
+optimization remain separate work.

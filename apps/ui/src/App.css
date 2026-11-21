@@ -607,3 +607,29 @@ body {
     font-size: 0.8rem;
   }
 }
+.playback-panel {
+  display: grid;
+  gap: 0.75rem;
+  margin: 1rem 0;
+  padding: 1rem;
+  border: 1px solid #c8ced8;
+  border-radius: 0.75rem;
+  background: #fff;
+}
+
+.playback-panel h2,
+.playback-panel p { margin: 0; }
+.playback-timeline,
+.playback-time-entry,
+.playback-settings,
+.playback-segment-fields { display: grid; gap: 0.5rem; }
+.playback-controls { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.playback-time-entry { grid-template-columns: minmax(14rem, 1fr) auto; align-items: end; }
+.playback-time-entry span { grid-column: 1 / -1; }
+.playback-settings { grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr)); }
+.playback-settings legend { font-weight: 650; }
+.playback-settings label,
+.playback-segment-fields label { display: grid; gap: 0.25rem; }
+.playback-segment-fields { grid-column: 1 / -1; }
+.playback-segment-fields p { color: #526174; }
+.playback-message { min-height: 1.25em; color: #8b2525; }

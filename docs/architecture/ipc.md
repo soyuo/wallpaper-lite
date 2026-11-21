@@ -3,9 +3,10 @@
 `wallpaper-ui` and `wallpaper-host` communicate through the Windows named pipe
 `\\.\pipe\wallpaper-lite` for commands and
 `\\.\pipe\wallpaper-lite-playback-events` for state subscriptions. Protocol
-version 5 supports a liveness ping, video playback controls, editor settings,
-and per-wallpaper playback-settings updates. Version 5 adds playback settings
-to version 4. Request and response
+version 6 supports a liveness ping, video playback controls, editor settings,
+and per-wallpaper playback-settings updates. Version 6 adds the active wallpaper
+ID and rational source frame rate to playback snapshots and identifies video
+loads by catalog ID. Request and response
 decoders reject mismatched versions, so UI and host builds must be deployed
 together. Video decoding, scheduling, and presentation stay in the host.
 
@@ -31,17 +32,17 @@ together. Video decoding, scheduling, and presentation stay in the host.
 
 ## Request and response shapes
 
-Version 5 retains the ping request:
+Version 6 retains the ping request:
 
 ```json
-{"version":5,"request_id":1,"command":"ping"}
+{"version":6,"request_id":1,"command":"ping"}
 ```
 
 Editor Apply sends the complete validated settings snapshot in one command:
 
 ```json
 {
-  "version": 5,
+  "version": 6,
   "request_id": 42,
   "command": {
     "apply_editor_settings": {
@@ -67,28 +68,28 @@ Playback commands use the same request envelope. Enum values are snake case;
 fields use the names below:
 
 ```json
-{"version":5,"request_id":2,"command":{"load_video":{"path":"C:/Media/clip.mp4"}}}
-{"version":5,"request_id":3,"command":"play"}
-{"version":5,"request_id":4,"command":"pause"}
-{"version":5,"request_id":5,"command":"stop"}
-{"version":5,"request_id":6,"command":{"seek":{"position_100ns":5000000}}}
-{"version":5,"request_id":7,"command":{"set_speed":{"percent":125}}}
-{"version":5,"request_id":8,"command":{"set_fps":{"frames_per_second":30}}}
-{"version":5,"request_id":9,"command":"get_playback_state"}
-{"version":5,"request_id":11,"command":{"apply_playback_settings":{"settings":{"schemaVersion":1,"wallpaperId":7,"loopMode":"segment","segment":{"startMs":1000,"endMs":5000},"speedPercent":125,"fpsLimit":30,"volumePercent":100,"muted":false},"source_path":"C:/Media/clip.mp4"}}}
+{"version":6,"request_id":2,"command":{"load_video":{"wallpaper_id":7,"path":"C:/Media/clip.mp4"}}}
+{"version":6,"request_id":3,"command":"play"}
+{"version":6,"request_id":4,"command":"pause"}
+{"version":6,"request_id":5,"command":"stop"}
+{"version":6,"request_id":6,"command":{"seek":{"position_100ns":5000000}}}
+{"version":6,"request_id":7,"command":{"set_speed":{"percent":125}}}
+{"version":6,"request_id":8,"command":{"set_fps":{"frames_per_second":30}}}
+{"version":6,"request_id":9,"command":"get_playback_state"}
+{"version":6,"request_id":11,"command":{"apply_playback_settings":{"settings":{"schemaVersion":1,"wallpaperId":7,"loopMode":"segment","segment":{"startMs":1000,"endMs":5000},"speedPercent":125,"fpsLimit":30,"volumePercent":100,"muted":false},"source_path":"C:/Media/clip.mp4"}}}
 ```
 
 The playback-events pipe accepts a long-lived subscription request:
 
 ```json
-{"version":5,"request_id":10,"command":"subscribe_playback_state"}
+{"version":6,"request_id":10,"command":"subscribe_playback_state"}
 ```
 
 The response result can be `pong`, a settings-applied acknowledgement, a typed
 playback error, or a `playback_state` snapshot:
 
 ```json
-{"version":5,"request_id":3,"result":{"playback_state":{"sequence":2,"state":"playing","media_time_100ns":50000,"duration_100ns":120000000,"speed_percent":100,"fps_limit":60,"loading_video":false,"last_error":null}}}
+{"version":6,"request_id":3,"result":{"playback_state":{"sequence":2,"wallpaper_id":7,"state":"playing","media_time_100ns":50000,"duration_100ns":120000000,"frame_rate_numerator":30,"frame_rate_denominator":1,"speed_percent":100,"fps_limit":60,"loading_video":false,"last_error":null}}}
 ```
 
 State snapshots are returned with control-command responses and on explicit
@@ -104,6 +105,9 @@ and `last_error` carries a safe typed error from asynchronous work.
 - `load_video` acknowledges source opening immediately with
   `loading_video: true`; the current source remains active during inspection.
   A failed open leaves it active and publishes `last_error: video_load_failed`.
+  The request includes the catalog wallpaper ID; snapshots publish that active
+  ID and the source's rational frame rate so the UI can restore per-wallpaper
+  settings and step to adjacent source frames without approximating the FPS.
   Successful replacement resets transport to stopped at zero and releases the
   old source. A request disconnected before acknowledgement drops its candidate;
   an acknowledged load continues independently and reports completion or

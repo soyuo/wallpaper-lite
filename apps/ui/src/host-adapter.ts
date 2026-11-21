@@ -85,6 +85,36 @@ export interface WallpaperEditorSettings {
   };
 }
 
+export interface PlaybackSettings {
+  schemaVersion: number;
+  wallpaperId: number;
+  loopMode: "disabled" | "full" | "segment";
+  segment: { startMs: number; endMs: number } | null;
+  speedPercent: number;
+  fpsLimit: number;
+  volumePercent: number;
+  muted: boolean;
+}
+
+export interface PlaybackState {
+  sequence: number;
+  wallpaperId: number | null;
+  state: "stopped" | "playing" | "paused" | "ended";
+  mediaTime100ns: number;
+  duration100ns: number | null;
+  frameRateNumerator: number | null;
+  frameRateDenominator: number | null;
+  speedPercent: number;
+  fpsLimit: number;
+  loadingVideo: boolean;
+  lastError: string | null;
+}
+
+export interface PlaybackPanel {
+  state: PlaybackState;
+  settings: PlaybackSettings | null;
+}
+
 export type AppErrorCode =
   | "host_unavailable"
   | "timeout"
@@ -103,6 +133,10 @@ export type AppErrorCode =
   | "editor_apply_failed"
   | "editor_apply_rollback_failed"
   | "editor_wallpaper_not_active"
+  | "playback_settings_storage_failed"
+  | "invalid_playback_settings"
+  | "playback_control_failed"
+  | "playback_settings_rollback_failed"
   | "internal";
 
 interface AppErrorPayload {
@@ -137,6 +171,13 @@ export interface HostAdapter {
   renameLibraryEntry(id: number, displayName: string): Promise<void>;
   setLibraryFavorite(id: number, favorite: boolean): Promise<void>;
   relocateLibraryEntry(id: number, path: string): Promise<void>;
+  playbackPanel(): Promise<PlaybackPanel>;
+  playbackState(): Promise<PlaybackState>;
+  loadVideoForPlayback(id: number): Promise<PlaybackPanel>;
+  controlPlayback(control: "play" | "pause" | "stop"): Promise<PlaybackState>;
+  seekPlayback(positionMs: number): Promise<PlaybackState>;
+  seekPlayback100ns(position100ns: number): Promise<PlaybackState>;
+  applyPlaybackSettings(id: number, settings: PlaybackSettings): Promise<PlaybackPanel>;
 }
 
 function isAppErrorPayload(value: unknown): value is AppErrorPayload {
@@ -182,6 +223,10 @@ function isAppErrorCode(value: unknown): value is AppErrorCode {
     value === "editor_apply_failed" ||
     value === "editor_apply_rollback_failed" ||
     value === "editor_wallpaper_not_active" ||
+    value === "playback_settings_storage_failed" ||
+    value === "invalid_playback_settings" ||
+    value === "playback_control_failed" ||
+    value === "playback_settings_rollback_failed" ||
     value === "internal"
   );
 }
@@ -248,5 +293,26 @@ export const hostAdapter: HostAdapter = {
   },
   relocateLibraryEntry(id, path) {
     return invoke<void>("relocate_library_entry", { id, path });
+  },
+  playbackPanel() {
+    return invokeAppCommand<PlaybackPanel>("get_playback_panel");
+  },
+  playbackState() {
+    return invokeAppCommand<PlaybackState>("playback_state");
+  },
+  loadVideoForPlayback(id) {
+    return invokeAppCommand<PlaybackPanel>("load_video_for_playback", { wallpaperId: id });
+  },
+  controlPlayback(control) {
+    return invokeAppCommand<PlaybackState>("control_playback", { control });
+  },
+  seekPlayback(positionMs) {
+    return invokeAppCommand<PlaybackState>("seek_playback", { positionMs });
+  },
+  seekPlayback100ns(position100ns) {
+    return invokeAppCommand<PlaybackState>("seek_playback_100ns", { position100ns });
+  },
+  applyPlaybackSettings(id, settings) {
+    return invokeAppCommand<PlaybackPanel>("apply_playback_settings", { wallpaperId: id, settings });
   },
 };
