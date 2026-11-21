@@ -87,8 +87,11 @@ re-enumeration and target reconciliation are implemented; physical hotplug and
 DPI-change verification is also tracked in issue #98. The shared
 performance policy model is in `crates/core`, its validated persistence is in
 `crates/media`, and Windows signal detection is collected by the host in
-`host/src/performance_signals.rs`; automatic policy execution remains future
-work.
+`host/src/performance_signals.rs`. Fullscreen/session policies run within each
+playback actor, while the recovery workers retain the last frame during render
+pauses; battery actions remain in Phase 7 issue #107. Runtime evidence is in
+`docs/development/phase-7-signal-detection.md` and
+`docs/development/phase-7-automatic-pause-acceptance.md`.
 
 See [`display-management.md`](display-management.md) for stable target IDs,
 physical bounds, refresh rate, DPI scale, profile validation/persistence,

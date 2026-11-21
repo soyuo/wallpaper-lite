@@ -9,7 +9,9 @@ use std::{
 };
 
 use wallpaper_core::{
-    editor_settings::WallpaperEditorSettings, playback_settings::PlaybackSettings,
+    editor_settings::WallpaperEditorSettings,
+    performance_policy::{PerformancePolicySettings, PolicyAction},
+    playback_settings::PlaybackSettings,
 };
 use wallpaper_desktop::discover_desktop_host;
 use wallpaper_display::{
@@ -28,6 +30,7 @@ use wallpaper_media::{
 use wallpaper_renderer::D3d11Device;
 
 use crate::{
+    performance_signals::{PerformanceSignalSnapshot, policy_signals},
     playback::PlaybackWorker,
     recovery::{ApplySettingsError, DesktopRecoveryWorker, RecoveryFrameSender},
 };
@@ -582,10 +585,17 @@ impl DisplayTargetSet {
         runtime: &tokio::runtime::Runtime,
         assignments: &[ResolvedDisplayAssignment],
         primary_bounds: Option<DisplayRect>,
+        policy_settings: &PerformancePolicySettings,
+        signal_receiver: Option<&tokio::sync::watch::Receiver<PerformanceSignalSnapshot>>,
     ) -> Self {
         let mut targets = Vec::new();
         for assignment in select_secondary_assignments(assignments, primary_bounds) {
-            match DisplayTarget::start(runtime, assignment) {
+            match DisplayTarget::start(
+                runtime,
+                assignment,
+                policy_settings.clone(),
+                signal_receiver.cloned(),
+            ) {
                 Ok(target) => targets.push(target),
                 Err((device_name, stage)) => tracing::error!(
                     component = "display",
@@ -599,6 +609,24 @@ impl DisplayTargetSet {
         Self {
             targets,
             stopped: false,
+        }
+    }
+
+    fn set_rendering_paused(&self, paused: bool) {
+        for target in &self.targets {
+            let accepted = target
+                .recovery
+                .as_ref()
+                .is_some_and(|recovery| recovery.frame_sender().set_rendering_paused(paused));
+            if !accepted {
+                tracing::warn!(
+                    component = "performance",
+                    event = "display_target_render_policy_update_failed",
+                    device_name = %target.device_name,
+                    paused,
+                    "Display target did not accept the rendering policy"
+                );
+            }
         }
     }
 
@@ -630,6 +658,8 @@ impl DisplayTargetSet {
         &mut self,
         runtime: &tokio::runtime::Runtime,
         assignments: &ResolvedDisplayAssignments,
+        policy_settings: &PerformancePolicySettings,
+        signal_receiver: Option<&tokio::sync::watch::Receiver<PerformanceSignalSnapshot>>,
     ) -> Vec<DisplayTargetFailure> {
         let mut failures = Vec::new();
         if self.stopped {
@@ -667,7 +697,14 @@ impl DisplayTargetSet {
                         .position(|target| target.signature.display_id == *display_id)
                 })
                 .flatten();
-            let start = || DisplayTarget::start(runtime, assignment.clone());
+            let start = || {
+                DisplayTarget::start(
+                    runtime,
+                    assignment.clone(),
+                    policy_settings.clone(),
+                    signal_receiver.cloned(),
+                )
+            };
             let result = if let Some(index) = existing_index {
                 replace_after_success(&mut self.targets[index], start)
             } else {
@@ -760,12 +797,22 @@ impl DisplayTargetManager {
     pub(crate) fn start(
         assignments: &[ResolvedDisplayAssignment],
         primary_bounds: Option<DisplayRect>,
+        policy_settings: PerformancePolicySettings,
+        signal_receiver: Option<tokio::sync::watch::Receiver<PerformanceSignalSnapshot>>,
     ) -> Self {
         let (commands, receiver) = mpsc::channel();
         let initial_assignments = assignments.to_vec();
         let worker = thread::Builder::new()
             .name("wallpaper-display-targets".to_owned())
-            .spawn(move || run_display_target_worker(receiver, initial_assignments, primary_bounds))
+            .spawn(move || {
+                run_display_target_worker(
+                    receiver,
+                    initial_assignments,
+                    primary_bounds,
+                    policy_settings,
+                    signal_receiver,
+                )
+            })
             .map_err(|error| {
                 tracing::error!(component = "display", event = "display_target_worker_start_failed",
                     error_kind = ?error.kind(), "Could not start display target manager");
@@ -863,6 +910,8 @@ fn run_display_target_worker(
     receiver: Receiver<DisplayTargetCommand>,
     initial_assignments: Vec<ResolvedDisplayAssignment>,
     primary_bounds: Option<DisplayRect>,
+    policy_settings: PerformancePolicySettings,
+    mut signal_receiver: Option<tokio::sync::watch::Receiver<PerformanceSignalSnapshot>>,
 ) {
     let runtime = match tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -875,27 +924,76 @@ fn run_display_target_worker(
             return;
         }
     };
-    let mut targets = DisplayTargetSet::start(&runtime, &initial_assignments, primary_bounds);
-    while let Ok(command) = receiver.recv() {
-        match command {
-            DisplayTargetCommand::ExplorerExited => targets.explorer_exited(),
-            DisplayTargetCommand::ExplorerRestarted => targets.explorer_restarted(),
-            DisplayTargetCommand::Reconcile {
-                assignments,
-                completion,
-            } => {
-                let failures = targets.reconcile(&runtime, &assignments);
-                if let Some(completion) = completion {
-                    let _ = completion.send(failures);
+    let mut targets = DisplayTargetSet::start(
+        &runtime,
+        &initial_assignments,
+        primary_bounds,
+        &policy_settings,
+        signal_receiver.as_ref(),
+    );
+    let mut last_action = evaluate_policy_action(&policy_settings, signal_receiver.as_ref());
+    targets.set_rendering_paused(last_action != PolicyAction::Continue);
+    loop {
+        match receiver.recv_timeout(Duration::from_millis(50)) {
+            Ok(command) => match command {
+                DisplayTargetCommand::ExplorerExited => targets.explorer_exited(),
+                DisplayTargetCommand::ExplorerRestarted => targets.explorer_restarted(),
+                DisplayTargetCommand::Reconcile {
+                    assignments,
+                    completion,
+                } => {
+                    let failures = targets.reconcile(
+                        &runtime,
+                        &assignments,
+                        &policy_settings,
+                        signal_receiver.as_ref(),
+                    );
+                    if let Some(completion) = completion {
+                        let _ = completion.send(failures);
+                    }
+                }
+                DisplayTargetCommand::Stop(response) => {
+                    let stopped = targets.stop();
+                    let _ = response.send(stopped);
+                    break;
+                }
+            },
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+
+        let next_action = if let Some(signals) = signal_receiver.as_mut() {
+            match signals.has_changed() {
+                Ok(true) => {
+                    let snapshot = signals.borrow_and_update().clone();
+                    policy_settings
+                        .evaluate(policy_signals(&snapshot), false)
+                        .action()
+                }
+                Ok(false) => last_action,
+                Err(_) => {
+                    signal_receiver = None;
+                    PolicyAction::Continue
                 }
             }
-            DisplayTargetCommand::Stop(response) => {
-                let stopped = targets.stop();
-                let _ = response.send(stopped);
-                break;
-            }
+        } else {
+            PolicyAction::Continue
+        };
+        if next_action != last_action {
+            targets.set_rendering_paused(next_action != PolicyAction::Continue);
+            last_action = next_action;
         }
     }
+}
+
+fn evaluate_policy_action(
+    settings: &PerformancePolicySettings,
+    signal_receiver: Option<&tokio::sync::watch::Receiver<PerformanceSignalSnapshot>>,
+) -> PolicyAction {
+    let signals = signal_receiver
+        .map(|receiver| policy_signals(&receiver.borrow()))
+        .unwrap_or_default();
+    settings.evaluate(signals, false).action()
 }
 
 struct DisplayTarget {
@@ -911,6 +1009,8 @@ impl DisplayTarget {
     fn start(
         runtime: &tokio::runtime::Runtime,
         assignment: ResolvedDisplayAssignment,
+        policy_settings: PerformancePolicySettings,
+        signal_receiver: Option<tokio::sync::watch::Receiver<PerformanceSignalSnapshot>>,
     ) -> Result<Self, (String, &'static str)> {
         let device_name = assignment.display.device_name().to_owned();
         let signature = DisplayTargetSignature::from_assignment(&assignment);
@@ -930,6 +1030,12 @@ impl DisplayTarget {
             assignment.span_bounds,
         )
         .map_err(|_| (device_name.clone(), "recovery_worker"))?;
+        let initial_action = evaluate_policy_action(&policy_settings, signal_receiver.as_ref());
+        if initial_action != PolicyAction::Continue
+            && !recovery.frame_sender().set_rendering_paused(true)
+        {
+            return Err((device_name.clone(), "initial_render_policy"));
+        }
         let mut target = Self {
             device_name: device_name.clone(),
             signature,
@@ -961,10 +1067,13 @@ impl DisplayTarget {
             }
             MediaKind::Video => {
                 let (sender, receiver) = playback_command_channel();
-                let (worker, mut events) = PlaybackWorker::start(
+                let (worker, mut events) = PlaybackWorker::start_with_policy_and_display_refresh(
                     receiver,
                     media_device,
                     target.recovery.as_ref().expect("recovery exists"),
+                    policy_settings,
+                    signal_receiver,
+                    None,
                 )
                 .map_err(|_| (device_name.clone(), "playback_worker"))?;
                 target.playback = Some(worker);
@@ -1647,7 +1756,8 @@ mod tests {
 
     #[test]
     fn display_target_manager_handles_queued_topology_events_and_stops() {
-        let mut manager = DisplayTargetManager::start(&[], None);
+        let mut manager =
+            DisplayTargetManager::start(&[], None, PerformancePolicySettings::default(), None);
         manager.explorer_exited();
         manager.explorer_restarted();
         manager.reconcile(&ResolvedDisplayAssignments {

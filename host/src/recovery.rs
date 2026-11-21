@@ -18,6 +18,7 @@ const RESIZE_POLL_INTERVAL: Duration = Duration::from_millis(100);
 pub(crate) enum RecoveryCommand {
     ExplorerExited,
     ExplorerRestarted,
+    SetRenderingPaused(bool),
     PresentImage {
         image: DecodedImage,
         source_path: PathBuf,
@@ -72,6 +73,12 @@ impl RecoveryFrameSender {
         result
             .recv_timeout(Duration::from_secs(1))
             .unwrap_or(Err(RendererError::WindowUnavailable))
+    }
+
+    pub(crate) fn set_rendering_paused(&self, paused: bool) -> bool {
+        self.0
+            .send(RecoveryCommand::SetRenderingPaused(paused))
+            .is_ok()
     }
 
     pub(crate) fn apply_editor_settings(
@@ -218,11 +225,12 @@ fn recovery_loop(
     mut span_bounds: Option<SpanBounds>,
 ) {
     let mut window = Some(initial_window);
-    let mut presenter = None;
+    let mut presenter: Option<D3d11ImagePresenter<'_>> = None;
     let mut current_image: Option<DecodedImage> = None;
     let mut current_video_frame: Option<DecodedVideoFrame> = None;
     let mut active_source_path: Option<PathBuf> = None;
     let mut active_editor_settings: Option<(PathBuf, WallpaperEditorSettings)> = None;
+    let mut rendering_paused = false;
     let mut recovery_pending = false;
     let mut retry_delay = INITIAL_RETRY_DELAY;
     let mut next_retry: Option<Instant> = None;
@@ -243,6 +251,98 @@ fn recovery_loop(
         };
 
         match command {
+            Some(RecoveryCommand::SetRenderingPaused(paused)) => {
+                if rendering_paused != paused {
+                    rendering_paused = paused;
+                    if !paused {
+                        let redraw_result = (|| {
+                            if let (Some(attached_window), Some(bounds)) =
+                                (window.as_ref(), display_bounds)
+                            {
+                                attached_window
+                                    .set_display_bounds(bounds)
+                                    .map_err(|_| RendererError::WindowUnavailable)?;
+                            }
+                            if let Some(active_presenter) = presenter.as_mut() {
+                                active_presenter.refresh_if_resized()?;
+                                active_presenter.set_span_bounds(span_bounds)?;
+                            }
+
+                            if let Some(active_presenter) = presenter.as_mut() {
+                                let frame_result = if let Some(frame) = current_video_frame.as_ref()
+                                {
+                                    active_presenter.set_video_frame(frame)
+                                } else if let Some(image) = current_image.as_ref() {
+                                    active_presenter.set_image(image)
+                                } else {
+                                    Ok(())
+                                };
+                                frame_result.and_then(|()| {
+                                    if let Some(settings) = settings_for_source(
+                                        active_editor_settings.as_ref(),
+                                        active_source_path.as_deref(),
+                                    ) {
+                                        active_presenter.set_editor_settings(settings)?;
+                                    }
+                                    Ok(())
+                                })
+                            } else if let (Some(attached_window), Some(frame)) =
+                                (window.as_ref(), current_video_frame.as_ref())
+                            {
+                                D3d11ImagePresenter::new_with_video_frame(
+                                    &device,
+                                    attached_window.raw_handle(),
+                                    frame,
+                                )
+                                .and_then(|mut next_presenter| {
+                                    next_presenter.set_span_bounds(span_bounds)?;
+                                    apply_active_settings(
+                                        &mut next_presenter,
+                                        active_editor_settings.as_ref(),
+                                        active_source_path.as_deref(),
+                                    )?;
+                                    presenter = Some(next_presenter);
+                                    Ok(())
+                                })
+                            } else if let (Some(attached_window), Some(image)) =
+                                (window.as_ref(), current_image.as_ref())
+                            {
+                                D3d11ImagePresenter::new(
+                                    &device,
+                                    attached_window.raw_handle(),
+                                    image,
+                                )
+                                .and_then(|mut next_presenter| {
+                                    next_presenter.set_span_bounds(span_bounds)?;
+                                    apply_active_settings(
+                                        &mut next_presenter,
+                                        active_editor_settings.as_ref(),
+                                        active_source_path.as_deref(),
+                                    )?;
+                                    presenter = Some(next_presenter);
+                                    Ok(())
+                                })
+                            } else {
+                                Ok(())
+                            }
+                        })();
+                        if let Err(error) = redraw_result {
+                            drop(presenter.take());
+                            drop(window.take());
+                            recovery_pending = true;
+                            next_retry = Some(Instant::now() + retry_delay);
+                            retry_delay = next_retry_delay(retry_delay);
+                            tracing::warn!(
+                                component = "renderer",
+                                event = "wallpaper_render_resume_failed",
+                                error_code = error.to_app_error().code.as_str(),
+                                diagnostic = %error.diagnostic_summary(),
+                                "Latest wallpaper frame could not be presented after policy resume; scheduling recovery"
+                            );
+                        }
+                    }
+                }
+            }
             Some(RecoveryCommand::ExplorerExited) => {
                 drop(presenter.take());
                 if window.take().is_some() {
@@ -271,7 +371,9 @@ fn recovery_loop(
                 let source_changed = !active_source_path
                     .as_deref()
                     .is_some_and(|active| same_source_path(active, &source_path));
-                let result = if let Some(attached_window) = window.as_ref() {
+                let result = if rendering_paused {
+                    Ok(())
+                } else if let Some(attached_window) = window.as_ref() {
                     match D3d11ImagePresenter::new(&device, attached_window.raw_handle(), &image)
                         .and_then(|mut next_presenter| {
                             next_presenter.set_span_bounds(span_bounds)?;
@@ -284,21 +386,20 @@ fn recovery_loop(
                         }) {
                         Ok(next_presenter) => {
                             presenter = Some(next_presenter);
-                            current_image = Some(image);
-                            current_video_frame = None;
-                            active_source_path = Some(source_path);
                             Ok(())
                         }
                         Err(error) => Err(error),
                     }
                 } else {
+                    Ok(())
+                };
+                if result.is_ok() {
                     current_image = Some(image);
                     current_video_frame = None;
                     active_source_path = Some(source_path);
-                    Ok(())
-                };
-                if result.is_ok() && source_changed {
-                    active_editor_settings = None;
+                    if source_changed {
+                        active_editor_settings = None;
+                    }
                 }
                 let _ = response.send(result);
             }
@@ -311,7 +412,9 @@ fn recovery_loop(
                     .as_deref()
                     .is_some_and(|active| same_source_path(active, &source_path));
                 let had_presenter = presenter.is_some();
-                let result = if let Some(active_presenter) = presenter.as_mut() {
+                let result = if rendering_paused {
+                    Ok(())
+                } else if let Some(active_presenter) = presenter.as_mut() {
                     let previous_settings = if source_changed {
                         settings_for_source(
                             active_editor_settings.as_ref(),
@@ -374,7 +477,9 @@ fn recovery_loop(
                     .as_deref()
                     .is_some_and(|active| same_source_path(active, &source_path))
                 {
-                    if let Some(active_presenter) = presenter.as_mut() {
+                    if rendering_paused {
+                        Ok(())
+                    } else if let Some(active_presenter) = presenter.as_mut() {
                         active_presenter
                             .set_editor_settings(&settings)
                             .map_err(ApplySettingsError::Renderer)
@@ -424,14 +529,16 @@ fn recovery_loop(
                     // chain rejects it so recovery retries the latest topology.
                     display_bounds = Some(bounds);
                     span_bounds = next_span_bounds;
-                    if let Some(attached_window) = window.as_ref() {
-                        attached_window
-                            .set_display_bounds(bounds)
-                            .map_err(|_| RendererError::WindowUnavailable)?;
-                    }
-                    if let Some(active_presenter) = presenter.as_mut() {
-                        active_presenter.refresh_if_resized()?;
-                        active_presenter.set_span_bounds(span_bounds)?;
+                    if !rendering_paused {
+                        if let Some(attached_window) = window.as_ref() {
+                            attached_window
+                                .set_display_bounds(bounds)
+                                .map_err(|_| RendererError::WindowUnavailable)?;
+                        }
+                        if let Some(active_presenter) = presenter.as_mut() {
+                            active_presenter.refresh_if_resized()?;
+                            active_presenter.set_span_bounds(span_bounds)?;
+                        }
                     }
                     Ok(())
                 })();
@@ -478,6 +585,9 @@ fn recovery_loop(
                             host_kind = host_kind.as_str(),
                             "Wallpaper window reattached to the current shell"
                         );
+                        if rendering_paused {
+                            continue;
+                        }
                         if let Some(attached_window) = window.as_ref() {
                             let restored = if let Some(frame) = current_video_frame.as_ref() {
                                 D3d11ImagePresenter::new_with_video_frame(
@@ -546,7 +656,7 @@ fn recovery_loop(
                 }
             }
             None => {
-                if let Some(active_presenter) = presenter.as_mut() {
+                if !rendering_paused && let Some(active_presenter) = presenter.as_mut() {
                     match active_presenter.refresh_if_resized() {
                         Ok(true) => tracing::info!(
                             component = "renderer",

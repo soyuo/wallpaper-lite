@@ -5,16 +5,17 @@ use tracing_appender::{
     rolling::{RollingFileAppender, Rotation},
 };
 use tracing_subscriber::filter::LevelFilter;
+use wallpaper_core::performance_policy::{PerformancePolicySettings, PolicyAction};
 use wallpaper_desktop::{ShellLifecycleEvent, ShellLifecycleMonitor};
 use wallpaper_ipc::protocol::DisplayTargetFailure;
-use wallpaper_media::{DecodedImage, MediaError, decode_image};
+use wallpaper_media::{DecodedImage, MediaError, PerformancePolicyStore, decode_image};
 
 mod independent_displays;
 mod performance_signals;
 mod playback;
 mod recovery;
 
-use performance_signals::{PerformanceSignalMonitor, PerformanceSignalSnapshot};
+use performance_signals::{PerformanceSignalMonitor, PerformanceSignalSnapshot, policy_signals};
 use playback::PlaybackWorker;
 use recovery::DesktopRecoveryWorker;
 
@@ -253,14 +254,67 @@ fn main() -> process::ExitCode {
         event = "desktop_recovery_started",
         "Desktop host recovery worker started"
     );
+    let policy_settings =
+        match PerformancePolicyStore::for_current_user().and_then(|store| store.load()) {
+            Ok(settings) => settings,
+            Err(error) => {
+                tracing::warn!(
+                    component = "performance",
+                    event = "performance_policy_load_failed",
+                    error = ?error,
+                    "Using default automatic pause policies"
+                );
+                PerformancePolicySettings::default()
+            }
+        };
+    let mut signal_monitor = match PerformanceSignalMonitor::start() {
+        Ok(monitor) => {
+            tracing::info!(
+                component = "performance",
+                event = "signal_monitor_started",
+                "Fullscreen, session, and power signal monitor started"
+            );
+            Some(monitor)
+        }
+        Err(error) => {
+            tracing::warn!(
+                component = "performance",
+                event = "signal_monitor_start_failed",
+                stage = error.stage,
+                error_code = ?error.error_code,
+                "Performance signal monitoring is unavailable; wallpaper rendering will continue"
+            );
+            None
+        }
+    };
+    let mut signal_receiver = signal_monitor
+        .as_ref()
+        .map(PerformanceSignalMonitor::subscribe);
+    let playback_signal_receiver = signal_receiver.as_ref().cloned();
+    let initial_signals = signal_receiver
+        .as_mut()
+        .map(|receiver| policy_signals(&receiver.borrow_and_update()))
+        .unwrap_or_default();
+    let initial_action = policy_settings.evaluate(initial_signals, false).action();
+    let initial_rendering_paused = initial_action != PolicyAction::Continue;
+    if initial_rendering_paused && !desktop_recovery.frame_sender().set_rendering_paused(true) {
+        tracing::warn!(
+            component = "renderer",
+            event = "initial_render_policy_update_failed",
+            "Desktop recovery worker did not accept the initial rendering policy"
+        );
+    }
+
     let (command_sender, command_receiver) = wallpaper_ipc::protocol::playback_command_channel();
     let (display_refresh_sender, mut display_refresh_receiver) =
         tokio::sync::mpsc::unbounded_channel();
     let (mut playback_worker, mut playback_events) =
-        match PlaybackWorker::start_with_display_refresh(
+        match PlaybackWorker::start_with_policy_and_display_refresh(
             command_receiver,
             media_device,
             &desktop_recovery,
+            policy_settings.clone(),
+            playback_signal_receiver,
             Some(display_refresh_sender),
         ) {
             Ok(worker) => worker,
@@ -275,6 +329,9 @@ fn main() -> process::ExitCode {
                 stop_desktop_recovery(&mut desktop_recovery);
                 drop(desktop_recovery);
                 drop(shell_lifecycle_monitor);
+                if let Some(monitor) = signal_monitor.take() {
+                    let _ = monitor.stop();
+                }
                 return process::ExitCode::FAILURE;
             }
         };
@@ -321,37 +378,17 @@ fn main() -> process::ExitCode {
                 stop_desktop_recovery(&mut desktop_recovery);
                 drop(desktop_recovery);
             }
+            if let Some(monitor) = signal_monitor.take() {
+                let _ = monitor.stop();
+            }
             drop(shell_lifecycle_monitor);
             return process::ExitCode::FAILURE;
         }
     };
 
-    let signal_monitor = match PerformanceSignalMonitor::start() {
-        Ok(monitor) => {
-            tracing::info!(
-                component = "performance",
-                event = "signal_monitor_started",
-                "Fullscreen, session, and power signal monitor started"
-            );
-            Some(monitor)
-        }
-        Err(error) => {
-            tracing::warn!(
-                component = "performance",
-                event = "signal_monitor_start_failed",
-                stage = error.stage,
-                error_code = ?error.error_code,
-                "Performance signal monitoring is unavailable; wallpaper rendering will continue"
-            );
-            None
-        }
-    };
     let mut display_change_receiver = signal_monitor
         .as_ref()
         .map(PerformanceSignalMonitor::subscribe_display_changes);
-    let mut signal_receiver = signal_monitor
-        .as_ref()
-        .map(PerformanceSignalMonitor::subscribe);
 
     let mut initial_primary_assignment = None;
     if !has_explicit_startup_image {
@@ -412,6 +449,8 @@ fn main() -> process::ExitCode {
             &[]
         },
         display_assignments.primary_bounds,
+        policy_settings.clone(),
+        signal_receiver.as_ref().cloned(),
     );
 
     let run_result = runtime.block_on(async {
