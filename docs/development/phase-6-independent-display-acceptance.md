@@ -67,5 +67,6 @@ On a Windows 10/11 system with two active extended displays:
 5. Hash each source file before and after the run.
 
 This procedure is still required to close the physical dual-display acceptance
-items. Topology-change reassignment remains issue #96; Duplicate and Span remain
-separate issues.
+items. Topology-change reassignment remains issue #96. Duplicate mode is tracked
+in issue #94, with physical multi-display verification pending; Span remains
+issue #95.
