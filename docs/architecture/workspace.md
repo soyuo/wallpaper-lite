@@ -78,17 +78,20 @@ adjustments are implemented in `crates/renderer`. Media Foundation opens H.264
 sources and decodes timestamped RGBA8 frames, with software decoding and
 D3D11/DXVA-preferred paths. The bounded frame queue, playback scheduler, and
 D3D11 video-frame presentation, active display enumeration, atomic stable-ID
-profile persistence, and startup-time Independent display assignments are
-implemented. Per-target windows, D3D11 devices, recovery owners, and video
-playback actors are isolated; topology-change recovery, Duplicate/Span modes,
-and performance policy remain later boundaries in `crates/display` and
+profile persistence, and startup-time Independent and Duplicate display
+assignments are implemented. Per-target windows, D3D11 devices, recovery owners,
+and video playback actors are isolated. Physical Duplicate behavior remains
+unverified without two displays; Span and topology-change recovery remain later
+boundaries in `crates/display`, as does performance policy in
 `crates/performance`.
 
 See [`display-management.md`](display-management.md) for stable target IDs,
 physical bounds, refresh rate, DPI scale, profile validation/persistence,
-Independent runtime behavior, and current Windows multi-display limits. See
+Independent and Duplicate startup behavior, and current Windows multi-display limits. See
 [`phase-6-independent-display-acceptance.md`](../development/phase-6-independent-display-acceptance.md)
-for the runtime evidence and outstanding physical dual-display checks.
+for Independent runtime evidence and outstanding physical dual-display checks;
+see [`phase-6-duplicate-display-acceptance.md`](../development/phase-6-duplicate-display-acceptance.md)
+for Duplicate-mode evidence and remaining limitations.
 
 See [`media-decoding.md`](media-decoding.md) for the still-image pixel contract,
 resource limits, and WIC behavior. See [`video-source.md`](video-source.md)
