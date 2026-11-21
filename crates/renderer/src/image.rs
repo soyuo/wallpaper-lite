@@ -1,5 +1,6 @@
 use std::slice;
 
+use wallpaper_display::SpanBounds;
 use wallpaper_media::{DecodedImage, DecodedVideoFrame, VideoPixelFormat};
 use windows::{
     Win32::{
@@ -32,7 +33,8 @@ use windows::{
 
 use crate::{
     ColorAdjustments, D3d11Device, ImageTransform, NormalizedCrop, PlacementDimensions,
-    PlacementMode, RendererError, calculate_transformed_image_placement,
+    PlacementMode, RendererError, calculate_span_image_placement,
+    calculate_transformed_image_placement,
 };
 
 const VERTEX_SHADER: &str = r#"
@@ -149,6 +151,7 @@ pub struct D3d11ImagePresenter<'a> {
     source_dimensions: PlacementDimensions,
     placement_mode: PlacementMode,
     transform: ImageTransform,
+    span_bounds: Option<SpanBounds>,
     color_adjustments: ColorAdjustments,
     presented_frames: u64,
 }
@@ -348,6 +351,7 @@ impl<'a> D3d11ImagePresenter<'a> {
             placement_mode,
             transform,
             color_adjustments,
+            None,
         )?;
         let vertex_shader = create_vertex_shader(device, VERTEX_SHADER)?;
         let pixel_shader = create_pixel_shader(device, PIXEL_SHADER)?;
@@ -371,6 +375,7 @@ impl<'a> D3d11ImagePresenter<'a> {
             source_dimensions,
             placement_mode,
             transform,
+            span_bounds: None,
             color_adjustments,
             presented_frames: 0,
         };
@@ -434,6 +439,7 @@ impl<'a> D3d11ImagePresenter<'a> {
                 self.placement_mode,
                 self.transform,
                 self.color_adjustments,
+                self.span_bounds,
             )?;
             self.unbind_resources();
             self.image_texture = texture;
@@ -459,6 +465,7 @@ impl<'a> D3d11ImagePresenter<'a> {
             placement_mode,
             self.transform,
             self.color_adjustments,
+            self.span_bounds,
         )?;
         self.render_with_placement_buffer(&placement_buffer)?;
         self.placement_buffer = placement_buffer;
@@ -478,6 +485,7 @@ impl<'a> D3d11ImagePresenter<'a> {
             self.placement_mode,
             transform,
             self.color_adjustments,
+            self.span_bounds,
         )?;
         self.render_with_placement_buffer(&placement_buffer)?;
         self.placement_buffer = placement_buffer;
@@ -508,6 +516,7 @@ impl<'a> D3d11ImagePresenter<'a> {
             self.placement_mode,
             self.transform,
             color_adjustments,
+            self.span_bounds,
         )?;
         self.render_with_placement_buffer(&placement_buffer)?;
         self.placement_buffer = placement_buffer;
@@ -521,6 +530,26 @@ impl<'a> D3d11ImagePresenter<'a> {
         settings: wallpaper_core::editor_settings::EditorColorSettings,
     ) -> Result<(), RendererError> {
         self.set_color_adjustments(ColorAdjustments::from_editor_settings(settings)?)
+    }
+
+    /// Map the current wallpaper transform over the virtual desktop and clip it to this target.
+    pub fn set_span_bounds(&mut self, bounds: Option<SpanBounds>) -> Result<(), RendererError> {
+        if bounds == self.span_bounds {
+            return Ok(());
+        }
+        let placement_buffer = create_placement_buffer(
+            self.device,
+            self.source_dimensions,
+            PlacementDimensions::new(self.width, self.height)?,
+            self.placement_mode,
+            self.transform,
+            self.color_adjustments,
+            bounds,
+        )?;
+        self.render_with_placement_buffer(&placement_buffer)?;
+        self.placement_buffer = placement_buffer;
+        self.span_bounds = bounds;
+        Ok(())
     }
 
     /// Apply one complete editor snapshot, presenting it before committing presenter state.
@@ -563,6 +592,7 @@ impl<'a> D3d11ImagePresenter<'a> {
             placement_mode,
             transform,
             color_adjustments,
+            self.span_bounds,
         )?;
 
         self.render_with_placement_buffer(&placement_buffer)?;
@@ -593,6 +623,7 @@ impl<'a> D3d11ImagePresenter<'a> {
             self.placement_mode,
             self.transform,
             self.color_adjustments,
+            self.span_bounds,
         )?;
 
         unsafe {
@@ -842,8 +873,12 @@ fn create_placement_buffer(
     mode: PlacementMode,
     transform: ImageTransform,
     color_adjustments: ColorAdjustments,
+    span_bounds: Option<SpanBounds>,
 ) -> Result<ID3D11Buffer, RendererError> {
-    let placement = calculate_transformed_image_placement(source, output, mode, transform)?;
+    let placement = match span_bounds {
+        Some(bounds) => calculate_span_image_placement(source, bounds, mode, transform)?,
+        None => calculate_transformed_image_placement(source, output, mode, transform)?,
+    };
     let corners = placement.destination_corners();
     let clip_corners = [
         clip_point(corners[0].x(), corners[0].y())?,
@@ -1042,6 +1077,7 @@ mod tests {
     use std::{thread, time::Duration};
 
     use wallpaper_desktop::discover_desktop_host;
+    use wallpaper_display::{DisplayRect, SpanBounds};
     use wallpaper_media::{
         DecodedImage, DecodedVideoFrame, VideoReadEvent, VideoSource, decode_image,
     };
@@ -1843,6 +1879,50 @@ mod tests {
                 .expect("unchanged window size should be readable")
         );
         assert_eq!(presenter.presented_frames(), 1);
+    }
+
+    #[test]
+    fn span_bounds_present_continuous_source_slices_for_each_target() {
+        let host = discover_desktop_host().expect("an interactive Windows shell is required");
+        let window = host
+            .attach_wallpaper_window()
+            .expect("the wallpaper child should attach to the desktop host");
+        let device = D3d11Device::create_hardware().expect("hardware D3D11 is required");
+        let image = decode_image(fixture_path("pixels.png")).expect("fixture should decode");
+        let mut presenter = D3d11ImagePresenter::new(&device, window.raw_handle(), &image)
+            .expect("image should present");
+        let virtual_desktop = DisplayRect::new(0, 0, 5120, 1600)
+            .expect("synthetic virtual desktop bounds should be valid");
+        let left_target = DisplayRect::new(0, 0, 2560, 1600)
+            .expect("synthetic left target bounds should be valid");
+        let right_target = DisplayRect::new(2560, 0, 5120, 1600)
+            .expect("synthetic right target bounds should be valid");
+
+        presenter
+            .set_span_bounds(Some(
+                SpanBounds::new(virtual_desktop, left_target)
+                    .expect("left target should belong to virtual desktop"),
+            ))
+            .expect("left target slice should present");
+        let left_sample =
+            read_render_target_pixel(&presenter, presenter.width / 4, presenter.height / 2);
+        assert!(
+            left_sample[0] > left_sample[2],
+            "left target should show the red-side source slice, got {left_sample:?}"
+        );
+
+        presenter
+            .set_span_bounds(Some(
+                SpanBounds::new(virtual_desktop, right_target)
+                    .expect("right target should belong to virtual desktop"),
+            ))
+            .expect("right target slice should present");
+        let right_sample =
+            read_render_target_pixel(&presenter, presenter.width * 3 / 4, presenter.height / 2);
+        assert!(
+            right_sample[2] > right_sample[0],
+            "right target should show the blue-side source slice, got {right_sample:?}"
+        );
     }
 
     #[test]

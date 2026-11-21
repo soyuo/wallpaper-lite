@@ -7,6 +7,7 @@ use std::{
 
 use wallpaper_core::editor_settings::WallpaperEditorSettings;
 use wallpaper_desktop::{AttachedDesktopWindow, discover_desktop_host};
+use wallpaper_display::SpanBounds;
 use wallpaper_media::{DecodedImage, DecodedVideoFrame};
 use wallpaper_renderer::{D3d11Device, D3d11ImagePresenter, RendererError};
 
@@ -92,14 +93,23 @@ impl DesktopRecoveryWorker {
         RecoveryFrameSender(self.commands.clone())
     }
 
+    #[cfg(test)]
     pub(crate) fn start(
         window: AttachedDesktopWindow,
         device: D3d11Device,
     ) -> std::io::Result<Self> {
+        Self::start_with_span(window, device, None)
+    }
+
+    pub(crate) fn start_with_span(
+        window: AttachedDesktopWindow,
+        device: D3d11Device,
+        span_bounds: Option<SpanBounds>,
+    ) -> std::io::Result<Self> {
         let (commands, receiver) = mpsc::channel();
         let thread = thread::Builder::new()
             .name("wallpaper-desktop-recovery".to_owned())
-            .spawn(move || recovery_loop(window, device, receiver))?;
+            .spawn(move || recovery_loop(window, device, receiver, span_bounds))?;
 
         Ok(Self {
             commands,
@@ -155,6 +165,7 @@ fn recovery_loop(
     initial_window: AttachedDesktopWindow,
     device: D3d11Device,
     commands: Receiver<RecoveryCommand>,
+    span_bounds: Option<SpanBounds>,
 ) {
     let mut window = Some(initial_window);
     let mut presenter = None;
@@ -213,6 +224,7 @@ fn recovery_loop(
                 let result = if let Some(attached_window) = window.as_ref() {
                     match D3d11ImagePresenter::new(&device, attached_window.raw_handle(), &image)
                         .and_then(|mut next_presenter| {
+                            next_presenter.set_span_bounds(span_bounds)?;
                             apply_active_settings(
                                 &mut next_presenter,
                                 active_editor_settings.as_ref(),
@@ -273,6 +285,7 @@ fn recovery_loop(
                         &frame,
                     )
                     .and_then(|mut next_presenter| {
+                        next_presenter.set_span_bounds(span_bounds)?;
                         apply_active_settings(
                             &mut next_presenter,
                             active_editor_settings.as_ref(),
@@ -357,8 +370,11 @@ fn recovery_loop(
             {
                 match discover_desktop_host().and_then(|host| {
                     let host_kind = host.kind();
-                    host.attach_wallpaper_window()
-                        .map(|window| (window, host_kind))
+                    let attached = match span_bounds {
+                        Some(bounds) => host.attach_wallpaper_window_for_display(bounds.target()),
+                        None => host.attach_wallpaper_window(),
+                    };
+                    attached.map(|window| (window, host_kind))
                 }) {
                     Ok((attached_window, host_kind)) => {
                         drop(presenter.take());
@@ -380,6 +396,7 @@ fn recovery_loop(
                                     frame,
                                 )
                                 .and_then(|mut next_presenter| {
+                                    next_presenter.set_span_bounds(span_bounds)?;
                                     apply_active_settings(
                                         &mut next_presenter,
                                         active_editor_settings.as_ref(),
@@ -394,6 +411,7 @@ fn recovery_loop(
                                     image,
                                 )
                                 .and_then(|mut next_presenter| {
+                                    next_presenter.set_span_bounds(span_bounds)?;
                                     apply_active_settings(
                                         &mut next_presenter,
                                         active_editor_settings.as_ref(),

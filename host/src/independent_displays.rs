@@ -11,7 +11,7 @@ use wallpaper_core::{
 use wallpaper_desktop::discover_desktop_host;
 use wallpaper_display::{
     DisplayInfo, DisplayPresentationMode, DisplayProfile, DisplayProfileSet, DisplayRect,
-    DisplaySnapshot, enumerate_displays,
+    DisplaySnapshot, SpanBounds, enumerate_displays, virtual_desktop_bounds,
 };
 use wallpaper_ipc::protocol::{
     Command, PlaybackCommandSender, PlaybackStateEvent, ResponseResult, playback_command_channel,
@@ -32,6 +32,7 @@ pub(crate) struct ResolvedDisplayAssignment {
     pub(crate) display: DisplayInfo,
     pub(crate) profile: DisplayProfile,
     pub(crate) wallpaper: WallpaperEntry,
+    pub(crate) span_bounds: Option<SpanBounds>,
 }
 
 pub(crate) struct ResolvedDisplayAssignments {
@@ -80,6 +81,26 @@ pub(crate) fn load_display_assignments() -> ResolvedDisplayAssignments {
     };
 
     let (mode, selected_profiles) = select_profiles_for_active_mode(&snapshot, &profiles);
+    let virtual_bounds = if mode == Some(DisplayPresentationMode::Span) {
+        let rectangles: Vec<_> = snapshot
+            .displays()
+            .iter()
+            .map(DisplayInfo::bounds)
+            .collect();
+        match virtual_desktop_bounds(&rectangles) {
+            Ok(bounds) => Some(bounds),
+            Err(error) => {
+                tracing::error!(event = "span_virtual_bounds_invalid", error = ?error,
+                    "Span display geometry is invalid; no display targets will start");
+                return ResolvedDisplayAssignments {
+                    primary_bounds,
+                    profiles: Vec::new(),
+                };
+            }
+        }
+    } else {
+        None
+    };
     let mut assignments = Vec::new();
     for (target_display, profile) in selected_profiles {
         let Some(wallpaper) = library.get_by_raw_id(profile.wallpaper_id()) else {
@@ -102,6 +123,9 @@ pub(crate) fn load_display_assignments() -> ResolvedDisplayAssignments {
             continue;
         }
         assignments.push(ResolvedDisplayAssignment {
+            span_bounds: virtual_bounds.and_then(|virtual_bounds| {
+                SpanBounds::new(virtual_bounds, target_display.bounds()).ok()
+            }),
             display: target_display,
             profile,
             wallpaper: wallpaper.clone(),
@@ -129,58 +153,118 @@ fn select_profiles_for_active_mode(
     Option<DisplayPresentationMode>,
     Vec<(DisplayInfo, DisplayProfile)>,
 ) {
-    let duplicate_profiles = snapshot
+    let primary_mode = snapshot
         .displays()
         .iter()
-        .filter_map(|display| {
-            let profile = profiles.get(display.id())?;
-            (profile.presentation_mode() == DisplayPresentationMode::Duplicate)
-                .then_some((display, profile))
+        .find(|display| display.is_primary())
+        .and_then(|display| profiles.get(display.id()))
+        .map(DisplayProfile::presentation_mode)
+        .filter(|mode| *mode != DisplayPresentationMode::Independent);
+    let selected_mode = primary_mode.or_else(|| {
+        snapshot.displays().iter().find_map(|display| {
+            profiles
+                .get(display.id())
+                .map(DisplayProfile::presentation_mode)
+                .filter(|mode| *mode != DisplayPresentationMode::Independent)
         })
-        .collect::<Vec<_>>();
+    });
 
-    if let Some((_, source_profile)) = duplicate_profiles
-        .iter()
-        .copied()
-        .find(|(display, _)| display.is_primary())
-        .or_else(|| duplicate_profiles.first().copied())
-    {
-        let wallpaper_id = source_profile.wallpaper_id();
-        for (target_display, profile) in &duplicate_profiles {
-            if profile.wallpaper_id() != wallpaper_id {
-                tracing::warn!(
-                    component = "display",
-                    event = "duplicate_profile_source_conflict",
-                    device_name = target_display.device_name(),
-                    selected_wallpaper_id = wallpaper_id,
-                    ignored_wallpaper_id = profile.wallpaper_id(),
-                    "Using the selected duplicate source for every active target"
-                );
+    match selected_mode {
+        Some(DisplayPresentationMode::Duplicate) => {
+            let duplicate_profiles = snapshot
+                .displays()
+                .iter()
+                .filter_map(|display| {
+                    profiles
+                        .get(display.id())
+                        .filter(|profile| {
+                            profile.presentation_mode() == DisplayPresentationMode::Duplicate
+                        })
+                        .map(|profile| (display, profile))
+                })
+                .collect::<Vec<_>>();
+            let (_, source_profile) = duplicate_profiles
+                .iter()
+                .copied()
+                .find(|(display, _)| display.is_primary())
+                .or_else(|| duplicate_profiles.first().copied())
+                .expect("selected Duplicate mode has an active source profile");
+            let wallpaper_id = source_profile.wallpaper_id();
+            for (target_display, profile) in &duplicate_profiles {
+                if profile.wallpaper_id() != wallpaper_id {
+                    tracing::warn!(
+                        component = "display",
+                        event = "duplicate_profile_source_conflict",
+                        device_name = target_display.device_name(),
+                        selected_wallpaper_id = wallpaper_id,
+                        ignored_wallpaper_id = profile.wallpaper_id(),
+                        "Using the selected duplicate source for every active target"
+                    );
+                }
             }
+            let targets = snapshot
+                .displays()
+                .iter()
+                .map(|display| {
+                    let fps_override = profiles
+                        .get(display.id())
+                        .and_then(DisplayProfile::fps_override);
+                    let profile = DisplayProfile::new(
+                        display.id().clone(),
+                        wallpaper_id,
+                        DisplayPresentationMode::Duplicate,
+                        fps_override,
+                    )
+                    .expect("active display IDs and stored FPS overrides are validated");
+                    (display.clone(), profile)
+                })
+                .collect();
+            (Some(DisplayPresentationMode::Duplicate), targets)
         }
-
-        let targets = snapshot
-            .displays()
-            .iter()
-            .map(|display| {
-                let fps_override = profiles
-                    .get(display.id())
-                    .and_then(DisplayProfile::fps_override);
-                let profile = DisplayProfile::new(
-                    display.id().clone(),
-                    wallpaper_id,
-                    DisplayPresentationMode::Duplicate,
-                    fps_override,
-                )
-                .expect("active display IDs and stored FPS overrides are validated");
-                (display.clone(), profile)
-            })
-            .collect();
-        (Some(DisplayPresentationMode::Duplicate), targets)
-    } else {
-        let targets = select_independent_profiles(snapshot, profiles);
-        let mode = (!targets.is_empty()).then_some(DisplayPresentationMode::Independent);
-        (mode, targets)
+        Some(DisplayPresentationMode::Span) => {
+            let span_sources = snapshot
+                .displays()
+                .iter()
+                .filter_map(|display| {
+                    profiles
+                        .get(display.id())
+                        .filter(|profile| {
+                            profile.presentation_mode() == DisplayPresentationMode::Span
+                        })
+                        .map(|profile| (display, profile))
+                })
+                .collect::<Vec<_>>();
+            let (_, source_profile) = span_sources
+                .iter()
+                .copied()
+                .find(|(display, _)| display.is_primary())
+                .or_else(|| span_sources.first().copied())
+                .expect("selected Span mode has an active source profile");
+            let targets = snapshot
+                .displays()
+                .iter()
+                .filter_map(|display| {
+                    let target_fps = profiles
+                        .get(display.id())
+                        .and_then(DisplayProfile::fps_override)
+                        .or_else(|| source_profile.fps_override());
+                    DisplayProfile::new(
+                        display.id().clone(),
+                        source_profile.wallpaper_id(),
+                        DisplayPresentationMode::Span,
+                        target_fps,
+                    )
+                    .ok()
+                    .map(|profile| (display.clone(), profile))
+                })
+                .collect();
+            (Some(DisplayPresentationMode::Span), targets)
+        }
+        _ => {
+            let targets = select_independent_profiles(snapshot, profiles);
+            let mode = (!targets.is_empty()).then_some(DisplayPresentationMode::Independent);
+            (mode, targets)
+        }
     }
 }
 
@@ -198,7 +282,6 @@ fn select_independent_profiles(
         })
         .collect()
 }
-
 fn select_secondary_assignments(
     assignments: &[ResolvedDisplayAssignment],
     primary_bounds: Option<DisplayRect>,
@@ -266,12 +349,12 @@ pub(crate) fn start_assigned_primary_video(
     )
 }
 
-pub(crate) struct IndependentDisplayManager {
-    targets: Vec<IndependentDisplayTarget>,
+pub(crate) struct DisplayTargetManager {
+    targets: Vec<DisplayTarget>,
     stopped: bool,
 }
 
-impl IndependentDisplayManager {
+impl DisplayTargetManager {
     pub(crate) fn start(
         runtime: &tokio::runtime::Runtime,
         assignments: &[ResolvedDisplayAssignment],
@@ -279,7 +362,7 @@ impl IndependentDisplayManager {
     ) -> Self {
         let mut targets = Vec::new();
         for assignment in select_secondary_assignments(assignments, primary_bounds) {
-            match IndependentDisplayTarget::start(runtime, assignment) {
+            match DisplayTarget::start(runtime, assignment) {
                 Ok(target) => targets.push(target),
                 Err((device_name, stage)) => tracing::error!(
                     component = "display",
@@ -334,20 +417,20 @@ impl IndependentDisplayManager {
     }
 }
 
-impl Drop for IndependentDisplayManager {
+impl Drop for DisplayTargetManager {
     fn drop(&mut self) {
         let _ = self.stop();
     }
 }
 
-struct IndependentDisplayTarget {
+struct DisplayTarget {
     device_name: String,
     recovery: Option<DesktopRecoveryWorker>,
     playback: Option<PlaybackWorker>,
     command_sender: Option<PlaybackCommandSender>,
 }
 
-impl IndependentDisplayTarget {
+impl DisplayTarget {
     fn start(
         runtime: &tokio::runtime::Runtime,
         assignment: ResolvedDisplayAssignment,
@@ -361,8 +444,9 @@ impl IndependentDisplayTarget {
         let device =
             D3d11Device::create_hardware().map_err(|_| (device_name.clone(), "d3d11_device"))?;
         let media_device = device.device().clone();
-        let recovery = DesktopRecoveryWorker::start(window, device)
-            .map_err(|_| (device_name.clone(), "recovery_worker"))?;
+        let recovery =
+            DesktopRecoveryWorker::start_with_span(window, device, assignment.span_bounds)
+                .map_err(|_| (device_name.clone(), "recovery_worker"))?;
         let mut target = Self {
             device_name: device_name.clone(),
             recovery: Some(recovery),
@@ -409,18 +493,19 @@ impl IndependentDisplayTarget {
         result?;
         tracing::info!(component = "display", event = "display_target_started", %device_name,
             wallpaper_id = assignment.profile.wallpaper_id(), fps_override = ?assignment.profile.fps_override(),
-            "Independent display assignment started");
+            presentation_mode = ?assignment.profile.presentation_mode(),
+            "Display target started");
         Ok(target)
     }
 }
 
-impl Drop for IndependentDisplayTarget {
+impl Drop for DisplayTarget {
     fn drop(&mut self) {
         let _ = self.stop_resources();
     }
 }
 
-impl IndependentDisplayTarget {
+impl DisplayTarget {
     fn disable(&mut self, stage: &'static str) {
         tracing::error!(component = "display", event = "display_target_disabled",
             device_name = %self.device_name, stage,
@@ -746,6 +831,7 @@ mod tests {
                 display,
                 profile,
                 wallpaper: wallpaper.clone(),
+                span_bounds: None,
             })
             .collect::<Vec<_>>();
 
@@ -760,6 +846,50 @@ mod tests {
         );
         assert_eq!(secondary[0].profile.fps_override(), Some(60));
         assert_eq!(secondary[1].profile.fps_override(), Some(24));
+    }
+
+    #[test]
+    fn span_profile_fans_one_source_across_all_displays_and_keeps_target_fps() {
+        let displays = DisplaySnapshot::new(vec![
+            display("display-a", 0, true),
+            display("display-b", 1920, false),
+            display("display-c", 3840, false),
+        ])
+        .unwrap();
+        let profiles = DisplayProfileSet::new(vec![
+            DisplayProfile::new(
+                DisplayId::from_device_path("display-b").unwrap(),
+                22,
+                DisplayPresentationMode::Span,
+                Some(30),
+            )
+            .unwrap(),
+            DisplayProfile::new(
+                DisplayId::from_device_path("display-c").unwrap(),
+                33,
+                DisplayPresentationMode::Independent,
+                Some(60),
+            )
+            .unwrap(),
+        ])
+        .unwrap();
+
+        let (mode, selected) = select_profiles_for_active_mode(&displays, &profiles);
+        assert_eq!(mode, Some(DisplayPresentationMode::Span));
+        assert_eq!(selected.len(), 3);
+        assert!(
+            selected
+                .iter()
+                .all(|(_, profile)| profile.presentation_mode() == DisplayPresentationMode::Span)
+        );
+        assert!(
+            selected
+                .iter()
+                .all(|(_, profile)| profile.wallpaper_id() == 22)
+        );
+        assert_eq!(selected[0].1.fps_override(), Some(30));
+        assert_eq!(selected[1].1.fps_override(), Some(30));
+        assert_eq!(selected[2].1.fps_override(), Some(60));
     }
 
     #[test]
