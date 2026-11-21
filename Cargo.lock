@@ -3909,6 +3909,7 @@ version = "0.1.0"
 dependencies = [
  "wallpaper-core",
  "wallpaper-desktop",
+ "wallpaper-display",
  "wallpaper-media",
  "windows",
 ]
