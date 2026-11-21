@@ -40,24 +40,46 @@ file replacement helper. `upsert()` updates a single identity while retaining
 all other records, including displays absent from the current enumeration.
 Profiles are not filtered by current topology, so a returning display matches
 its prior stable ID. This store persists assignment intent only; applying a
-profile to desktop windows is handled by the later display-runtime work. Profile
-storage never opens or modifies source media.
+profile to desktop windows is handled by the Windows host at startup for
+Independent mode. Profile storage never opens or modifies source media.
+
+## Independent mode startup
+
+The host enables per-monitor DPI awareness before enumerating displays. It then
+matches profiles by stable display ID and resolves each wallpaper ID against
+the catalog. Missing, unavailable, or invalid targets are logged and skipped
+without preventing other targets from starting. Clone/overlapping geometry is
+skipped to avoid one child surface obscuring another.
+
+The primary display reuses the existing host playback actor and window. When
+Independent assignments exist, its child is confined to the primary display
+bounds. Each assigned secondary display owns a child window positioned in that
+display's physical desktop bounds, a D3D11 device, a recovery worker, and—when
+the assignment is video—its own playback worker and bounded frame queues. Its
+FPS override is applied only to that playback worker. Explorer exit/restart
+events are forwarded to every recovery worker, and shutdown joins playback
+workers before releasing their windows and renderer resources.
+
+Topology changes are not re-enumerated at runtime; that remains issue #96.
+Duplicate and Span presentation modes remain later work.
 
 ## Current runtime evidence
 
 Windows 11 Education 10.0.26300 x64 with Intel Arc 140T exposed one active
-desktop target in the current session. It reported bounds `(0, 0, 1707, 1067)`
-(1707 × 1067 physical pixels), 140% scale (134.4 effective DPI), primary
-status, and approximately 144 Hz. The
-Windows integration test performs two consecutive snapshots and checks that
-IDs and geometry match. Running the test executable in two fresh processes also
-returned the same path-derived ID. The provider’s stable ID is derived from the Windows
-monitor device path and does not depend on `HMONITOR` lifetime.
+desktop target in the current session. With the caller set to per-monitor DPI
+awareness before enumeration, it reported physical bounds `(0, 0, 2560, 1600)`,
+140% scale (134.4 effective DPI), primary status, and approximately 144 Hz.
+The Windows integration test now sets the same awareness before comparing two
+consecutive snapshots. Running the test executable in two fresh processes also
+returned the same path-derived ID. The provider’s stable ID is derived from the
+Windows monitor device path and does not depend on `HMONITOR` lifetime.
 
-This run covered one attached display only. Multiple-display geometry is
-covered with synthetic model tests; Independent, Duplicate, Span, and topology
-recovery remain separate Phase 6 work. Windows 10 was not available for this
-runtime check.
+This enumeration run covered one attached display only. Multiple-display
+geometry is covered with synthetic model tests. The host applies a persisted
+primary Independent profile in the Phase 6 runtime report; a simultaneous
+two-physical-display run is unavailable in this environment. Duplicate, Span,
+and topology recovery remain separate Phase 6 work. Windows 10 was not available
+for these runtime checks.
 
 ## Platform API references
 

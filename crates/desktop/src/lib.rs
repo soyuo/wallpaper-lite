@@ -1,6 +1,7 @@
 //! Windows desktop-process initialization and shell integration.
 
 use wallpaper_core::error::{AppError, ErrorCode};
+use wallpaper_display::DisplayRect;
 
 #[cfg(target_os = "windows")]
 mod lifecycle;
@@ -110,6 +111,22 @@ impl DesktopHost {
         #[cfg(not(target_os = "windows"))]
         {
             let _ = self;
+            Err(DesktopError::UnsupportedPlatform)
+        }
+    }
+
+    /// Create an owned child window positioned over one display's physical desktop bounds.
+    pub fn attach_wallpaper_window_for_display(
+        self,
+        bounds: DisplayRect,
+    ) -> Result<AttachedDesktopWindow, DesktopError> {
+        #[cfg(target_os = "windows")]
+        {
+            window::AttachedDesktopWindow::attach_for_display(self, bounds)
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = (self, bounds);
             Err(DesktopError::UnsupportedPlatform)
         }
     }

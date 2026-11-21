@@ -3,9 +3,14 @@
 use std::collections::HashSet;
 
 use wallpaper_display::enumerate_displays;
+use windows::Win32::UI::HiDpi::{PROCESS_PER_MONITOR_DPI_AWARE, SetProcessDpiAwareness};
 
 #[test]
 fn enumerates_active_displays_with_stable_paths_and_physical_bounds() {
+    if let Err(error) = unsafe { SetProcessDpiAwareness(PROCESS_PER_MONITOR_DPI_AWARE) } {
+        // E_ACCESSDENIED means awareness was already fixed for this test process.
+        assert_eq!(error.code().0, 0x8007_0005_u32 as i32);
+    }
     let snapshot = enumerate_displays().expect("active display enumeration should succeed");
     let repeated = enumerate_displays().expect("a repeated enumeration should succeed");
     assert_eq!(snapshot, repeated, "stable IDs and geometry should repeat");
