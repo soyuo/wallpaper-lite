@@ -82,8 +82,9 @@ profile persistence, and startup-time Independent and Duplicate display
 assignments are implemented. Per-target windows, D3D11 devices, recovery owners,
 and video playback actors are isolated. Independent, Duplicate, and Span
 startup behavior is implemented; physical multi-display behavior remains
-unverified without two displays and is tracked in issue #98. Topology-change
-recovery remains separate Phase 6 work. The shared
+unverified without two displays and is tracked in issue #98. Runtime topology
+re-enumeration and target reconciliation are implemented; physical hotplug and
+DPI-change verification is also tracked in issue #98. The shared
 performance policy model is in `crates/core`, its validated persistence is in
 `crates/media`, and Windows signal detection is collected by the host in
 `host/src/performance_signals.rs`; automatic policy execution remains future
@@ -91,14 +92,18 @@ work.
 
 See [`display-management.md`](display-management.md) for stable target IDs,
 physical bounds, refresh rate, DPI scale, profile validation/persistence,
-Independent, Duplicate, and Span startup behavior, and current Windows multi-display limits. See
+Independent, Duplicate, and Span startup behavior, topology reconciliation, and
+current Windows multi-display limits. See
 [`phase-6-independent-display-acceptance.md`](../development/phase-6-independent-display-acceptance.md)
 for Independent runtime evidence and outstanding physical dual-display checks; see
 [`phase-6-duplicate-display-acceptance.md`](../development/phase-6-duplicate-display-acceptance.md)
 for Duplicate-mode evidence and remaining limitations. Span placement across the virtual desktop and its
 synthetic viewport evidence are recorded in
 [`phase-6-span-acceptance.md`](../development/phase-6-span-acceptance.md); physical dual-display visual
-verification remains outstanding.
+verification remains outstanding. Topology reconciliation implementation and
+synthetic/local evidence are recorded in
+[`phase-6-topology-recovery.md`](../development/phase-6-topology-recovery.md);
+physical hotplug and DPI verification is reserved for issue #98.
 
 See [`media-decoding.md`](media-decoding.md) for the still-image pixel contract,
 resource limits, and WIC behavior. See [`video-source.md`](video-source.md)

@@ -72,8 +72,30 @@ renderer resources.
 The host loads the saved mode when it starts. Restarting after profile changes
 releases the previous target set during shutdown and creates targets for the
 new mode. Live profile editing is part of the Monitor Manager work in issue #97.
-Topology changes are not re-enumerated at runtime; that remains issue #96. Span
-mode remains later work.
+
+## Topology and target reconciliation
+
+The performance signal monitor debounces display, settings, and DPI notifications
+for 300 ms, then publishes a topology revision. The host re-enumerates stable
+display identities and reloads profiles/catalog data. If enumeration or storage
+fails, it keeps the last active output set and waits for a later notification.
+
+The primary child window receives new physical bounds and Span viewport through
+its recovery queue, without blocking the IPC event loop. A serialized primary
+assignment worker reapplies a newly selected primary profile only when the stable
+display/profile/source identity changes; a bounds, DPI, refresh, or Span geometry
+change alone keeps the current decoder and renderer. The secondary target manager
+plans keep/start/replace/remove operations by stable ID and target signature.
+It builds replacements before releasing the prior target, preserves last-good
+outputs when replacement startup fails, retries inactive targets on later
+notifications, and stops only targets no longer present in the resolved plan.
+Each target continues to own its own recovery window and, for video, playback
+worker; an individual failure is contained to that output.
+
+Disconnected profile records remain in the profile file and are eligible again
+when their stable IDs return. Real hotplug, mode-change, and DPI-notification
+behavior across multiple physical displays is still reserved for the Phase 6
+acceptance run in issue #98.
 ## Current runtime evidence
 
 Windows 11 Education 10.0.26300 x64 with Intel Arc 140T exposed one active
@@ -93,8 +115,10 @@ Duplicate profile reload on the single display is documented in the Duplicate
 acceptance report; simultaneous two-display Duplicate behavior remains
 unverified and is tracked separately in issue #98. Span geometry and renderer
 viewport mapping are implemented with synthetic and D3D11 readback coverage;
-physical seam verification is also tracked in issue #98. Topology recovery is
-separate Phase 6 work. Windows 10 was not available for these runtime checks.
+physical seam verification is also tracked in issue #98. The topology
+reconciliation implementation is covered by host and geometry tests; real
+hotplug/DPI behavior across physical displays is included in issue #98. Windows
+10 was not available for these runtime checks.
 
 ## Platform API references
 

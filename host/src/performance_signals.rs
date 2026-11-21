@@ -124,9 +124,10 @@ mod platform {
                     IsIconic, IsWindowVisible, KillTimer, MSG, PBT_APMPOWERSTATUSCHANGE,
                     PBT_APMRESUMEAUTOMATIC, PBT_APMRESUMECRITICAL, PBT_APMRESUMESUSPEND,
                     PBT_APMSUSPEND, PBT_POWERSETTINGCHANGE, PostThreadMessageW, RegisterClassW,
-                    SetTimer, UnregisterClassW, WM_POWERBROADCAST, WM_QUIT, WM_TIMER,
-                    WM_WTSSESSION_CHANGE, WNDCLASSW, WS_OVERLAPPED, WTS_SESSION_LOCK,
-                    WTS_SESSION_UNLOCK,
+                    SetTimer, UnregisterClassW, WM_DISPLAYCHANGE, WM_DPICHANGED,
+                    WM_DPICHANGED_AFTERPARENT, WM_DPICHANGED_BEFOREPARENT, WM_POWERBROADCAST,
+                    WM_QUIT, WM_SETTINGCHANGE, WM_TIMER, WM_WTSSESSION_CHANGE, WNDCLASSW,
+                    WS_OVERLAPPED, WTS_SESSION_LOCK, WTS_SESSION_UNLOCK,
                 },
             },
         },
@@ -140,6 +141,8 @@ mod platform {
 
     const TIMER_ID: usize = 1;
     const SAMPLE_INTERVAL_MS: u32 = 1_000;
+    const DISPLAY_DEBOUNCE_TIMER_ID: usize = 2;
+    const DISPLAY_DEBOUNCE_MS: u32 = 300;
     const WTS_SESSION_NOTIFICATION_FOR_THIS_SESSION: u32 = 0;
     const WTS_INFO_LEVEL1: u32 = 1;
     const WTS_SESSION_FLAG_LOCK: i32 = 0;
@@ -171,18 +174,20 @@ mod platform {
         thread_id: u32,
         thread: Option<JoinHandle<()>>,
         receiver: watch::Receiver<PerformanceSignalSnapshot>,
+        display_receiver: watch::Receiver<u64>,
     }
 
     impl PerformanceSignalMonitor {
         pub fn start() -> Result<Self, SignalMonitorError> {
             let (updates, receiver) = watch::channel(PerformanceSignalSnapshot::default());
+            let (display_updates, display_receiver) = watch::channel(0_u64);
             let (ready_sender, ready_receiver) = mpsc::sync_channel(1);
             let (thread_id_sender, thread_id_receiver) = mpsc::sync_channel(1);
             let thread = thread::Builder::new()
                 .name("wallpaper-performance-signals".to_owned())
                 .spawn(move || {
                     let _ = thread_id_sender.send(unsafe { GetCurrentThreadId() });
-                    if let Err(error) = run_monitor(updates, ready_sender) {
+                    if let Err(error) = run_monitor(updates, display_updates, ready_sender) {
                         tracing::error!(
                             component = "performance",
                             event = "signal_monitor_failed",
@@ -207,6 +212,7 @@ mod platform {
                     thread_id,
                     thread: Some(thread),
                     receiver,
+                    display_receiver,
                 }),
                 Ok(Err(error)) => {
                     let _ = unsafe { PostThreadMessageW(thread_id, WM_QUIT, WPARAM(0), LPARAM(0)) };
@@ -226,6 +232,10 @@ mod platform {
 
         pub fn subscribe(&self) -> watch::Receiver<PerformanceSignalSnapshot> {
             self.receiver.clone()
+        }
+
+        pub fn subscribe_display_changes(&self) -> watch::Receiver<u64> {
+            self.display_receiver.clone()
         }
 
         pub fn stop(mut self) -> bool {
@@ -248,6 +258,7 @@ mod platform {
 
     fn run_monitor(
         updates: watch::Sender<PerformanceSignalSnapshot>,
+        display_updates: watch::Sender<u64>,
         ready: mpsc::SyncSender<Result<(), SignalMonitorError>>,
     ) -> Result<(), SignalMonitorError> {
         let instance = unsafe { GetModuleHandleW(None) }.map_err(|error| SignalMonitorError {
@@ -380,6 +391,13 @@ mod platform {
                     &mut snapshot,
                     SignalUpdate::OnBattery(on_battery, battery_error),
                 );
+            } else if message.message == WM_TIMER && message.wParam.0 == DISPLAY_DEBOUNCE_TIMER_ID {
+                unsafe {
+                    let _ = KillTimer(Some(window), DISPLAY_DEBOUNCE_TIMER_ID);
+                }
+                display_updates.send_modify(|revision| {
+                    *revision = revision.saturating_add(1);
+                });
             } else if message.message == WM_WTSSESSION_CHANGE {
                 let locked = match message.wParam.0 as u32 {
                     WTS_SESSION_LOCK => Some(true),
@@ -423,12 +441,32 @@ mod platform {
                     }
                     _ => {}
                 }
+            } else if is_display_topology_message(message.message)
+                && unsafe {
+                    SetTimer(
+                        Some(window),
+                        DISPLAY_DEBOUNCE_TIMER_ID,
+                        DISPLAY_DEBOUNCE_MS,
+                        None,
+                    )
+                } == 0
+            {
+                tracing::warn!(
+                    component = "display",
+                    event = "display_topology_debounce_failed",
+                    error_code = unsafe { GetLastError().0 as i32 },
+                    "Display change will be reconciled without debounce"
+                );
+                display_updates.send_modify(|revision| {
+                    *revision = revision.saturating_add(1);
+                });
             }
             unsafe { DispatchMessageW(&message) };
         }
 
         unsafe {
             let _ = KillTimer(Some(window), TIMER_ID);
+            let _ = KillTimer(Some(window), DISPLAY_DEBOUNCE_TIMER_ID);
             if session_registration.is_ok() {
                 let _ = WTSUnRegisterSessionNotification(window);
             }
@@ -439,6 +477,17 @@ mod platform {
             let _ = UnregisterClassW(class.lpszClassName, Some(instance.into()));
         }
         message_loop_error.map_or(Ok(()), Err)
+    }
+
+    fn is_display_topology_message(message: u32) -> bool {
+        matches!(
+            message,
+            WM_DISPLAYCHANGE
+                | WM_SETTINGCHANGE
+                | WM_DPICHANGED
+                | WM_DPICHANGED_BEFOREPARENT
+                | WM_DPICHANGED_AFTERPARENT
+        )
     }
 
     unsafe extern "system" fn signal_window_proc(
@@ -561,6 +610,26 @@ mod platform {
             Err(error) => (None, Some(error.code().0)),
         }
     }
+
+    #[cfg(test)]
+    mod topology_message_tests {
+        use super::*;
+
+        #[test]
+        fn recognizes_display_and_dpi_notifications_for_debounce() {
+            for message in [
+                WM_DISPLAYCHANGE,
+                WM_SETTINGCHANGE,
+                WM_DPICHANGED,
+                WM_DPICHANGED_BEFOREPARENT,
+                WM_DPICHANGED_AFTERPARENT,
+            ] {
+                assert!(is_display_topology_message(message));
+            }
+            assert!(!is_display_topology_message(WM_TIMER));
+            assert!(!is_display_topology_message(WM_WTSSESSION_CHANGE));
+        }
+    }
 }
 
 #[cfg(not(windows))]
@@ -581,6 +650,10 @@ mod platform {
 
         pub fn subscribe(&self) -> watch::Receiver<PerformanceSignalSnapshot> {
             watch::channel(PerformanceSignalSnapshot::default()).1
+        }
+
+        pub fn subscribe_display_changes(&self) -> watch::Receiver<u64> {
+            watch::channel(0_u64).1
         }
 
         pub fn stop(self) -> bool {

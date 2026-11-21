@@ -123,6 +123,37 @@ impl AttachedDesktopWindow {
 
         Ok(())
     }
+
+    pub fn set_display_bounds(&self, bounds: DisplayRect) -> Result<(), DesktopError> {
+        self.validate_current()?;
+        let hwnd = hwnd_from_raw(self.raw_handle);
+        let parent_hwnd =
+            unsafe { GetParent(hwnd) }.map_err(|error| DesktopError::WindowPositionFailed {
+                hresult: error.code().0,
+            })?;
+        let previous_dpi_context = set_parent_dpi_context(parent_hwnd)?;
+        let result =
+            map_display_bounds(parent_hwnd, bounds).and_then(|(left, top, width, height)| {
+                unsafe {
+                    SetWindowPos(
+                        hwnd,
+                        Some(HWND_BOTTOM),
+                        left,
+                        top,
+                        width,
+                        height,
+                        SWP_NOACTIVATE | SWP_SHOWWINDOW,
+                    )
+                }
+                .map_err(|error| DesktopError::WindowPositionFailed {
+                    hresult: error.code().0,
+                })
+            });
+        let restore_result = restore_dpi_context(previous_dpi_context);
+        result?;
+        restore_result?;
+        self.validate_current()
+    }
 }
 
 impl Drop for AttachedDesktopWindow {
@@ -212,34 +243,7 @@ fn create_positioned_window(
 ) -> Result<HWND, DesktopError> {
     crate::shell::validate_wallpaper_layer(parent, parent_hwnd.0 as isize)?;
     let (left, top, width, height) = match display_bounds {
-        Some(bounds) => {
-            let mut origin = POINT {
-                x: bounds.left(),
-                y: bounds.top(),
-            };
-            let mut end = POINT {
-                x: bounds.right(),
-                y: bounds.bottom(),
-            };
-            unsafe { SetLastError(WIN32_ERROR(0)) };
-            let origin_offset = unsafe {
-                MapWindowPoints(None, Some(parent_hwnd), std::slice::from_mut(&mut origin))
-            };
-            if origin_offset == 0 && unsafe { GetLastError() } != WIN32_ERROR(0) {
-                return Err(DesktopError::WindowPositionFailed {
-                    hresult: unsafe { GetLastError() }.0 as i32,
-                });
-            }
-            unsafe { SetLastError(WIN32_ERROR(0)) };
-            let end_offset =
-                unsafe { MapWindowPoints(None, Some(parent_hwnd), std::slice::from_mut(&mut end)) };
-            if end_offset == 0 && unsafe { GetLastError() } != WIN32_ERROR(0) {
-                return Err(DesktopError::WindowPositionFailed {
-                    hresult: unsafe { GetLastError() }.0 as i32,
-                });
-            }
-            (origin.x, origin.y, end.x - origin.x, end.y - origin.y)
-        }
+        Some(bounds) => map_display_bounds(parent_hwnd, bounds)?,
         None => {
             let mut bounds = RECT::default();
             unsafe { GetClientRect(parent_hwnd, &mut bounds) }.map_err(|error| {
@@ -317,6 +321,36 @@ fn create_positioned_window(
         return Err(error);
     }
     Ok(hwnd)
+}
+
+fn map_display_bounds(
+    parent_hwnd: HWND,
+    bounds: DisplayRect,
+) -> Result<(i32, i32, i32, i32), DesktopError> {
+    let mut points = [
+        POINT {
+            x: bounds.left(),
+            y: bounds.top(),
+        },
+        POINT {
+            x: bounds.right(),
+            y: bounds.bottom(),
+        },
+    ];
+    unsafe { SetLastError(WIN32_ERROR(0)) };
+    let offset = unsafe { MapWindowPoints(None, Some(parent_hwnd), &mut points) };
+    let last_error = unsafe { GetLastError() };
+    if offset == 0 && last_error != WIN32_ERROR(0) {
+        return Err(DesktopError::WindowPositionFailed {
+            hresult: last_error.0 as i32,
+        });
+    }
+    let width = points[1].x - points[0].x;
+    let height = points[1].y - points[0].y;
+    if width <= 0 || height <= 0 {
+        return Err(DesktopError::DesktopWindowBoundsUnavailable);
+    }
+    Ok((points[0].x, points[0].y, width, height))
 }
 
 fn register_window_class() -> Result<(), DesktopError> {
