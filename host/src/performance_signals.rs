@@ -1,4 +1,5 @@
 use tokio::sync::watch;
+use wallpaper_core::performance_policy::PerformanceSignals;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum SystemPowerState {
@@ -23,6 +24,16 @@ pub struct PerformanceSignalSnapshot {
     pub on_battery: Option<bool>,
     pub power_state: SystemPowerState,
     pub health: SignalDetectorHealth,
+}
+
+/// Build the signals currently owned by Phase 7's automatic pause policies.
+/// Power/battery state is intentionally left to the later battery-policy issue.
+pub fn policy_signals(snapshot: &PerformanceSignalSnapshot) -> PerformanceSignals {
+    PerformanceSignals {
+        fullscreen: snapshot.fullscreen.unwrap_or(false),
+        session_locked: snapshot.session_locked.unwrap_or(false),
+        on_battery: false,
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -666,8 +677,24 @@ pub use platform::PerformanceSignalMonitor;
 
 #[cfg(test)]
 mod tests {
-    use super::{PerformanceSignalSnapshot, SignalUpdate, SystemPowerState, publish_snapshot};
+    use super::{
+        PerformanceSignalSnapshot, SignalUpdate, SystemPowerState, policy_signals, publish_snapshot,
+    };
     use tokio::sync::watch;
+    use wallpaper_core::performance_policy::PerformanceSignals;
+
+    #[test]
+    fn unavailable_signals_fail_open_and_battery_remains_out_of_scope() {
+        assert_eq!(
+            policy_signals(&PerformanceSignalSnapshot::default()),
+            PerformanceSignals::default()
+        );
+        let snapshot = PerformanceSignalSnapshot {
+            on_battery: Some(true),
+            ..PerformanceSignalSnapshot::default()
+        };
+        assert_eq!(policy_signals(&snapshot), PerformanceSignals::default());
+    }
 
     #[test]
     fn duplicate_signal_updates_are_coalesced_and_transitions_are_retained() {

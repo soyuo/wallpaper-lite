@@ -9,6 +9,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use wallpaper_core::performance_policy::{PerformancePolicySettings, PolicyAction};
 use wallpaper_core::playback_settings::{LoopMode, PlaybackSettings, SegmentRange};
 use wallpaper_ipc::protocol::{
     Command, IpcPlaybackState, PlaybackCommandErrorCode, PlaybackCommandReceiver,
@@ -21,7 +22,10 @@ use wallpaper_media::{
 use windows::Win32::Graphics::Direct3D11::ID3D11Device;
 
 use crate::independent_displays::DisplayRefreshRequest;
-use crate::recovery::{ApplySettingsError, DesktopRecoveryWorker, RecoveryFrameSender};
+use crate::{
+    performance_signals::{PerformanceSignalSnapshot, policy_signals},
+    recovery::{ApplySettingsError, DesktopRecoveryWorker, RecoveryFrameSender},
+};
 
 const TICK_INTERVAL: Duration = Duration::from_millis(8);
 const QUEUE_TARGET: usize = 3;
@@ -44,18 +48,28 @@ pub(crate) struct PlaybackWorker {
 }
 
 impl PlaybackWorker {
+    #[cfg(test)]
     pub(crate) fn start(
         commands: PlaybackCommandReceiver,
         device: ID3D11Device,
         recovery: &DesktopRecoveryWorker,
     ) -> std::io::Result<(Self, tokio::sync::watch::Receiver<PlaybackStateEvent>)> {
-        Self::start_with_display_refresh(commands, device, recovery, None)
+        Self::start_with_policy_and_display_refresh(
+            commands,
+            device,
+            recovery,
+            PerformancePolicySettings::default(),
+            None,
+            None,
+        )
     }
 
-    pub(crate) fn start_with_display_refresh(
+    pub(crate) fn start_with_policy_and_display_refresh(
         mut commands: PlaybackCommandReceiver,
         device: ID3D11Device,
         recovery: &DesktopRecoveryWorker,
+        policy_settings: PerformancePolicySettings,
+        signal_receiver: Option<tokio::sync::watch::Receiver<PerformanceSignalSnapshot>>,
         display_refresh_sender: Option<tokio::sync::mpsc::UnboundedSender<DisplayRefreshRequest>>,
     ) -> std::io::Result<(Self, tokio::sync::watch::Receiver<PlaybackStateEvent>)> {
         let frame_sender = recovery.frame_sender();
@@ -78,10 +92,12 @@ impl PlaybackWorker {
         let thread = thread::Builder::new()
             .name("wallpaper-video-playback".to_owned())
             .spawn(move || {
-                let mut controller = PlaybackController::new_with_display_refresh(
+                let mut controller = PlaybackController::new_with_policy_and_display_refresh(
                     device,
                     frame_sender,
                     event_sender,
+                    policy_settings,
+                    signal_receiver,
                     display_refresh_sender,
                 );
                 loop {
@@ -105,6 +121,7 @@ impl PlaybackWorker {
                         Err(tokio::sync::mpsc::error::TryRecvError::Empty) => {}
                     }
 
+                    controller.poll_policy();
                     controller.poll_video_load();
                     controller.tick();
                     thread::sleep(TICK_INTERVAL);
@@ -177,6 +194,80 @@ struct PlaybackController {
     event_sender: tokio::sync::watch::Sender<PlaybackStateEvent>,
     last_event_sent: Instant,
     display_refresh_sender: Option<tokio::sync::mpsc::UnboundedSender<DisplayRefreshRequest>>,
+    policy_settings: PerformancePolicySettings,
+    signal_receiver: Option<tokio::sync::watch::Receiver<PerformanceSignalSnapshot>>,
+    policy_state: PlaybackPolicyState,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum UserPlaybackIntent {
+    Playing,
+    Paused,
+    #[default]
+    Stopped,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct PlaybackPolicyState {
+    action: PolicyAction,
+    user_intent: UserPlaybackIntent,
+    paused_by_policy: bool,
+    play_requested_while_blocked: bool,
+}
+
+impl PlaybackPolicyState {
+    fn user_play(&mut self) -> bool {
+        self.user_intent = UserPlaybackIntent::Playing;
+        if self.action == PolicyAction::PausePlayback {
+            self.play_requested_while_blocked = true;
+            false
+        } else {
+            self.play_requested_while_blocked = false;
+            true
+        }
+    }
+
+    fn user_pause(&mut self) {
+        self.user_intent = UserPlaybackIntent::Paused;
+        self.paused_by_policy = false;
+        self.play_requested_while_blocked = false;
+    }
+
+    fn user_stop(&mut self) {
+        self.user_intent = UserPlaybackIntent::Stopped;
+        self.paused_by_policy = false;
+        self.play_requested_while_blocked = false;
+    }
+
+    fn transition(&mut self, next: PolicyAction, is_playing: bool) -> PolicyTransition {
+        let previous = self.action;
+        self.action = next;
+        let pause_playback = next == PolicyAction::PausePlayback && is_playing;
+        if pause_playback {
+            self.paused_by_policy = true;
+        }
+        let resume_playback = next != PolicyAction::PausePlayback
+            && self.user_intent == UserPlaybackIntent::Playing
+            && (self.paused_by_policy || self.play_requested_while_blocked);
+        if resume_playback {
+            self.paused_by_policy = false;
+            self.play_requested_while_blocked = false;
+        }
+        PolicyTransition {
+            changed: previous != next,
+            pause_rendering: next != PolicyAction::Continue,
+            pause_playback,
+            resume_playback,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct PolicyTransition {
+    changed: bool,
+    pause_rendering: bool,
+    pause_playback: bool,
+    resume_playback: bool,
 }
 
 struct PendingVideoLoad {
@@ -599,13 +690,22 @@ impl PlaybackController {
         frame_sender: RecoveryFrameSender,
         event_sender: tokio::sync::watch::Sender<PlaybackStateEvent>,
     ) -> Self {
-        Self::new_with_display_refresh(device, frame_sender, event_sender, None)
+        Self::new_with_policy_and_display_refresh(
+            device,
+            frame_sender,
+            event_sender,
+            PerformancePolicySettings::default(),
+            None,
+            None,
+        )
     }
 
-    fn new_with_display_refresh(
+    fn new_with_policy_and_display_refresh(
         device: ID3D11Device,
         frame_sender: RecoveryFrameSender,
         event_sender: tokio::sync::watch::Sender<PlaybackStateEvent>,
+        policy_settings: PerformancePolicySettings,
+        signal_receiver: Option<tokio::sync::watch::Receiver<PerformanceSignalSnapshot>>,
         display_refresh_sender: Option<tokio::sync::mpsc::UnboundedSender<DisplayRefreshRequest>>,
     ) -> Self {
         Self {
@@ -626,7 +726,108 @@ impl PlaybackController {
             event_sender,
             last_event_sent: Instant::now(),
             display_refresh_sender,
+            policy_settings,
+            signal_receiver,
+            policy_state: PlaybackPolicyState::default(),
         }
+    }
+
+    fn poll_policy(&mut self) {
+        let signals = if let Some(receiver) = self.signal_receiver.as_mut() {
+            if receiver.has_changed().is_err() {
+                tracing::warn!(
+                    component = "performance",
+                    event = "signal_monitor_stopped",
+                    "Performance signal monitor stopped; automatic pauses are being cleared"
+                );
+                self.signal_receiver = None;
+                Default::default()
+            } else {
+                policy_signals(&receiver.borrow_and_update())
+            }
+        } else {
+            Default::default()
+        };
+        let action = self.policy_settings.evaluate(signals, false).action();
+        let transition = self
+            .policy_state
+            .transition(action, self.scheduler.state() == PlaybackState::Playing);
+        if transition.changed {
+            if !self
+                .frame_sender
+                .set_rendering_paused(transition.pause_rendering)
+            {
+                tracing::warn!(
+                    component = "renderer",
+                    event = "render_policy_update_failed",
+                    "Desktop recovery worker did not accept the rendering policy"
+                );
+            }
+            tracing::info!(
+                component = "performance",
+                event = "automatic_playback_policy_changed",
+                action = ?action,
+                "Automatic playback policy changed"
+            );
+        }
+        let now = self.now_100ns();
+        if transition.pause_playback {
+            let paused = self
+                .source
+                .as_ref()
+                .is_some_and(|source| source.pause().is_ok())
+                && self.scheduler.pause(now).is_ok();
+            if !paused {
+                self.fail_playback(
+                    "automatic_policy_pause_failed",
+                    PlaybackCommandErrorCode::PlaybackFailed,
+                );
+                return;
+            }
+            self.publish_event();
+        } else if transition.resume_playback {
+            if let Err(code) = self.start_source_playback(now) {
+                self.fail_playback("automatic_policy_resume_failed", code);
+                return;
+            }
+            self.publish_event();
+        }
+    }
+
+    fn request_play(&mut self, now: i64) -> Result<(), PlaybackCommandErrorCode> {
+        self.require_source()?;
+        if self.policy_state.user_play() {
+            if let Err(error) = self.start_source_playback(now) {
+                self.policy_state.user_pause();
+                return Err(error);
+            }
+        }
+        Ok(())
+    }
+
+    fn start_source_playback(&mut self, now: i64) -> Result<(), PlaybackCommandErrorCode> {
+        self.require_source()?;
+        let restart_position = self.restart_position_for_play(now)?;
+        if let Some(position) = restart_position {
+            self.source
+                .as_mut()
+                .expect("source checked above")
+                .seek(position)
+                .map_err(|_| PlaybackCommandErrorCode::SeekFailed)?;
+            self.eos_pending = false;
+            self.deferred_frame = None;
+            self.scheduler
+                .seek(position, now)
+                .map_err(|_| PlaybackCommandErrorCode::PlaybackFailed)?;
+        }
+        self.source
+            .as_mut()
+            .expect("source checked above")
+            .play()
+            .map_err(|_| PlaybackCommandErrorCode::PlaybackFailed)?;
+        self.scheduler
+            .play(now)
+            .map_err(|_| PlaybackCommandErrorCode::PlaybackFailed)
     }
 
     fn start_video_load(&mut self, request: PlaybackCommandRequest) {
@@ -708,6 +909,7 @@ impl PlaybackController {
                 self.loading_video = false;
                 self.pending_error = None;
                 self.last_error = None;
+                self.policy_state.user_stop();
                 self.publish_event();
             }
         }
@@ -782,29 +984,7 @@ impl PlaybackController {
         let now = self.now_100ns();
         let result = match command {
             Command::LoadVideo { .. } => Err(PlaybackCommandErrorCode::PlaybackUnavailable),
-            Command::Play => self.require_source().and_then(|()| {
-                let restart_position = self.restart_position_for_play(now)?;
-                if let Some(position) = restart_position {
-                    self.source
-                        .as_mut()
-                        .expect("source checked above")
-                        .seek(position)
-                        .map_err(|_| PlaybackCommandErrorCode::SeekFailed)?;
-                    self.eos_pending = false;
-                    self.deferred_frame = None;
-                    self.scheduler
-                        .seek(position, now)
-                        .map_err(|_| PlaybackCommandErrorCode::PlaybackFailed)?;
-                }
-                self.source
-                    .as_mut()
-                    .expect("source checked above")
-                    .play()
-                    .map_err(|_| PlaybackCommandErrorCode::PlaybackFailed)?;
-                self.scheduler
-                    .play(now)
-                    .map_err(|_| PlaybackCommandErrorCode::PlaybackFailed)
-            }),
+            Command::Play => self.request_play(now),
             Command::Pause => self.require_source().and_then(|()| {
                 self.source
                     .as_ref()
@@ -813,7 +993,9 @@ impl PlaybackController {
                     .map_err(|_| PlaybackCommandErrorCode::PlaybackFailed)?;
                 self.scheduler
                     .pause(now)
-                    .map_err(|_| PlaybackCommandErrorCode::PlaybackFailed)
+                    .map_err(|_| PlaybackCommandErrorCode::PlaybackFailed)?;
+                self.policy_state.user_pause();
+                Ok(())
             }),
             Command::Stop => self.require_source().and_then(|()| {
                 let source = self.source.as_mut().expect("source checked above");
@@ -827,7 +1009,9 @@ impl PlaybackController {
                 self.deferred_frame = None;
                 self.scheduler
                     .stop(now)
-                    .map_err(|_| PlaybackCommandErrorCode::PlaybackFailed)
+                    .map_err(|_| PlaybackCommandErrorCode::PlaybackFailed)?;
+                self.policy_state.user_stop();
+                Ok(())
             }),
             Command::Seek { position_100ns } => self.require_source().and_then(|()| {
                 let source = self.source.as_mut().expect("source checked above");
@@ -1201,6 +1385,7 @@ impl PlaybackController {
         self.source = None;
         self.playback_settings = None;
         self.scheduler = PlaybackScheduler::new();
+        self.policy_state.user_stop();
         self.publish_event();
     }
 
@@ -1347,8 +1532,12 @@ mod tests {
         time::{Duration, Instant},
     };
 
-    use super::{PlaybackController, PlaybackWorker, VideoSourceEvent, VideoSourceWorker};
+    use super::{
+        PlaybackController, PlaybackPolicyState, PlaybackWorker, VideoSourceEvent,
+        VideoSourceWorker,
+    };
     use crate::recovery::DesktopRecoveryWorker;
+    use wallpaper_core::performance_policy::PolicyAction;
     use wallpaper_core::playback_settings::{LoopMode, PlaybackSettings, SegmentRange};
     use wallpaper_desktop::discover_desktop_host;
     use wallpaper_ipc::protocol::{
@@ -1357,6 +1546,114 @@ mod tests {
     };
     use wallpaper_media::PlaybackState;
     use wallpaper_renderer::D3d11Device;
+
+    #[test]
+    fn overlapping_automatic_causes_resume_only_after_the_last_cause_clears() {
+        let mut state = PlaybackPolicyState {
+            user_intent: super::UserPlaybackIntent::Playing,
+            ..PlaybackPolicyState::default()
+        };
+        let first = state.transition(PolicyAction::PausePlayback, true);
+        assert!(first.pause_playback);
+        assert!(first.pause_rendering);
+
+        let overlap = state.transition(PolicyAction::PausePlayback, false);
+        assert!(!overlap.resume_playback);
+
+        let cleared = state.transition(PolicyAction::Continue, false);
+        assert!(cleared.resume_playback);
+        assert!(!cleared.pause_rendering);
+    }
+
+    #[test]
+    fn manual_pause_during_an_automatic_pause_prevents_resume() {
+        let mut state = PlaybackPolicyState {
+            user_intent: super::UserPlaybackIntent::Playing,
+            ..PlaybackPolicyState::default()
+        };
+        assert!(
+            state
+                .transition(PolicyAction::PausePlayback, true)
+                .pause_playback
+        );
+        state.user_pause();
+        let cleared = state.transition(PolicyAction::Continue, false);
+        assert!(!cleared.resume_playback);
+        assert_eq!(state.user_intent, super::UserPlaybackIntent::Paused);
+    }
+
+    #[test]
+    fn manual_stop_during_an_automatic_pause_prevents_resume() {
+        let mut state = PlaybackPolicyState {
+            user_intent: super::UserPlaybackIntent::Playing,
+            ..PlaybackPolicyState::default()
+        };
+        assert!(
+            state
+                .transition(PolicyAction::PausePlayback, true)
+                .pause_playback
+        );
+        state.user_stop();
+        let cleared = state.transition(PolicyAction::Continue, false);
+        assert!(!cleared.resume_playback);
+        assert_eq!(state.user_intent, super::UserPlaybackIntent::Stopped);
+    }
+
+    #[test]
+    fn policy_state_is_independent_per_playback_worker() {
+        let mut first = PlaybackPolicyState {
+            user_intent: super::UserPlaybackIntent::Playing,
+            ..PlaybackPolicyState::default()
+        };
+        let mut second = PlaybackPolicyState {
+            user_intent: super::UserPlaybackIntent::Playing,
+            ..PlaybackPolicyState::default()
+        };
+
+        assert!(
+            first
+                .transition(PolicyAction::PausePlayback, true)
+                .pause_playback
+        );
+        assert!(
+            !second
+                .transition(PolicyAction::Continue, true)
+                .pause_playback
+        );
+        assert!(
+            first
+                .transition(PolicyAction::Continue, false)
+                .resume_playback
+        );
+        assert!(
+            !second
+                .transition(PolicyAction::Continue, true)
+                .resume_playback
+        );
+    }
+
+    #[test]
+    fn play_requested_while_blocked_is_deferred_until_policy_clears() {
+        let mut state = PlaybackPolicyState {
+            action: PolicyAction::PausePlayback,
+            ..PlaybackPolicyState::default()
+        };
+        assert!(!state.user_play());
+        assert!(
+            state
+                .transition(PolicyAction::Continue, false)
+                .resume_playback
+        );
+    }
+
+    #[test]
+    fn rendering_only_policy_does_not_pause_playback() {
+        let mut state = PlaybackPolicyState::default();
+        let transition = state.transition(PolicyAction::PauseRendering, true);
+        assert!(transition.pause_rendering);
+        assert!(!transition.pause_playback);
+        assert!(!transition.resume_playback);
+    }
 
     #[test]
     fn stopping_playback_worker_does_not_require_ipc_sender_disconnect() {

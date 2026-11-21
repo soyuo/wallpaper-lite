@@ -2,8 +2,9 @@
 
 ## Result
 
-The wallpaper host starts a dedicated Windows signal-monitor thread after the
-renderer and playback actor are running. A hidden notification window receives
+The wallpaper host starts a dedicated Windows signal-monitor thread before the
+playback actor, so the initial policy state can be applied before video
+commands are accepted. A hidden notification window receives
 session and power messages. The monitor samples foreground fullscreen state,
 session lock state, and AC/battery state once per second to recover missed
 notifications. Suspend and resume messages update the system power state.
@@ -42,5 +43,5 @@ not tested.
 Fullscreen combines the shell's exclusive-fullscreen signal with a visible
 foreground window covering its nearest monitor. The shell signal may not
 identify every application-specific presentation mode. This issue detects and
-publishes signals; applying the policy model to playback or rendering remains
-separate work.
+publishes signals. Playback and render policy behavior is verified separately
+in [`phase-7-automatic-pause-acceptance.md`](phase-7-automatic-pause-acceptance.md).
