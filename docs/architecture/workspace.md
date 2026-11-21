@@ -105,3 +105,5 @@ settings verification is recorded in
 [`../development/phase-5-playback-acceptance.md`](../development/phase-5-playback-acceptance.md).
 Windows 11 audio, mute, and silent-video verification is recorded in
 [`../development/phase-5-audio-acceptance.md`](../development/phase-5-audio-acceptance.md).
+Windows 11 segment-loop boundary verification is recorded in
+[`../development/phase-5-segment-loop-acceptance.md`](../development/phase-5-segment-loop-acceptance.md).

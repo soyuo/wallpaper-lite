@@ -1400,7 +1400,7 @@ mod tests {
     #[test]
     fn source_worker_repeats_segment_seeks_without_old_or_pre_start_frames() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../crates/media/tests/fixtures/short-h264.mp4");
+            .join("../crates/media/tests/fixtures/loop-boundary-h264.mp4");
         let mut source = VideoSourceWorker::start(path, None).expect("start source worker");
         let deadline = Instant::now() + Duration::from_secs(10);
         let metadata = loop {
@@ -1410,8 +1410,10 @@ mod tests {
             assert!(Instant::now() < deadline, "source open timed out");
             thread::sleep(Duration::from_millis(10));
         };
-        let start_100ns = metadata.duration_100ns() / 2;
+        let start_100ns = 5_000_000;
+        let end_100ns = 10_000_000;
         assert!(start_100ns > 0 && start_100ns < metadata.duration_100ns());
+        assert!(end_100ns <= metadata.duration_100ns());
 
         source.play().expect("start full source iteration");
         wait_for_end_of_stream(&source, source.generation, deadline);
@@ -1425,6 +1427,17 @@ mod tests {
             assert!(
                 first.frame.pts_100ns() >= start_100ns,
                 "a keyframe seek must discard decoded samples before the requested segment start"
+            );
+            assert!(
+                first.frame.pts_100ns() < end_100ns,
+                "the first eligible frame must be inside the segment"
+            );
+            let center_index = first.frame.stride() as usize * (first.frame.height() as usize / 2)
+                + (first.frame.width() as usize / 2) * 4;
+            let center = &first.frame.rgba8()[center_index..center_index + 4];
+            assert!(
+                center[0] as u16 > center[1] as u16 * 2 && center[0] as u16 > center[2] as u16 * 2,
+                "the first eligible frame should be red segment content, got {center:?}"
             );
             source.play().expect("resume segment iteration");
             wait_for_end_of_stream(&source, generation, deadline);

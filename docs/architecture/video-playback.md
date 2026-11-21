@@ -136,3 +136,14 @@ Windows 11 timeline verification is in
 [`../development/phase-5-playback-acceptance.md`](../development/phase-5-playback-acceptance.md);
 audio and mute verification is in
 [`../development/phase-5-audio-acceptance.md`](../development/phase-5-audio-acceptance.md).
+
+## Segment-loop boundary behavior
+
+On a loop seek, the source increments its generation, clears pending decoded
+data, and decodes from the preceding keyframe. Frames before the requested
+segment start are discarded, and the playback actor rejects frames from older
+generations. The current D3D presentation remains on screen until an eligible
+frame is presented. The source channel and scheduler queue each hold at most
+three frames, with at most one additional pending source frame. Windows 11
+measurements for a color-coded H.264 segment are recorded in
+[`../development/phase-5-segment-loop-acceptance.md`](../development/phase-5-segment-loop-acceptance.md).
