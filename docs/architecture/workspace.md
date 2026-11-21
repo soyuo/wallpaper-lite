@@ -89,6 +89,10 @@ physical bounds, refresh rate, DPI scale, profile validation/persistence,
 Independent runtime behavior, and current Windows multi-display limits. See
 [`phase-6-independent-display-acceptance.md`](../development/phase-6-independent-display-acceptance.md)
 for the runtime evidence and outstanding physical dual-display checks.
+Span placement across the virtual desktop and its synthetic viewport evidence
+are recorded in
+[`phase-6-span-acceptance.md`](../development/phase-6-span-acceptance.md); physical
+dual-display visual verification remains outstanding.
 
 See [`media-decoding.md`](media-decoding.md) for the still-image pixel contract,
 resource limits, and WIC behavior. See [`video-source.md`](video-source.md)

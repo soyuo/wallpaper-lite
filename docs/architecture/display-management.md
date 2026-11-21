@@ -88,3 +88,21 @@ for these runtime checks.
 - [EnumDisplayMonitors](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-enumdisplaymonitors)
 - [GetMonitorInfoW](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getmonitorinfow)
 - [GetScaleFactorForMonitor](https://learn.microsoft.com/en-us/windows/win32/api/shellscalingapi/nf-shellscalingapi-getscalefactorformonitor)
+
+## Span mode
+
+When an active profile selects Span, the host selects one wallpaper source and
+computes the union of all connected display rectangles in physical virtual-
+desktop coordinates. Each target keeps its own child window and optional FPS
+override. `SpanBounds` carries the shared virtual rectangle plus the target
+rectangle; the renderer computes the transformed/cropped image placement once
+over the virtual rectangle, then maps the destination quad into each target's
+local viewport while preserving the same source UV coordinates. Target surfaces
+clip the portions outside their bounds. The same bounds are reapplied when the
+host recreates a window after Explorer restarts.
+
+The renderer has synthetic geometry coverage for negative origins, mixed target
+sizes, gaps, crop, and transforms. A Windows D3D11 readback test verifies that
+synthetic left/right target viewports show the corresponding continuous source
+slices. Physical multi-display visual verification is tracked in
+[`phase-6-span-acceptance.md`](../development/phase-6-span-acceptance.md).

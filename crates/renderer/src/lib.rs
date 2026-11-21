@@ -9,7 +9,7 @@ mod preview;
 pub use color::ColorAdjustments;
 pub use placement::{
     ImagePlacement, ImageTransform, NormalizedCrop, PlacementDimensions, PlacementMode,
-    PlacementPoint, PlacementRect, calculate_image_placement,
+    PlacementPoint, PlacementRect, calculate_image_placement, calculate_span_image_placement,
     calculate_transformed_image_placement,
 };
 pub use preview::{EDITOR_PREVIEW_MAX_EDGE, RenderedEditorPreview, render_editor_preview};
@@ -231,6 +231,13 @@ impl<'a> D3d11ImagePresenter<'a> {
     pub fn set_editor_settings(
         &mut self,
         _settings: &wallpaper_core::editor_settings::WallpaperEditorSettings,
+    ) -> Result<(), RendererError> {
+        Err(RendererError::UnsupportedPlatform)
+    }
+
+    pub fn set_span_bounds(
+        &mut self,
+        _bounds: Option<wallpaper_display::SpanBounds>,
     ) -> Result<(), RendererError> {
         Err(RendererError::UnsupportedPlatform)
     }

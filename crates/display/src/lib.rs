@@ -59,7 +59,10 @@ pub struct DisplayRect {
 
 impl DisplayRect {
     pub fn new(left: i32, top: i32, right: i32, bottom: i32) -> Result<Self, DisplayError> {
-        if right <= left || bottom <= top {
+        let width = i64::from(right) - i64::from(left);
+        let height = i64::from(bottom) - i64::from(top);
+        if width <= 0 || height <= 0 || width > i64::from(u32::MAX) || height > i64::from(u32::MAX)
+        {
             return Err(DisplayError::InvalidGeometry);
         }
 
@@ -94,6 +97,60 @@ impl DisplayRect {
     pub const fn height(self) -> u32 {
         (self.bottom as i64 - self.top as i64) as u32
     }
+}
+
+/// The shared virtual desktop and one physical output's viewport within it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SpanBounds {
+    virtual_desktop: DisplayRect,
+    target: DisplayRect,
+}
+
+impl SpanBounds {
+    pub fn new(virtual_desktop: DisplayRect, target: DisplayRect) -> Result<Self, DisplayError> {
+        if target.left() < virtual_desktop.left()
+            || target.top() < virtual_desktop.top()
+            || target.right() > virtual_desktop.right()
+            || target.bottom() > virtual_desktop.bottom()
+        {
+            return Err(DisplayError::InvalidGeometry);
+        }
+        Ok(Self {
+            virtual_desktop,
+            target,
+        })
+    }
+
+    pub const fn virtual_desktop(self) -> DisplayRect {
+        self.virtual_desktop
+    }
+
+    pub const fn target(self) -> DisplayRect {
+        self.target
+    }
+}
+
+/// Return the physical bounding rectangle containing all active display rectangles.
+pub fn virtual_desktop_bounds(displays: &[DisplayRect]) -> Result<DisplayRect, DisplayError> {
+    let Some(first) = displays.first() else {
+        return Err(DisplayError::InvalidGeometry);
+    };
+    let mut left = first.left();
+    let mut top = first.top();
+    let mut right = first.right();
+    let mut bottom = first.bottom();
+    for display in &displays[1..] {
+        left = left.min(display.left());
+        top = top.min(display.top());
+        right = right.max(display.right());
+        bottom = bottom.max(display.bottom());
+    }
+    let width = i64::from(right) - i64::from(left);
+    let height = i64::from(bottom) - i64::from(top);
+    if width > i64::from(u32::MAX) || height > i64::from(u32::MAX) {
+        return Err(DisplayError::InvalidGeometry);
+    }
+    DisplayRect::new(left, top, right, bottom)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -343,6 +400,21 @@ mod tests {
             DisplayId::from_device_path("  "),
             Err(DisplayError::InvalidDevicePath)
         );
+    }
+
+    #[test]
+    fn virtual_bounds_include_negative_origins_and_monitor_gaps() {
+        let left = DisplayRect::new(-1_920, 0, 0, 1_080).unwrap();
+        let upper = DisplayRect::new(0, -1_080, 1_920, 0).unwrap();
+        let virtual_bounds = virtual_desktop_bounds(&[left, upper]).unwrap();
+
+        assert_eq!(
+            virtual_bounds,
+            DisplayRect::new(-1_920, -1_080, 1_920, 1_080).unwrap()
+        );
+        assert!(SpanBounds::new(virtual_bounds, left).is_ok());
+        assert!(SpanBounds::new(virtual_bounds, upper).is_ok());
+        assert!(virtual_desktop_bounds(&[]).is_err());
     }
 
     #[test]

@@ -11,7 +11,7 @@ use wallpaper_core::{
 use wallpaper_desktop::discover_desktop_host;
 use wallpaper_display::{
     DisplayInfo, DisplayPresentationMode, DisplayProfile, DisplayProfileSet, DisplayRect,
-    DisplaySnapshot, enumerate_displays,
+    DisplaySnapshot, SpanBounds, enumerate_displays, virtual_desktop_bounds,
 };
 use wallpaper_ipc::protocol::{
     Command, PlaybackCommandSender, PlaybackStateEvent, ResponseResult, playback_command_channel,
@@ -32,6 +32,7 @@ pub(crate) struct ResolvedDisplayAssignment {
     pub(crate) display: DisplayInfo,
     pub(crate) profile: DisplayProfile,
     pub(crate) wallpaper: WallpaperEntry,
+    pub(crate) span_bounds: Option<SpanBounds>,
 }
 
 pub(crate) struct ResolvedDisplayAssignments {
@@ -79,8 +80,32 @@ pub(crate) fn load_display_assignments() -> ResolvedDisplayAssignments {
         }
     };
 
+    let selected_profiles = select_profiles_for_active_mode(&snapshot, &profiles);
+    let is_span = selected_profiles
+        .first()
+        .is_some_and(|(_, profile)| profile.presentation_mode() == DisplayPresentationMode::Span);
+    let virtual_bounds = if is_span {
+        let rectangles: Vec<_> = snapshot
+            .displays()
+            .iter()
+            .map(DisplayInfo::bounds)
+            .collect();
+        match virtual_desktop_bounds(&rectangles) {
+            Ok(bounds) => Some(bounds),
+            Err(error) => {
+                tracing::error!(event = "span_virtual_bounds_invalid", error = ?error,
+                    "Span display geometry is invalid; no display targets will start");
+                return ResolvedDisplayAssignments {
+                    primary_bounds,
+                    profiles: Vec::new(),
+                };
+            }
+        }
+    } else {
+        None
+    };
     let mut assignments = Vec::new();
-    for (target_display, profile) in select_independent_profiles(&snapshot, &profiles) {
+    for (target_display, profile) in selected_profiles {
         let Some(wallpaper) = library.get_by_raw_id(profile.wallpaper_id()) else {
             tracing::warn!(
                 event = "display_wallpaper_missing",
@@ -101,6 +126,9 @@ pub(crate) fn load_display_assignments() -> ResolvedDisplayAssignments {
             continue;
         }
         assignments.push(ResolvedDisplayAssignment {
+            span_bounds: virtual_bounds.and_then(|virtual_bounds| {
+                SpanBounds::new(virtual_bounds, target_display.bounds()).ok()
+            }),
             display: target_display,
             profile,
             wallpaper: wallpaper.clone(),
@@ -110,9 +138,9 @@ pub(crate) fn load_display_assignments() -> ResolvedDisplayAssignments {
         component = "display",
         event = "display_assignments_resolved",
         active_display_count = snapshot.displays().len(),
-        independent_profile_count = assignments.len(),
+        selected_profile_count = assignments.len(),
         primary_bounds = ?primary_bounds,
-        "Resolved independent display assignments"
+        "Resolved display profile assignments"
     );
     ResolvedDisplayAssignments {
         primary_bounds,
@@ -120,10 +148,44 @@ pub(crate) fn load_display_assignments() -> ResolvedDisplayAssignments {
     }
 }
 
-fn select_independent_profiles(
+fn select_profiles_for_active_mode(
     snapshot: &DisplaySnapshot,
     profiles: &DisplayProfileSet,
 ) -> Vec<(DisplayInfo, DisplayProfile)> {
+    let span_sources: Vec<_> = snapshot
+        .displays()
+        .iter()
+        .filter_map(|display| {
+            profiles
+                .get(display.id())
+                .filter(|profile| profile.presentation_mode() == DisplayPresentationMode::Span)
+                .map(|profile| (display.clone(), profile.clone()))
+        })
+        .collect();
+    if let Some((_, source_profile)) = span_sources
+        .iter()
+        .find(|(display, _)| display.is_primary())
+        .or_else(|| span_sources.first())
+    {
+        return snapshot
+            .displays()
+            .iter()
+            .filter_map(|display| {
+                let target_fps = profiles
+                    .get(display.id())
+                    .and_then(DisplayProfile::fps_override)
+                    .or_else(|| source_profile.fps_override());
+                DisplayProfile::new(
+                    display.id().clone(),
+                    source_profile.wallpaper_id(),
+                    DisplayPresentationMode::Span,
+                    target_fps,
+                )
+                .ok()
+                .map(|profile| (display.clone(), profile))
+            })
+            .collect();
+    }
     snapshot
         .displays()
         .iter()
@@ -202,12 +264,12 @@ pub(crate) fn start_assigned_primary_video(
     )
 }
 
-pub(crate) struct IndependentDisplayManager {
-    targets: Vec<IndependentDisplayTarget>,
+pub(crate) struct DisplayTargetManager {
+    targets: Vec<DisplayTarget>,
     stopped: bool,
 }
 
-impl IndependentDisplayManager {
+impl DisplayTargetManager {
     pub(crate) fn start(
         runtime: &tokio::runtime::Runtime,
         assignments: &[ResolvedDisplayAssignment],
@@ -215,11 +277,11 @@ impl IndependentDisplayManager {
     ) -> Self {
         let mut targets = Vec::new();
         for assignment in select_secondary_assignments(assignments, primary_bounds) {
-            match IndependentDisplayTarget::start(runtime, assignment) {
+            match DisplayTarget::start(runtime, assignment) {
                 Ok(target) => targets.push(target),
                 Err((device_name, stage)) => tracing::error!(
                     component = "display",
-                    event = "independent_display_start_failed",
+                    event = "display_target_start_failed",
                     %device_name,
                     stage,
                     "Could not start this display; other display playback remains active"
@@ -270,20 +332,20 @@ impl IndependentDisplayManager {
     }
 }
 
-impl Drop for IndependentDisplayManager {
+impl Drop for DisplayTargetManager {
     fn drop(&mut self) {
         let _ = self.stop();
     }
 }
 
-struct IndependentDisplayTarget {
+struct DisplayTarget {
     device_name: String,
     recovery: Option<DesktopRecoveryWorker>,
     playback: Option<PlaybackWorker>,
     command_sender: Option<PlaybackCommandSender>,
 }
 
-impl IndependentDisplayTarget {
+impl DisplayTarget {
     fn start(
         runtime: &tokio::runtime::Runtime,
         assignment: ResolvedDisplayAssignment,
@@ -297,8 +359,9 @@ impl IndependentDisplayTarget {
         let device =
             D3d11Device::create_hardware().map_err(|_| (device_name.clone(), "d3d11_device"))?;
         let media_device = device.device().clone();
-        let recovery = DesktopRecoveryWorker::start(window, device)
-            .map_err(|_| (device_name.clone(), "recovery_worker"))?;
+        let recovery =
+            DesktopRecoveryWorker::start_with_span(window, device, assignment.span_bounds)
+                .map_err(|_| (device_name.clone(), "recovery_worker"))?;
         let mut target = Self {
             device_name: device_name.clone(),
             recovery: Some(recovery),
@@ -343,22 +406,23 @@ impl IndependentDisplayTarget {
             }
         };
         result?;
-        tracing::info!(component = "display", event = "independent_display_started", %device_name,
+        tracing::info!(component = "display", event = "display_target_started", %device_name,
             wallpaper_id = assignment.profile.wallpaper_id(), fps_override = ?assignment.profile.fps_override(),
-            "Independent display assignment started");
+            presentation_mode = ?assignment.profile.presentation_mode(),
+            "Display target started");
         Ok(target)
     }
 }
 
-impl Drop for IndependentDisplayTarget {
+impl Drop for DisplayTarget {
     fn drop(&mut self) {
         let _ = self.stop_resources();
     }
 }
 
-impl IndependentDisplayTarget {
+impl DisplayTarget {
     fn disable(&mut self, stage: &'static str) {
-        tracing::error!(component = "display", event = "independent_display_disabled",
+        tracing::error!(component = "display", event = "display_target_disabled",
             device_name = %self.device_name, stage,
             "This display's recovery worker stopped; other display targets remain active");
         let _ = self.stop_resources();
@@ -543,7 +607,7 @@ mod tests {
         ])
         .unwrap();
 
-        let selected = select_independent_profiles(&displays, &profiles)
+        let selected = select_profiles_for_active_mode(&displays, &profiles)
             .into_iter()
             .filter(|(display, _)| !display.is_primary())
             .collect::<Vec<_>>();
@@ -552,6 +616,49 @@ mod tests {
         assert_eq!(selected[0].0.bounds().left(), 1920);
         assert_eq!(selected[0].1.wallpaper_id(), 22);
         assert_eq!(selected[0].1.fps_override(), Some(60));
+    }
+
+    #[test]
+    fn span_profile_fans_one_source_across_all_displays_and_keeps_target_fps() {
+        let displays = DisplaySnapshot::new(vec![
+            display("display-a", 0, true),
+            display("display-b", 1920, false),
+            display("display-c", 3840, false),
+        ])
+        .unwrap();
+        let profiles = DisplayProfileSet::new(vec![
+            DisplayProfile::new(
+                DisplayId::from_device_path("display-b").unwrap(),
+                22,
+                DisplayPresentationMode::Span,
+                Some(30),
+            )
+            .unwrap(),
+            DisplayProfile::new(
+                DisplayId::from_device_path("display-c").unwrap(),
+                33,
+                DisplayPresentationMode::Independent,
+                Some(60),
+            )
+            .unwrap(),
+        ])
+        .unwrap();
+
+        let selected = select_profiles_for_active_mode(&displays, &profiles);
+        assert_eq!(selected.len(), 3);
+        assert!(
+            selected
+                .iter()
+                .all(|(_, profile)| profile.presentation_mode() == DisplayPresentationMode::Span)
+        );
+        assert!(
+            selected
+                .iter()
+                .all(|(_, profile)| profile.wallpaper_id() == 22)
+        );
+        assert_eq!(selected[0].1.fps_override(), Some(30));
+        assert_eq!(selected[1].1.fps_override(), Some(30));
+        assert_eq!(selected[2].1.fps_override(), Some(60));
     }
 
     #[test]

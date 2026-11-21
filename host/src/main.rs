@@ -126,7 +126,12 @@ fn main() -> process::ExitCode {
         .profiles
         .iter()
         .any(|assignment| !assignment.display.is_primary());
-    let has_independent_assignment = !display_assignments.profiles.is_empty();
+    let has_display_assignment = !display_assignments.profiles.is_empty();
+    let primary_span_bounds = display_assignments
+        .profiles
+        .iter()
+        .find(|assignment| assignment.display.is_primary())
+        .and_then(|assignment| assignment.span_bounds);
 
     let desktop_host = match wallpaper_desktop::discover_desktop_host() {
         Ok(desktop_host) => desktop_host,
@@ -167,14 +172,14 @@ fn main() -> process::ExitCode {
         feature_level = format!("0x{:04X}", graphics_device.feature_level()),
         "D3D11 device and immediate context initialized"
     );
-    let wallpaper_window_result = if has_independent_assignment {
+    let wallpaper_window_result = if has_display_assignment {
         match display_assignments.primary_bounds {
             Some(bounds) => desktop_host.attach_wallpaper_window_for_display(bounds),
             None => {
                 tracing::error!(
                     component = "display",
                     event = "primary_display_bounds_unavailable",
-                    "Secondary independent assignments cannot start without primary display bounds"
+                    "Display assignments cannot start without primary display bounds"
                 );
                 desktop_host.attach_wallpaper_window()
             }
@@ -222,8 +227,11 @@ fn main() -> process::ExitCode {
     );
 
     let media_device = graphics_device.device().clone();
-    let mut desktop_recovery = match DesktopRecoveryWorker::start(wallpaper_window, graphics_device)
-    {
+    let mut desktop_recovery = match DesktopRecoveryWorker::start_with_span(
+        wallpaper_window,
+        graphics_device,
+        primary_span_bounds,
+    ) {
         Ok(recovery) => recovery,
         Err(error) => {
             tracing::error!(
@@ -346,7 +354,7 @@ fn main() -> process::ExitCode {
             }
         }
     }
-    let mut independent_displays = independent_displays::IndependentDisplayManager::start(
+    let mut display_targets = independent_displays::DisplayTargetManager::start(
         &runtime,
         if has_secondary_assignment && display_assignments.primary_bounds.is_some() {
             &display_assignments.profiles
@@ -384,7 +392,7 @@ fn main() -> process::ExitCode {
                                     "Primary display recovery stopped; independent targets will continue"
                                 );
                             }
-                            independent_displays.explorer_exited();
+                            display_targets.explorer_exited();
                         }
                         Ok(ShellLifecycleEvent::ExplorerRestarted { shell_process_id, host_kind }) => {
                             tracing::info!(
@@ -401,7 +409,7 @@ fn main() -> process::ExitCode {
                                     "Primary display recovery remains unavailable; independent targets continue"
                                 );
                             }
-                            independent_displays.explorer_restarted();
+                            display_targets.explorer_restarted();
                         }
                         Ok(ShellLifecycleEvent::MonitorFailed { stage, error_code }) => {
                             tracing::error!(
@@ -428,7 +436,7 @@ fn main() -> process::ExitCode {
         }
     });
     let playback_stopped = playback_worker.stop();
-    let independent_stopped = independent_displays.stop();
+    let targets_stopped = display_targets.stop();
     if !playback_stopped {
         tracing::error!(
             component = "media",
@@ -443,11 +451,11 @@ fn main() -> process::ExitCode {
         stop_desktop_recovery(&mut desktop_recovery);
         drop(desktop_recovery);
     }
-    if !independent_stopped {
+    if !targets_stopped {
         tracing::error!(
             component = "display",
-            event = "independent_display_shutdown_incomplete",
-            "At least one independent display worker did not stop cleanly"
+            event = "display_target_shutdown_incomplete",
+            "At least one display target worker did not stop cleanly"
         );
     }
     drop(shell_lifecycle_monitor);
