@@ -66,7 +66,9 @@ media is never modified. Single-display UI persistence and host-refresh rollback
 smoke results are recorded in
 [`phase-6-display-manager-acceptance.md`](../development/phase-6-display-manager-acceptance.md).
 Physical multi-display rendering and mode behavior are verified separately in
-the Phase 6 acceptance issue #98.
+the Phase 6 acceptance issue #98. The current environment and remaining
+physical multi-display checks are summarized in
+[`phase-6-multi-monitor-acceptance.md`](../development/phase-6-multi-monitor-acceptance.md).
 
 ## Startup mode resolution
 
