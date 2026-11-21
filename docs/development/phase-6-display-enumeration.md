@@ -5,7 +5,7 @@
 - OS: Windows 11 Education, 10.0.26300, x64
 - GPU: Intel Arc 140T 8GB, driver 32.0.101.6104
 - Active Windows desktop displays: 1
-- Display snapshot: primary bounds `(0, 0, 1707, 1067)` (1707 × 1067 physical pixels), 140% scale, 134.4 effective DPI, approximately 144 Hz
+- Display snapshot: primary bounds `(0, 0, 2560, 1600)` (2560 × 1600 physical pixels), 140% scale, 134.4 effective DPI, approximately 144 Hz
 
 ## Verification
 
@@ -13,9 +13,10 @@
 cargo +stable test -p wallpaper-display --target x86_64-pc-windows-msvc -- --test-threads=1 --nocapture
 ```
 
-The Windows integration test enumerated one active target and repeated the
-snapshot in the same process; stable IDs and geometry matched. Running the test
-binary in two fresh processes also returned the same stable ID. Portable tests
+The Windows integration test sets per-monitor DPI awareness before enumerating
+one active target and repeating the snapshot; stable IDs and physical geometry
+matched. Running the test binary in two fresh processes also returned the same
+stable ID. Portable tests
 cover case-insensitive device-path identity, invalid IDs, negative virtual
 origins, physical extents, deterministic ordering, duplicate IDs, and invalid
 scale values.

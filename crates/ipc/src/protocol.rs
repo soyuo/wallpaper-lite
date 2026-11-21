@@ -285,7 +285,8 @@ pub fn playback_command_channel() -> (PlaybackCommandSender, PlaybackCommandRece
 }
 
 impl PlaybackCommandSender {
-    pub(crate) async fn dispatch(&self, command: Command) -> ResponseResult {
+    /// Dispatch a command to an in-process playback worker.
+    pub async fn dispatch(&self, command: Command) -> ResponseResult {
         let (response, result) = oneshot::channel();
         if self
             .0
