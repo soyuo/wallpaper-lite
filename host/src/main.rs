@@ -381,7 +381,7 @@ fn main() -> process::ExitCode {
                                 tracing::error!(
                                     component = "desktop",
                                     event = "desktop_recovery_worker_stopped",
-                                    "Primary display recovery stopped; independent targets will continue"
+                                    "Primary display recovery stopped; other display targets will continue"
                                 );
                             }
                             independent_displays.explorer_exited();
@@ -398,7 +398,7 @@ fn main() -> process::ExitCode {
                                 tracing::error!(
                                     component = "desktop",
                                     event = "desktop_recovery_worker_stopped",
-                                    "Primary display recovery remains unavailable; independent targets continue"
+                                    "Primary display recovery remains unavailable; other display targets continue"
                                 );
                             }
                             independent_displays.explorer_restarted();
@@ -446,7 +446,7 @@ fn main() -> process::ExitCode {
     if !independent_stopped {
         tracing::error!(
             component = "display",
-            event = "independent_display_shutdown_incomplete",
+            event = "display_target_shutdown_incomplete",
             "At least one independent display worker did not stop cleanly"
         );
     }
