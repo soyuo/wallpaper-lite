@@ -8,9 +8,16 @@ manual pause is always preserved as `PausePlayback`, regardless of automatic
 signals.
 
 The current defaults pause playback for fullscreen and session lock, and
-continue while on battery. This module only defines settings and evaluates a
-snapshot; it does not query Windows or change playback. Signal collection and
-applying decisions are separate host work.
+continue while on battery. The host samples fullscreen, session-lock, battery,
+and suspend/resume state on a dedicated Windows message thread. Session and
+power notifications are registered on its hidden notification window; a
+one-second poll recovers missed changes and checks fullscreen geometry. A
+Tokio `watch` channel keeps only the latest snapshot, and duplicate states are
+not republished. If the monitor cannot start or a signal query fails, the host
+reports the stage and numeric error while continuing wallpaper rendering. The
+monitor reports signals only; automatic policy execution remains a later step.
+Windows 11 smoke details and untested runtime conditions are recorded in
+[`docs/development/phase-7-signal-detection.md`](../development/phase-7-signal-detection.md).
 
 `wallpaper-media` persists the schema-v1 snapshot at
 `%APPDATA%\\WallpaperLite\\performance-policy.json`. Reads and writes are

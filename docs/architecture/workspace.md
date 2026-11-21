@@ -82,7 +82,9 @@ stable-ID keyed display-profile persistence are implemented. Applying display
 assignments to windows and topology-change recovery remain later boundaries in
 `crates/display`. The shared performance policy model is in `crates/core` and
 its validated per-user persistence is in `crates/media`; Windows signal
-detection and policy execution remain future runtime work.
+detection is collected by the host in `host/src/performance_signals.rs`;
+automatic policy execution remains future runtime work. The runtime evidence
+is recorded in `docs/development/phase-7-signal-detection.md`.
 
 See [`display-management.md`](display-management.md) for stable target IDs,
 physical bounds, refresh rate, DPI scale, profile validation and persistence,
