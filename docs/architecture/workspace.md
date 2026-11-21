@@ -77,14 +77,18 @@ Component (WIC) for PNG, JPEG, and BMP. Image placement, transform, and color
 adjustments are implemented in `crates/renderer`. Media Foundation opens H.264
 sources and decodes timestamped RGBA8 frames, with software decoding and
 D3D11/DXVA-preferred paths. The bounded frame queue, playback scheduler, and
-D3D11 video-frame presentation, active display enumeration, and atomic
-stable-ID keyed display-profile persistence are implemented. Applying display
-assignments to windows, topology-change recovery, and performance policy remain
-later boundaries in `crates/display` and `crates/performance`.
+D3D11 video-frame presentation, active display enumeration, atomic stable-ID
+profile persistence, and startup-time Independent display assignments are
+implemented. Per-target windows, D3D11 devices, recovery owners, and video
+playback actors are isolated; topology-change recovery, Duplicate/Span modes,
+and performance policy remain later boundaries in `crates/display` and
+`crates/performance`.
 
 See [`display-management.md`](display-management.md) for stable target IDs,
-physical bounds, refresh rate, DPI scale, profile validation and persistence,
-and the current Windows enumeration limit.
+physical bounds, refresh rate, DPI scale, profile validation/persistence,
+Independent runtime behavior, and current Windows multi-display limits. See
+[`phase-6-independent-display-acceptance.md`](../development/phase-6-independent-display-acceptance.md)
+for the runtime evidence and outstanding physical dual-display checks.
 
 See [`media-decoding.md`](media-decoding.md) for the still-image pixel contract,
 resource limits, and WIC behavior. See [`video-source.md`](video-source.md)
