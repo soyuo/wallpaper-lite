@@ -12,6 +12,7 @@ mod editor_settings;
 mod frame_queue;
 mod import;
 mod library;
+mod performance_policy;
 mod playback;
 mod playback_settings;
 #[cfg(target_os = "windows")]
@@ -30,6 +31,7 @@ pub use library::{
     Availability, CatalogStore, LibraryError, MediaKind, WallpaperEntry, WallpaperId,
     WallpaperLibrary,
 };
+pub use performance_policy::{PerformancePolicyStore, PerformancePolicyStoreError};
 pub use playback::{
     PlaybackError, PlaybackScheduler, PlaybackState, VideoFpsLimit, VideoFpsLimitError,
     VideoFpsPreset, VideoPlaybackSpeed, VideoPlaybackSpeedError,
@@ -39,6 +41,10 @@ pub use wallpaper_core::editor_settings::{
     EDITOR_SETTINGS_SCHEMA_VERSION, EditorColorSettings, EditorSettingsValidationError,
     NormalizedCrop, NormalizedPoint, PhysicalPosition, PhysicalSize, PlacementMode, RenderSettings,
     Scale2d, WallpaperEditorSettings,
+};
+pub use wallpaper_core::performance_policy::{
+    PERFORMANCE_POLICY_SCHEMA_VERSION, PerformanceDecision, PerformancePolicySettings,
+    PerformanceSignals, PolicyAction,
 };
 pub use wallpaper_core::playback_settings::{
     LoopMode, MIN_SEGMENT_DURATION_MS, PLAYBACK_SETTINGS_SCHEMA_VERSION, PlaybackSettings,
