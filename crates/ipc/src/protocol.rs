@@ -8,7 +8,7 @@ use crate::{IpcError, error::from_io};
 
 pub const PIPE_NAME: &str = r"\\.\pipe\wallpaper-lite";
 pub const PLAYBACK_EVENTS_PIPE_NAME: &str = r"\\.\pipe\wallpaper-lite-playback-events";
-pub const PROTOCOL_VERSION: u16 = 6;
+pub const PROTOCOL_VERSION: u16 = 7;
 pub const MAX_FRAME_BYTES: usize = 4 * 1024;
 pub(crate) const IO_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
 const COMMAND_QUEUE_CAPACITY: usize = 16;
@@ -126,6 +126,8 @@ pub struct PlaybackStateEvent {
     pub duration_100ns: Option<i64>,
     pub frame_rate_numerator: Option<u32>,
     pub frame_rate_denominator: Option<u32>,
+    pub audio_available: bool,
+    pub audio_effective_muted: bool,
     pub speed_percent: u16,
     pub fps_limit: u16,
     pub loading_video: bool,
@@ -429,6 +431,8 @@ mod tests {
                 duration_100ns: Some(10_000_000),
                 frame_rate_numerator: Some(30),
                 frame_rate_denominator: Some(1),
+                audio_available: true,
+                audio_effective_muted: false,
                 speed_percent: 100,
                 fps_limit: 60,
                 loading_video: true,

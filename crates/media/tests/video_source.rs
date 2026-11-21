@@ -50,6 +50,71 @@ fn opens_h264_mp4_and_reports_metadata_without_modifying_source() {
 
 #[cfg(target_os = "windows")]
 #[test]
+fn audio_track_is_detected_and_controls_accept_volume_mute_and_seek() {
+    let path = fixture("short-h264-aac.mp4");
+    let original_bytes = fs::read(&path).unwrap();
+    let mut source = VideoSource::open(&path).expect("H.264/AAC fixture should open");
+    assert!(source.has_audio());
+    source
+        .configure_audio(35, true, 100, false)
+        .expect("volume and mute should be configurable while paused");
+    source
+        .seek(5_000_000)
+        .expect("audio and video should seek together");
+    assert!(
+        source
+            .audio_time_100ns()
+            .is_some_and(|position| position.abs_diff(5_000_000) <= 1_000_000)
+    );
+    source
+        .configure_audio(40, false, 100, true)
+        .expect("1x playback should configure audio volume");
+    assert!((source.audio_volume().unwrap() - 0.4).abs() < 0.001);
+    assert_eq!(source.audio_is_muted(), Some(false));
+    source
+        .configure_audio(80, true, 100, true)
+        .expect("user mute should apply without pausing video");
+    assert!((source.audio_volume().unwrap() - 0.8).abs() < 0.001);
+    assert_eq!(source.audio_is_muted(), Some(true));
+    let muted_playing_time = source.audio_time_100ns().unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    assert!(source.audio_time_100ns().unwrap() >= muted_playing_time + 1_000_000);
+    source
+        .configure_audio(80, false, 200, true)
+        .expect("non-1x playback should keep audio suppressed");
+    assert_eq!(source.audio_is_muted(), Some(true));
+    let non_1x_time = source.audio_time_100ns().expect("audio clock should exist");
+    std::thread::sleep(std::time::Duration::from_millis(120));
+    assert!(source.audio_time_100ns().unwrap() - non_1x_time < 2_000_000);
+    source
+        .configure_audio(80, false, 100, true)
+        .expect("1x playback should start audio");
+    let playing_time = source.audio_time_100ns().unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    assert!(source.audio_time_100ns().unwrap() >= playing_time + 1_000_000);
+    source
+        .configure_audio(80, false, 100, false)
+        .expect("audio should pause with video");
+    let paused_time = source.audio_time_100ns().unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    assert!(source.audio_time_100ns().unwrap() <= paused_time + 500_000);
+    drop(source);
+    assert_eq!(fs::read(path).unwrap(), original_bytes);
+}
+
+#[cfg(target_os = "windows")]
+#[test]
+fn silent_video_remains_valid_without_an_audio_engine() {
+    let mut source = VideoSource::open(fixture("short-h264.mp4"))
+        .expect("silent H.264 video should remain supported");
+    assert!(!source.has_audio());
+    source
+        .configure_audio(0, true, 100, true)
+        .expect("audio settings should be harmless for silent video");
+}
+
+#[cfg(target_os = "windows")]
+#[test]
 fn rejects_audio_only_mp4_with_a_typed_error_and_safe_diagnostic() {
     let path = fixture("audio-only.mp4");
     let error = open_error(&path);

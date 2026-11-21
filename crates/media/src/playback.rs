@@ -311,6 +311,23 @@ impl PlaybackScheduler {
         self.current_media_time(monotonic_time_100ns)
     }
 
+    /// Re-anchor a playing timeline to the audio engine's authoritative clock.
+    pub fn synchronize_media_time(
+        &mut self,
+        media_time_100ns: i64,
+        monotonic_time_100ns: i64,
+    ) -> Result<(), PlaybackError> {
+        if media_time_100ns < 0 {
+            return Err(PlaybackError::NegativeSeekPosition);
+        }
+        self.observe_monotonic_time(monotonic_time_100ns)?;
+        if self.state == PlaybackState::Playing {
+            self.media_anchor_100ns = media_time_100ns;
+            self.wall_anchor_100ns = Some(monotonic_time_100ns);
+        }
+        Ok(())
+    }
+
     /// Start playback or resume from the paused media position.
     pub fn play(&mut self, monotonic_time_100ns: i64) -> Result<(), PlaybackError> {
         self.observe_monotonic_time(monotonic_time_100ns)?;

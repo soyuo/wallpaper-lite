@@ -104,6 +104,8 @@ export interface PlaybackState {
   duration100ns: number | null;
   frameRateNumerator: number | null;
   frameRateDenominator: number | null;
+  audioAvailable: boolean;
+  audioEffectiveMuted: boolean;
   speedPercent: number;
   fpsLimit: number;
   loadingVideo: boolean;

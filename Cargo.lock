@@ -3889,6 +3889,7 @@ dependencies = [
  "serde_json",
  "wallpaper-core",
  "windows",
+ "windows-core 0.61.2",
 ]
 
 [[package]]
