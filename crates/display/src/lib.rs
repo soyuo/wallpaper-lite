@@ -3,14 +3,31 @@
 use std::collections::HashSet;
 use std::fmt;
 
-use serde::Serialize;
+use serde::{Deserialize, Deserializer, Serialize};
 
 #[cfg(target_os = "windows")]
 mod windows;
 
+mod profiles;
+
+pub use profiles::{
+    DISPLAY_PROFILE_SCHEMA_VERSION, DisplayPresentationMode, DisplayProfile, DisplayProfileSet,
+    DisplayProfileValidationError,
+};
+
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize)]
 #[serde(transparent)]
 pub struct DisplayId(String);
+
+impl<'de> Deserialize<'de> for DisplayId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let path = String::deserialize(deserializer)?;
+        Self::from_device_path(path).map_err(serde::de::Error::custom)
+    }
+}
 
 impl DisplayId {
     /// Creates a stable identifier from a Windows monitor device path.

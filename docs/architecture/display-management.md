@@ -26,6 +26,23 @@ code; error messages do not include device paths. GDI pseudo-monitors without
 active paths are omitted. If an active target has no matching `HMONITOR`, the
 provider returns a typed topology-change error instead of a partial snapshot.
 
+## Persisted display profiles
+
+`DisplayProfileSet` is a schema-versioned snapshot keyed by normalized
+`DisplayId`. Each profile stores a nonzero wallpaper ID, a presentation mode
+(`independent`, `duplicate`, or `span`), and an optional FPS override from 1 to
+120. Unknown modes, unsupported schemas, duplicate display IDs, invalid IDs,
+and invalid FPS values are rejected during deserialization or validation.
+
+`DisplayProfileStore::for_current_user()` writes
+`%APPDATA%\\WallpaperLite\\display-profiles.json` through the shared atomic
+file replacement helper. `upsert()` updates a single identity while retaining
+all other records, including displays absent from the current enumeration.
+Profiles are not filtered by current topology, so a returning display matches
+its prior stable ID. This store persists assignment intent only; applying a
+profile to desktop windows is handled by the later display-runtime work. Profile
+storage never opens or modifies source media.
+
 ## Current runtime evidence
 
 Windows 11 Education 10.0.26300 x64 with Intel Arc 140T exposed one active
