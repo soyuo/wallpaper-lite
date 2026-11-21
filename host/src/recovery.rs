@@ -7,7 +7,7 @@ use std::{
 
 use wallpaper_core::editor_settings::WallpaperEditorSettings;
 use wallpaper_desktop::{AttachedDesktopWindow, discover_desktop_host};
-use wallpaper_display::SpanBounds;
+use wallpaper_display::{DisplayRect, SpanBounds};
 use wallpaper_media::{DecodedImage, DecodedVideoFrame};
 use wallpaper_renderer::{D3d11Device, D3d11ImagePresenter, RendererError};
 
@@ -33,6 +33,10 @@ pub(crate) enum RecoveryCommand {
         source_path: PathBuf,
         response: Sender<Result<(), ApplySettingsError>>,
     },
+    UpdateDisplayGeometry {
+        bounds: DisplayRect,
+        span_bounds: Option<SpanBounds>,
+    },
     Shutdown,
 }
 
@@ -51,6 +55,24 @@ pub(crate) enum ApplySettingsError {
 }
 
 impl RecoveryFrameSender {
+    pub(crate) fn present_image(
+        &self,
+        image: DecodedImage,
+        source_path: PathBuf,
+    ) -> Result<(), RendererError> {
+        let (response, result) = mpsc::channel();
+        self.0
+            .send(RecoveryCommand::PresentImage {
+                image,
+                source_path,
+                response,
+            })
+            .map_err(|_| RendererError::WindowUnavailable)?;
+        result
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap_or(Err(RendererError::WindowUnavailable))
+    }
+
     pub(crate) fn apply_editor_settings(
         &self,
         settings: WallpaperEditorSettings,
@@ -93,6 +115,19 @@ impl DesktopRecoveryWorker {
         RecoveryFrameSender(self.commands.clone())
     }
 
+    pub(crate) fn request_display_geometry(
+        &self,
+        bounds: DisplayRect,
+        span_bounds: Option<SpanBounds>,
+    ) -> Result<(), RendererError> {
+        self.commands
+            .send(RecoveryCommand::UpdateDisplayGeometry {
+                bounds,
+                span_bounds,
+            })
+            .map_err(|_| RendererError::WindowUnavailable)
+    }
+
     #[cfg(test)]
     pub(crate) fn start(
         window: AttachedDesktopWindow,
@@ -101,15 +136,25 @@ impl DesktopRecoveryWorker {
         Self::start_with_span(window, device, None)
     }
 
+    #[cfg(test)]
     pub(crate) fn start_with_span(
         window: AttachedDesktopWindow,
         device: D3d11Device,
         span_bounds: Option<SpanBounds>,
     ) -> std::io::Result<Self> {
+        Self::start_with_geometry(window, device, None, span_bounds)
+    }
+
+    pub(crate) fn start_with_geometry(
+        window: AttachedDesktopWindow,
+        device: D3d11Device,
+        display_bounds: Option<DisplayRect>,
+        span_bounds: Option<SpanBounds>,
+    ) -> std::io::Result<Self> {
         let (commands, receiver) = mpsc::channel();
         let thread = thread::Builder::new()
             .name("wallpaper-desktop-recovery".to_owned())
-            .spawn(move || recovery_loop(window, device, receiver, span_bounds))?;
+            .spawn(move || recovery_loop(window, device, receiver, display_bounds, span_bounds))?;
 
         Ok(Self {
             commands,
@@ -165,7 +210,8 @@ fn recovery_loop(
     initial_window: AttachedDesktopWindow,
     device: D3d11Device,
     commands: Receiver<RecoveryCommand>,
-    span_bounds: Option<SpanBounds>,
+    mut display_bounds: Option<DisplayRect>,
+    mut span_bounds: Option<SpanBounds>,
 ) {
     let mut window = Some(initial_window);
     let mut presenter = None;
@@ -364,14 +410,52 @@ fn recovery_loop(
                 }
                 let _ = response.send(result);
             }
+            Some(RecoveryCommand::UpdateDisplayGeometry {
+                bounds,
+                span_bounds: next_span_bounds,
+            }) => {
+                let result: Result<(), RendererError> = (|| {
+                    // Retain the requested geometry even if the current HWND or swap
+                    // chain rejects it so recovery retries the latest topology.
+                    display_bounds = Some(bounds);
+                    span_bounds = next_span_bounds;
+                    if let Some(attached_window) = window.as_ref() {
+                        attached_window
+                            .set_display_bounds(bounds)
+                            .map_err(|_| RendererError::WindowUnavailable)?;
+                    }
+                    if let Some(active_presenter) = presenter.as_mut() {
+                        active_presenter.refresh_if_resized()?;
+                        active_presenter.set_span_bounds(span_bounds)?;
+                    }
+                    Ok(())
+                })();
+                if result.is_err() {
+                    drop(presenter.take());
+                    drop(window.take());
+                    recovery_pending = true;
+                    next_retry = Some(Instant::now() + retry_delay);
+                    retry_delay = next_retry_delay(retry_delay);
+                }
+                if let Err(error) = result {
+                    tracing::warn!(
+                        component = "display",
+                        event = "display_geometry_update_failed",
+                        error_code = error.to_app_error().code.as_str(),
+                        "The desktop wallpaper will retry attachment with the requested geometry"
+                    );
+                }
+            }
             Some(RecoveryCommand::Shutdown) => break,
             None if recovery_pending
                 && next_retry.is_some_and(|deadline| deadline <= Instant::now()) =>
             {
                 match discover_desktop_host().and_then(|host| {
                     let host_kind = host.kind();
-                    let attached = match span_bounds {
-                        Some(bounds) => host.attach_wallpaper_window_for_display(bounds.target()),
+                    let target_bounds =
+                        display_bounds.or_else(|| span_bounds.map(SpanBounds::target));
+                    let attached = match target_bounds {
+                        Some(bounds) => host.attach_wallpaper_window_for_display(bounds),
                         None => host.attach_wallpaper_window(),
                     };
                     attached.map(|window| (window, host_kind))

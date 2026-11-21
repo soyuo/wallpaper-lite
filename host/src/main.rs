@@ -229,9 +229,10 @@ fn main() -> process::ExitCode {
     );
 
     let media_device = graphics_device.device().clone();
-    let mut desktop_recovery = match DesktopRecoveryWorker::start_with_span(
+    let mut desktop_recovery = match DesktopRecoveryWorker::start_with_geometry(
         wallpaper_window,
         graphics_device,
+        display_assignments.primary_bounds,
         primary_span_bounds,
     ) {
         Ok(recovery) => recovery,
@@ -337,10 +338,14 @@ fn main() -> process::ExitCode {
             None
         }
     };
+    let mut display_change_receiver = signal_monitor
+        .as_ref()
+        .map(PerformanceSignalMonitor::subscribe_display_changes);
     let mut signal_receiver = signal_monitor
         .as_ref()
         .map(PerformanceSignalMonitor::subscribe);
 
+    let mut initial_primary_assignment = None;
     if !has_explicit_startup_image {
         if let Some(primary) = display_assignments
             .profiles
@@ -359,6 +364,8 @@ fn main() -> process::ExitCode {
                             stage,
                             "Primary display profile could not be started"
                         );
+                    } else {
+                        initial_primary_assignment = Some(primary.clone());
                     }
                 }
                 wallpaper_media::MediaKind::Video => {
@@ -375,13 +382,22 @@ fn main() -> process::ExitCode {
                             stage,
                             "Primary display profile could not be started"
                         );
+                    } else {
+                        initial_primary_assignment = Some(primary.clone());
                     }
                 }
             }
         }
     }
+    let primary_assignment_reconciler = runtime.block_on(async {
+        independent_displays::PrimaryAssignmentReconciler::start(
+            initial_primary_assignment.as_ref(),
+            command_sender.clone(),
+            playback_events.clone(),
+            desktop_recovery.frame_sender(),
+        )
+    });
     let mut display_targets = independent_displays::DisplayTargetManager::start(
-        &runtime,
         if has_secondary_assignment && display_assignments.primary_bounds.is_some() {
             &display_assignments.profiles
         } else {
@@ -403,6 +419,62 @@ fn main() -> process::ExitCode {
             tokio::select! {
                 result = &mut server => break Ok(result),
                 _ = lifecycle_poll.tick() => {
+                    if let Some(receiver) = display_change_receiver.as_mut() {
+                        match receiver.has_changed() {
+                            Ok(true) => {
+                                let revision = *receiver.borrow_and_update();
+                                match independent_displays::try_load_display_assignments() {
+                                    Ok(assignments) => {
+                                        tracing::info!(
+                                            component = "display",
+                                            event = "display_topology_reconciled",
+                                            revision,
+                                            active_profile_count = assignments.profiles.len(),
+                                            primary_bounds = ?assignments.primary_bounds,
+                                            "Applying the debounced display topology"
+                                        );
+                                        if let Some(bounds) = assignments.primary_bounds {
+                                            let span_bounds = assignments.profiles.iter()
+                                                .find(|assignment| assignment.display.is_primary())
+                                                .and_then(|assignment| assignment.span_bounds);
+                                            if let Err(error) = desktop_recovery.request_display_geometry(bounds, span_bounds) {
+                                                tracing::warn!(
+                                                    component = "display",
+                                                    event = "primary_display_geometry_update_failed",
+                                                    error_code = error.to_app_error().code.as_str(),
+                                                    "The primary wallpaper worker did not accept the new geometry"
+                                                );
+                                            }
+                                        }
+                                        if let Some(primary) = assignments
+                                            .profiles
+                                            .iter()
+                                            .find(|assignment| assignment.display.is_primary())
+                                        {
+                                            primary_assignment_reconciler.reconcile(primary.clone());
+                                        }
+                                        display_targets.reconcile(&assignments);
+                                    }
+                                    Err(stage) => tracing::warn!(
+                                        component = "display",
+                                        event = "display_topology_reconcile_skipped",
+                                        revision,
+                                        stage,
+                                        "Keeping the active outputs because fresh display state could not be read"
+                                    ),
+                                }
+                            }
+                            Ok(false) => {}
+                            Err(_) => {
+                                tracing::warn!(
+                                    component = "display",
+                                    event = "display_topology_monitor_stopped",
+                                    "Display changes will not be reconciled until restart"
+                                );
+                                display_change_receiver = None;
+                            }
+                        }
+                    }
                     if let Some(receiver) = signal_receiver.as_mut() {
                         match receiver.has_changed() {
                             Ok(true) => {
@@ -497,9 +569,17 @@ fn main() -> process::ExitCode {
             }
         }
     });
+    let primary_assignment_stopped = runtime.block_on(primary_assignment_reconciler.stop());
     let playback_stopped = playback_worker.stop();
     let targets_stopped = display_targets.stop();
-    if !playback_stopped {
+    if !primary_assignment_stopped {
+        tracing::error!(
+            component = "display",
+            event = "primary_assignment_worker_join_failed",
+            "Primary assignment worker may still use playback and recovery channels"
+        );
+    }
+    if !playback_stopped || !primary_assignment_stopped {
         tracing::error!(
             component = "media",
             event = "playback_worker_join_failed",
