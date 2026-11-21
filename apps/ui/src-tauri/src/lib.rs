@@ -9,6 +9,7 @@ use wallpaper_media::{CatalogStore, ImportResult, import_local_media};
 
 mod editor;
 mod library;
+mod playback;
 
 const APP_LOG_DIRECTORY: &str = "com.soyuo.wallpaper-lite";
 const UI_LOG_FILE_COUNT: usize = 7;
@@ -166,6 +167,13 @@ pub fn run() -> process::ExitCode {
             library::rename_library_entry,
             library::set_library_favorite,
             library::relocate_library_entry,
+            playback::get_playback_panel,
+            playback::playback_state,
+            playback::load_video_for_playback,
+            playback::control_playback,
+            playback::seek_playback,
+            playback::seek_playback_100ns,
+            playback::apply_playback_settings,
         ])
         .run(tauri::generate_context!());
 

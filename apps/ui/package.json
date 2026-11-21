@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "test:editor": "node --test tests/editor-history.test.mjs",
+    "test:playback": "node --test tests/playback-time.test.mjs",
     "preview": "vite preview",
     "tauri": "tauri"
   },

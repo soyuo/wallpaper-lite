@@ -97,6 +97,9 @@ in [`editor-settings.md`](editor-settings.md).
 Per-wallpaper playback preference defaults, bounds, and atomic persistence are
 described in [`playback-settings.md`](playback-settings.md). Host runtime
 settings now support Disabled, Full, and Segment video looping; timeline UI and
-audio output remain in later playback work. See
+per-wallpaper playback controls, timecode seeking, and rational-frame stepping
+are implemented; audio output remains later playback work. See
 [`video-playback.md`](video-playback.md) for the loop boundary and generation
-behavior.
+behavior and UI-to-host control flow. Windows 11 timeline and settings
+verification is recorded in
+[`../development/phase-5-playback-acceptance.md`](../development/phase-5-playback-acceptance.md).

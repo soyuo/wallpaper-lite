@@ -47,9 +47,12 @@ impl PlaybackWorker {
         let frame_sender = recovery.frame_sender();
         let (event_sender, event_receiver) = tokio::sync::watch::channel(PlaybackStateEvent {
             sequence: 0,
+            wallpaper_id: None,
             state: IpcPlaybackState::Stopped,
             media_time_100ns: 0,
             duration_100ns: None,
+            frame_rate_numerator: None,
+            frame_rate_denominator: None,
             speed_percent: 100,
             fps_limit: 60,
             loading_video: false,
@@ -140,6 +143,7 @@ struct PlaybackController {
     frame_sender: RecoveryFrameSender,
     source: Option<VideoSourceWorker>,
     pending_load: Option<PendingVideoLoad>,
+    active_wallpaper_id: Option<u64>,
     deferred_frame: Option<VideoFrameMessage>,
     eos_pending: bool,
     scheduler: PlaybackScheduler,
@@ -154,6 +158,7 @@ struct PlaybackController {
 }
 
 struct PendingVideoLoad {
+    wallpaper_id: u64,
     source: VideoSourceWorker,
 }
 
@@ -465,6 +470,7 @@ impl PlaybackController {
             frame_sender,
             source: None,
             pending_load: None,
+            active_wallpaper_id: None,
             deferred_frame: None,
             eos_pending: false,
             scheduler: PlaybackScheduler::new(),
@@ -486,7 +492,7 @@ impl PlaybackController {
             });
             return;
         }
-        let Command::LoadVideo { path } = request.command().clone() else {
+        let Command::LoadVideo { wallpaper_id, path } = request.command().clone() else {
             request.respond(ResponseResult::Error {
                 code: PlaybackCommandErrorCode::VideoLoadFailed,
             });
@@ -497,7 +503,10 @@ impl PlaybackController {
                 if request.response_is_closed() {
                     return;
                 }
-                self.pending_load = Some(PendingVideoLoad { source });
+                self.pending_load = Some(PendingVideoLoad {
+                    wallpaper_id,
+                    source,
+                });
                 self.loading_video = true;
                 self.last_error = None;
                 let ResponseResult::PlaybackState(event) = self.snapshot() else {
@@ -546,6 +555,7 @@ impl PlaybackController {
             }
             Ok(Some(_metadata)) => {
                 let pending = self.pending_load.take().expect("pending source exists");
+                self.active_wallpaper_id = Some(pending.wallpaper_id);
                 self.source = Some(pending.source);
                 self.scheduler = PlaybackScheduler::new();
                 self.playback_settings = None;
@@ -1065,12 +1075,21 @@ impl PlaybackController {
         };
         ResponseResult::PlaybackState(PlaybackStateEvent {
             sequence: self.sequence,
+            wallpaper_id: self.active_wallpaper_id,
             state,
             media_time_100ns: media_time,
             duration_100ns: self
                 .source
                 .as_ref()
                 .and_then(|source| source.metadata().map(VideoMetadata::duration_100ns)),
+            frame_rate_numerator: self
+                .source
+                .as_ref()
+                .and_then(|source| source.metadata().map(VideoMetadata::frame_rate_numerator)),
+            frame_rate_denominator: self
+                .source
+                .as_ref()
+                .and_then(|source| source.metadata().map(VideoMetadata::frame_rate_denominator)),
             speed_percent: self.scheduler.speed().percent(),
             fps_limit: self.scheduler.fps_limit().frames_per_second(),
             loading_video: self.loading_video,
@@ -1243,9 +1262,12 @@ mod tests {
             DesktopRecoveryWorker::start(window, device).expect("the recovery worker should start");
         let (event_sender, _event_receiver) = tokio::sync::watch::channel(PlaybackStateEvent {
             sequence: 0,
+            wallpaper_id: None,
             state: IpcPlaybackState::Stopped,
             media_time_100ns: 0,
             duration_100ns: None,
+            frame_rate_numerator: None,
+            frame_rate_denominator: None,
             speed_percent: 100,
             fps_limit: 60,
             loading_video: false,

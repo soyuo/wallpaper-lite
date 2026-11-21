@@ -277,9 +277,12 @@ mod tests {
                                 }
                                 _ => ResponseResult::PlaybackState(PlaybackStateEvent {
                                     sequence: 1,
+                                    wallpaper_id: Some(7),
                                     state: IpcPlaybackState::Playing,
                                     media_time_100ns: 12_345,
                                     duration_100ns: Some(10_000_000),
+                                    frame_rate_numerator: Some(30),
+                                    frame_rate_denominator: Some(1),
                                     speed_percent: 100,
                                     fps_limit: 60,
                                     loading_video: false,
@@ -299,6 +302,7 @@ mod tests {
             wait_for_host(&pipe_name).await;
             for command in [
                 Command::LoadVideo {
+                    wallpaper_id: 7,
                     path: "C:\\wallpaper\\sample.mp4".into(),
                 },
                 Command::Play,
@@ -393,6 +397,7 @@ mod tests {
             let payload = crate::protocol::encode_message(&Request::new(
                 77,
                 Command::LoadVideo {
+                    wallpaper_id: 7,
                     path: "C:/wallpaper/slow.mp4".to_owned(),
                 },
             ))
@@ -433,9 +438,12 @@ mod tests {
             let pipe_name = test_pipe_name("events");
             let initial = PlaybackStateEvent {
                 sequence: 0,
+                wallpaper_id: Some(7),
                 state: IpcPlaybackState::Stopped,
                 media_time_100ns: 0,
                 duration_100ns: Some(10_000_000),
+                frame_rate_numerator: Some(30),
+                frame_rate_denominator: Some(1),
                 speed_percent: 100,
                 fps_limit: 60,
                 loading_video: false,

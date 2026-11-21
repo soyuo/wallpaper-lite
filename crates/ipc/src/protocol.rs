@@ -8,7 +8,7 @@ use crate::{IpcError, error::from_io};
 
 pub const PIPE_NAME: &str = r"\\.\pipe\wallpaper-lite";
 pub const PLAYBACK_EVENTS_PIPE_NAME: &str = r"\\.\pipe\wallpaper-lite-playback-events";
-pub const PROTOCOL_VERSION: u16 = 5;
+pub const PROTOCOL_VERSION: u16 = 6;
 pub const MAX_FRAME_BYTES: usize = 4 * 1024;
 pub(crate) const IO_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
 const COMMAND_QUEUE_CAPACITY: usize = 16;
@@ -44,6 +44,7 @@ impl Request {
 pub enum Command {
     Ping,
     LoadVideo {
+        wallpaper_id: u64,
         path: String,
     },
     ApplyEditorSettings {
@@ -119,9 +120,12 @@ pub enum IpcPlaybackState {
 #[serde(deny_unknown_fields)]
 pub struct PlaybackStateEvent {
     pub sequence: u64,
+    pub wallpaper_id: Option<u64>,
     pub state: IpcPlaybackState,
     pub media_time_100ns: i64,
     pub duration_100ns: Option<i64>,
+    pub frame_rate_numerator: Option<u32>,
+    pub frame_rate_denominator: Option<u32>,
     pub speed_percent: u16,
     pub fps_limit: u16,
     pub loading_video: bool,
@@ -167,7 +171,7 @@ mod editor_settings_tests {
         };
         let encoded = serde_json::to_vec(&request).unwrap();
         let decoded: Request = serde_json::from_slice(&encoded).unwrap();
-        assert_eq!(decoded.version, 5);
+        assert_eq!(decoded.version, PROTOCOL_VERSION);
         assert_eq!(decoded.request_id, 42);
         assert_eq!(
             decoded.command,
@@ -385,6 +389,7 @@ mod tests {
         let (response, receiver) = oneshot::channel();
         let request = PlaybackCommandRequest {
             command: Command::LoadVideo {
+                wallpaper_id: 7,
                 path: "clip.mp4".to_owned(),
             },
             response,
@@ -418,9 +423,12 @@ mod tests {
             7,
             ResponseResult::PlaybackState(PlaybackStateEvent {
                 sequence: 3,
+                wallpaper_id: Some(7),
                 state: IpcPlaybackState::Playing,
                 media_time_100ns: 250_000,
                 duration_100ns: Some(10_000_000),
+                frame_rate_numerator: Some(30),
+                frame_rate_denominator: Some(1),
                 speed_percent: 100,
                 fps_limit: 60,
                 loading_video: true,

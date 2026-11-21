@@ -93,3 +93,23 @@ with video or be muted at non-1.0× speed.
 The API accepts a clock sample on each operation, so tests use integer fake
 clock values and do not sleep. This module does not control the decoder's seek
 operation, audio, IPC, or UI.
+
+## UI control flow
+
+Each video library entry can start playback by catalog ID. The UI resolves that
+ID to an available video path, asks the host to load it, waits for the matching
+ID in host state, restores that wallpaper's persisted loop/speed/FPS settings,
+then sends Play. The host remains the source of truth for playback state; the
+UI refreshes snapshots while the panel is open and displays host errors rather
+than optimistically changing transport state.
+
+The timeline and timecode field seek in milliseconds at the UI boundary and
+convert to the host's 100 ns media clock. Adjacent-frame controls use the
+source's rational frame rate from the host snapshot. Segment timecode and
+handles are validated against the active duration and 500 ms minimum before
+settings are applied. Playback settings are persisted per wallpaper only after
+the host accepts them; if persistence fails, the UI requests restoration of the
+previous host settings and reports the failure.
+
+The Windows 11 manual verification record is in
+[`../development/phase-5-playback-acceptance.md`](../development/phase-5-playback-acceptance.md).

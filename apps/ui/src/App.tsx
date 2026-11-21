@@ -13,9 +13,12 @@ import {
   type ImportResult,
   type LibraryEntry,
   type LibraryPreview,
+  type PlaybackPanel,
+  type PlaybackSettings,
   type WallpaperEditorPreset,
   type WallpaperEditorSettings,
 } from "./host-adapter";
+import { formatTimecode, isTimelineCommitKey, moveSegmentHandle, nominalFrameStep100ns, parseSegmentDraft, parseTimecode, runPlaybackAction } from "./playback-time.mjs";
 
 const colorControls: Array<{
   key: keyof WallpaperEditorSettings["color"];
@@ -138,6 +141,7 @@ interface LibraryCardProps {
   onCancelRename(): void;
   onToggleFavorite(entry: LibraryEntry): void;
   onOpenEditorPreview(entry: LibraryEntry): void;
+  onStartPlayback(entry: LibraryEntry): void;
 }
 
 function LibraryCard({
@@ -159,6 +163,7 @@ function LibraryCard({
   onCancelRename,
   onToggleFavorite,
   onOpenEditorPreview,
+  onStartPlayback,
 }: LibraryCardProps) {
   const cardRef = useRef<HTMLLIElement>(null);
 
@@ -233,6 +238,9 @@ function LibraryCard({
           {entry.availability === "available" && (
             <button disabled={actionBusy} onClick={() => onOpenEditorPreview(entry)}>Preview on display</button>
           )}
+          {entry.mediaKind === "video" && entry.availability === "available" && (
+            <button disabled={actionBusy} onClick={() => onStartPlayback(entry)}>Play on desktop</button>
+          )}
           <button
             aria-pressed={entry.isFavorite}
             disabled={actionBusy}
@@ -259,6 +267,15 @@ function LibraryCard({
 function App() {
   const [checkingHost, setCheckingHost] = useState(false);
   const [hostStatus, setHostStatus] = useState("Host connection has not been checked.");
+  const [playbackPanel, setPlaybackPanel] = useState<PlaybackPanel | null>(null);
+  const [playbackSettingsDraft, setPlaybackSettingsDraft] = useState<PlaybackSettings | null>(null);
+  const [playbackMessage, setPlaybackMessage] = useState("");
+  const [playbackBusy, setPlaybackBusy] = useState(false);
+  const [seekTimeDraft, setSeekTimeDraft] = useState("00:00:00.000");
+  const [seekTimeDirty, setSeekTimeDirty] = useState(false);
+  const [segmentStartDraft, setSegmentStartDraft] = useState("00:00:00.000");
+  const [segmentEndDraft, setSegmentEndDraft] = useState("00:00:00.000");
+  const [timelineDraftMs, setTimelineDraftMs] = useState<number | null>(null);
   const [importing, setImporting] = useState(false);
   const [importResults, setImportResults] = useState<ImportResult[]>([]);
   const [importStatus, setImportStatus] = useState("");
@@ -318,6 +335,49 @@ function App() {
   useEffect(() => {
     void refreshLibrary();
   }, [refreshLibrary]);
+
+  useEffect(() => {
+    let stopped = false;
+    let polling = false;
+    void hostAdapter.playbackPanel().then((panel) => {
+      if (stopped) return;
+      setPlaybackPanel(panel);
+      setPlaybackSettingsDraft(panel.settings);
+      setPlaybackMessage("");
+    }).catch((error: unknown) => {
+      if (!stopped) setPlaybackMessage(error instanceof Error ? error.message : "Playback state is unavailable.");
+    });
+    const timer = window.setInterval(() => {
+      if (polling || stopped) return;
+      polling = true;
+      void hostAdapter.playbackState().then((state) => {
+        if (!stopped) setPlaybackPanel((panel) => panel ? { ...panel, state } : { state, settings: null });
+      }).catch((error: unknown) => {
+        if (!stopped) setPlaybackMessage(error instanceof Error ? error.message : "Playback state is unavailable.");
+      }).finally(() => { polling = false; });
+    }, 500);
+    return () => {
+      stopped = true;
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  useEffect(() => {
+    const settings = playbackPanel?.settings;
+    if (!settings) return;
+    setPlaybackSettingsDraft(settings);
+    const segment = settings.segment;
+    if (segment) {
+      setSegmentStartDraft(formatTimecode(segment.startMs));
+      setSegmentEndDraft(formatTimecode(segment.endMs));
+    }
+  }, [playbackPanel?.settings]);
+
+  useEffect(() => {
+    if (playbackPanel?.state && !seekTimeDirty) {
+      setSeekTimeDraft(formatTimecode(Math.max(0, Math.floor(playbackPanel.state.mediaTime100ns / 10_000))));
+    }
+  }, [playbackPanel?.state.mediaTime100ns, seekTimeDirty]);
 
   useEffect(() => {
     void hostAdapter.editorMonitors().then((monitors) => {
@@ -398,6 +458,130 @@ function App() {
       setHostStatus(error instanceof Error ? error.message : "Could not check the wallpaper host.");
     } finally {
       setCheckingHost(false);
+    }
+  }
+
+  async function startPlayback(entry: LibraryEntry) {
+    setPlaybackBusy(true);
+    setPlaybackMessage(`Loading ${entry.displayName}...`);
+    try {
+      const panel = await hostAdapter.loadVideoForPlayback(entry.id);
+      setPlaybackPanel(panel);
+      setPlaybackSettingsDraft(panel.settings);
+      setSeekTimeDraft(formatTimecode(Math.floor(panel.state.mediaTime100ns / 10_000)));
+      setSeekTimeDirty(false);
+      if (panel.settings?.segment) {
+        setSegmentStartDraft(formatTimecode(panel.settings.segment.startMs));
+        setSegmentEndDraft(formatTimecode(panel.settings.segment.endMs));
+      } else {
+        setSegmentStartDraft("00:00:00.000");
+        setSegmentEndDraft(formatTimecode(Math.floor((panel.state.duration100ns ?? 0) / 10_000)));
+      }
+      setPlaybackMessage(`Playing ${entry.displayName}.`);
+    } catch (error) {
+      setPlaybackMessage(error instanceof Error ? error.message : "The video could not be started.");
+    } finally {
+      setPlaybackBusy(false);
+    }
+  }
+
+  async function sendPlaybackControl(control: "play" | "pause" | "stop") {
+    setPlaybackBusy(true);
+    setPlaybackMessage("");
+    const result = await runPlaybackAction(
+      () => hostAdapter.controlPlayback(control),
+      `Could not ${control} playback.`,
+    );
+    if (result.ok) {
+      const state = result.value;
+      setPlaybackPanel((panel) => panel ? { ...panel, state } : { state, settings: null });
+    } else {
+      setPlaybackMessage(result.message);
+    }
+    setPlaybackBusy(false);
+  }
+
+  async function commitSeek(positionMs: number) {
+    if (!Number.isSafeInteger(positionMs) || positionMs < 0) return;
+    const durationMs = playbackPanel?.state.duration100ns == null
+      ? null
+      : Math.floor(playbackPanel.state.duration100ns / 10_000);
+    if (durationMs !== null && positionMs > durationMs) {
+      setPlaybackMessage("Seek time cannot exceed the video duration.");
+      return;
+    }
+    setPlaybackBusy(true);
+    try {
+      const state = await hostAdapter.seekPlayback(positionMs);
+      setPlaybackPanel((panel) => panel ? { ...panel, state } : { state, settings: null });
+      setSeekTimeDraft(formatTimecode(positionMs));
+      setSeekTimeDirty(false);
+      setPlaybackMessage("");
+    } catch (error) {
+      setPlaybackMessage(error instanceof Error ? error.message : "The seek command failed.");
+    } finally {
+      setPlaybackBusy(false);
+    }
+  }
+
+  async function seekByFrame(direction: -1 | 1) {
+    const state = playbackPanel?.state;
+    if (!state || state.frameRateNumerator == null || state.frameRateDenominator == null) {
+      setPlaybackMessage("Source frame rate is unavailable.");
+      return;
+    }
+    const step = nominalFrameStep100ns(state.frameRateNumerator, state.frameRateDenominator);
+    if (step === null) {
+      setPlaybackMessage("Source frame rate is invalid.");
+      return;
+    }
+    const duration = state.duration100ns ?? Number.MAX_SAFE_INTEGER;
+    const target = Math.max(0, Math.min(duration, state.mediaTime100ns + direction * step));
+    setPlaybackBusy(true);
+    try {
+      const next = await hostAdapter.seekPlayback100ns(target);
+      setPlaybackPanel((panel) => panel ? { ...panel, state: next } : { state: next, settings: null });
+      setPlaybackMessage("");
+    } catch (error) {
+      setPlaybackMessage(error instanceof Error ? error.message : "Frame seek failed.");
+    } finally {
+      setPlaybackBusy(false);
+    }
+  }
+
+  async function applyPlaybackSettingsDraft() {
+    const active = playbackPanel?.state.wallpaperId;
+    const draft = playbackSettingsDraft;
+    if (active == null || !draft || draft.wallpaperId !== active) {
+      setPlaybackMessage("Start a video before applying its playback settings.");
+      return;
+    }
+    let segment = draft.segment;
+    if (draft.loopMode === "segment") {
+      const durationMs = playbackPanel?.state.duration100ns == null
+        ? 0
+        : Math.floor(playbackPanel.state.duration100ns / 10_000);
+      const parsedSegment = parseSegmentDraft(segmentStartDraft, segmentEndDraft, durationMs);
+      if (!parsedSegment) {
+        setPlaybackMessage("Segment loop needs valid timecodes, at least 500 ms long, within the video duration.");
+        return;
+      }
+      segment = parsedSegment;
+    } else {
+      segment = null;
+    }
+    const candidate = { ...draft, segment };
+    setPlaybackBusy(true);
+    setPlaybackMessage("");
+    try {
+      const panel = await hostAdapter.applyPlaybackSettings(active, candidate);
+      setPlaybackPanel(panel);
+      setPlaybackSettingsDraft(panel.settings);
+      setPlaybackMessage("Playback settings applied and saved.");
+    } catch (error) {
+      setPlaybackMessage(error instanceof Error ? error.message : "Playback settings could not be applied.");
+    } finally {
+      setPlaybackBusy(false);
     }
   }
 
@@ -888,6 +1072,22 @@ function App() {
     });
   }
 
+  const playbackState = playbackPanel?.state ?? null;
+  const playbackDurationMs = playbackState?.duration100ns == null
+    ? 0
+    : Math.max(0, Math.floor(playbackState.duration100ns / 10_000));
+  const playbackPositionMs = playbackState
+    ? Math.max(0, Math.floor(playbackState.mediaTime100ns / 10_000))
+    : 0;
+  const seekTimecode = async () => {
+    const parsed = parseTimecode(seekTimeDraft);
+    if (parsed === null) {
+      setPlaybackMessage("Enter time as HH:MM:SS.mmm.");
+      return;
+    }
+    await commitSeek(parsed);
+  };
+
   return (
     <main className="app-shell">
       <h1>wallpaper-lite</h1>
@@ -896,6 +1096,134 @@ function App() {
         {checkingHost ? "Checking..." : "Check wallpaper host"}
       </button>
       <p aria-live="polite" className="host-status" role="status">{hostStatus}</p>
+
+      <section className="playback-panel" aria-labelledby="playback-title">
+        <h2 id="playback-title">Video playback</h2>
+        {playbackState?.wallpaperId == null ? (
+          <p>No video is active. Start a video from its library card.</p>
+        ) : (
+          <>
+            <p className="playback-state">{playbackState.loadingVideo ? "Loading" : playbackState.state} · {playbackState.speedPercent}% · {playbackState.fpsLimit} FPS</p>
+            {playbackState.lastError && <p className="playback-message" role="status">Host playback error: {playbackState.lastError}</p>}
+            <div className="playback-timeline">
+              <label htmlFor="playback-seek">Timeline</label>
+              <input
+                id="playback-seek"
+                type="range"
+                min={0}
+                max={Math.max(1, playbackDurationMs)}
+                value={Math.min(playbackDurationMs || playbackPositionMs, timelineDraftMs ?? playbackPositionMs)}
+                disabled={playbackBusy || playbackDurationMs <= 0 || playbackState.loadingVideo}
+                onChange={(event) => setTimelineDraftMs(Number(event.currentTarget.value))}
+                onPointerUp={(event) => {
+                  const value = Number(event.currentTarget.value);
+                  setTimelineDraftMs(null);
+                  void commitSeek(value);
+                }}
+                onKeyUp={(event) => {
+                  if (isTimelineCommitKey(event.key)) {
+                    const value = Number(event.currentTarget.value);
+                    setTimelineDraftMs(null);
+                    void commitSeek(value);
+                  }
+                }}
+              />
+              <span>{formatTimecode(playbackPositionMs)} / {formatTimecode(playbackDurationMs)}</span>
+            </div>
+            <div className="playback-controls" aria-label="Video transport controls">
+              <button disabled={playbackBusy || playbackState.loadingVideo || !playbackState.frameRateNumerator} onClick={() => void seekByFrame(-1)}>Previous frame</button>
+              <button disabled={playbackBusy || playbackState.loadingVideo} onClick={() => void sendPlaybackControl("play")}>Play</button>
+              <button disabled={playbackBusy || playbackState.loadingVideo} onClick={() => void sendPlaybackControl("pause")}>Pause</button>
+              <button disabled={playbackBusy || playbackState.loadingVideo} onClick={() => void sendPlaybackControl("stop")}>Stop</button>
+              <button disabled={playbackBusy || playbackState.loadingVideo || !playbackState.frameRateNumerator} onClick={() => void seekByFrame(1)}>Next frame</button>
+            </div>
+            <label className="playback-time-entry">
+              <span>Seek time (HH:MM:SS.mmm)</span>
+              <input value={seekTimeDraft} onChange={(event) => { setSeekTimeDirty(true); setSeekTimeDraft(event.currentTarget.value); }} onKeyDown={(event) => { if (event.key === "Enter") void seekTimecode(); }} onBlur={() => { if (parseTimecode(seekTimeDraft) === null) setPlaybackMessage("Enter time as HH:MM:SS.mmm."); }} />
+              <button disabled={playbackBusy} onClick={() => void seekTimecode()}>Seek</button>
+            </label>
+            {playbackSettingsDraft?.wallpaperId === playbackState.wallpaperId && (
+              <fieldset className="playback-settings">
+                <legend>Loop and playback settings</legend>
+                <label>
+                  <span>Loop mode</span>
+                  <select
+                    value={playbackSettingsDraft.loopMode}
+                    onChange={(event) => {
+                      const loopMode = event.currentTarget.value as PlaybackSettings["loopMode"];
+                      const segment = loopMode === "segment"
+                        ? playbackSettingsDraft.segment ?? { startMs: 0, endMs: playbackDurationMs }
+                        : null;
+                      setPlaybackSettingsDraft({ ...playbackSettingsDraft, loopMode, segment });
+                      if (loopMode === "segment" && segment) {
+                        setSegmentStartDraft(formatTimecode(segment.startMs));
+                        setSegmentEndDraft(formatTimecode(segment.endMs));
+                      }
+                    }}
+                  >
+                    <option value="disabled">Disabled</option>
+                    <option value="full">Full video</option>
+                    <option value="segment">Segment</option>
+                  </select>
+                </label>
+                {playbackSettingsDraft.loopMode === "segment" && (
+                  <div className="playback-segment-fields">
+                    <label>
+                      <span>Segment start handle</span>
+                      <input
+                        type="range"
+                        min={0}
+                        max={Math.max(0, playbackDurationMs - 500)}
+                        value={Math.min(Math.max(0, playbackDurationMs - 500), parseTimecode(segmentStartDraft) ?? 0)}
+                        onChange={(event) => {
+                          const segment = moveSegmentHandle(
+                            "start",
+                            Number(event.currentTarget.value),
+                            parseTimecode(segmentStartDraft) ?? 0,
+                            parseTimecode(segmentEndDraft) ?? playbackDurationMs,
+                            playbackDurationMs,
+                          );
+                          if (!segment) return;
+                          setSegmentStartDraft(formatTimecode(segment.startMs));
+                          setSegmentEndDraft(formatTimecode(segment.endMs));
+                        }}
+                      />
+                    </label>
+                    <label>
+                      <span>Segment end handle</span>
+                      <input
+                        type="range"
+                        min={Math.min(playbackDurationMs, (parseTimecode(segmentStartDraft) ?? 0) + 500)}
+                        max={playbackDurationMs}
+                        value={Math.max(Math.min(playbackDurationMs, (parseTimecode(segmentStartDraft) ?? 0) + 500), Math.min(playbackDurationMs, parseTimecode(segmentEndDraft) ?? playbackDurationMs))}
+                        onChange={(event) => {
+                          const segment = moveSegmentHandle(
+                            "end",
+                            Number(event.currentTarget.value),
+                            parseTimecode(segmentStartDraft) ?? 0,
+                            parseTimecode(segmentEndDraft) ?? playbackDurationMs,
+                            playbackDurationMs,
+                          );
+                          if (!segment) return;
+                          setSegmentStartDraft(formatTimecode(segment.startMs));
+                          setSegmentEndDraft(formatTimecode(segment.endMs));
+                        }}
+                      />
+                    </label>
+                    <label><span>Segment start</span><input value={segmentStartDraft} onChange={(event) => setSegmentStartDraft(event.currentTarget.value)} placeholder="00:00:00.000" /></label>
+                    <label><span>Segment end</span><input value={segmentEndDraft} onChange={(event) => setSegmentEndDraft(event.currentTarget.value)} placeholder="00:00:00.000" /></label>
+                    <p>Segment must be at least 500 ms and fit within the video duration.</p>
+                  </div>
+                )}
+                <label><span>Speed</span><select value={playbackSettingsDraft.speedPercent} onChange={(event) => setPlaybackSettingsDraft({ ...playbackSettingsDraft, speedPercent: Number(event.currentTarget.value) })}>{[25, 50, 75, 100, 125, 150, 200].map((value) => <option key={value} value={value}>{value}%</option>)}</select></label>
+                <label><span>Frame rate limit</span><select value={playbackSettingsDraft.fpsLimit} onChange={(event) => setPlaybackSettingsDraft({ ...playbackSettingsDraft, fpsLimit: Number(event.currentTarget.value) })}>{[15, 24, 30, 60, 120].map((value) => <option key={value} value={value}>{value} FPS</option>)}</select></label>
+                <button disabled={playbackBusy} onClick={() => void applyPlaybackSettingsDraft()}>Apply playback settings</button>
+              </fieldset>
+            )}
+          </>
+        )}
+        <p className="playback-message" aria-live="polite" role="status">{playbackMessage}</p>
+      </section>
 
       <section className="import-panel" aria-labelledby="import-title">
         <h2 id="import-title">Import media</h2>
@@ -1192,6 +1520,7 @@ function App() {
                 }}
                 onToggleFavorite={(item) => void toggleFavorite(item)}
                 onOpenEditorPreview={(item) => void openEditorPreview(item)}
+                onStartPlayback={(item) => void startPlayback(item)}
               />
             ))}
           </ul>
