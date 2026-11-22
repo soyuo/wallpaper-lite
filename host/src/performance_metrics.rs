@@ -334,7 +334,7 @@ impl PerformanceMetricsRecorder {
 mod tests {
     use super::{
         MAX_DISPLAY_ID_BYTES, MAX_METRIC_TARGETS, PerformanceMetricsRecorder,
-        PerformanceMetricsRegistry,
+        PerformanceMetricsRegistry, dropped_frames_since,
     };
     use std::time::Duration;
     use wallpaper_ipc::protocol::PerformanceMediaKind;
@@ -426,10 +426,36 @@ mod tests {
         assert_eq!(target.rendered_fps, None);
         assert_eq!(target.decode_latency_ms, None);
     }
+
+    #[test]
+    fn dropped_frame_total_survives_scheduler_counter_reset() {
+        let registry = PerformanceMetricsRegistry::default();
+        let mut recorder = PerformanceMetricsRecorder::new(
+            "DISPLAY-primary".to_owned(),
+            PerformanceMediaKind::Video,
+            registry.clone(),
+        );
+        let window_started = recorder.window_started;
+        let mut previous_scheduler_total = 0;
+
+        recorder.record_dropped_frames(dropped_frames_since(3, &mut previous_scheduler_total));
+        // A new playback scheduler starts its local dropped counter at zero.
+        previous_scheduler_total = 0;
+        recorder.record_dropped_frames(dropped_frames_since(2, &mut previous_scheduler_total));
+        recorder.publish_due(window_started + Duration::from_secs(1));
+
+        assert_eq!(registry.snapshot().targets[0].dropped_frames_total, 5);
+    }
 }
 
 fn average_ms(total_ms: f64, samples: u64) -> Option<f64> {
     (samples > 0).then_some(total_ms / samples as f64)
+}
+
+pub(crate) fn dropped_frames_since(current_total: u64, previous_total: &mut u64) -> u64 {
+    let newly_dropped = current_total.saturating_sub(*previous_total);
+    *previous_total = current_total;
+    newly_dropped
 }
 
 fn unix_time_ms() -> u64 {

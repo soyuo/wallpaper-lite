@@ -25,6 +25,7 @@ use windows::Win32::Graphics::Direct3D11::ID3D11Device;
 use crate::independent_displays::DisplayRefreshRequest;
 use crate::performance_metrics::{
     PerformanceMemorySampler, PerformanceMetricsRecorder, PerformanceMetricsRegistry,
+    dropped_frames_since,
 };
 use crate::{
     performance_signals::{PerformanceSignalSnapshot, policy_signals},
@@ -1049,7 +1050,7 @@ impl PlaybackController {
                 let pending = self.pending_load.take().expect("pending source exists");
                 self.active_wallpaper_id = Some(pending.wallpaper_id);
                 self.source = Some(pending.source);
-                self.scheduler = PlaybackScheduler::new();
+                self.reset_scheduler();
                 self.playback_settings = None;
                 self.deferred_frame = None;
                 self.eos_pending = false;
@@ -1577,13 +1578,26 @@ impl PlaybackController {
     }
 
     fn publish_performance_metrics(&mut self) {
-        let dropped = self.scheduler.dropped_frames();
-        let newly_dropped = dropped.saturating_sub(self.last_metrics_dropped_count);
-        self.last_metrics_dropped_count = dropped;
+        self.collect_scheduler_drops();
         if let Some(metrics) = self.metrics_recorder.as_mut() {
-            metrics.record_dropped_frames(newly_dropped);
             metrics.publish_if_due(Instant::now());
         }
+    }
+
+    fn collect_scheduler_drops(&mut self) {
+        let newly_dropped = dropped_frames_since(
+            self.scheduler.dropped_frames(),
+            &mut self.last_metrics_dropped_count,
+        );
+        if let Some(metrics) = self.metrics_recorder.as_mut() {
+            metrics.record_dropped_frames(newly_dropped);
+        }
+    }
+
+    fn reset_scheduler(&mut self) {
+        self.collect_scheduler_drops();
+        self.scheduler = PlaybackScheduler::new();
+        self.last_metrics_dropped_count = 0;
     }
 
     fn fail_playback(&mut self, reason: &'static str, code: PlaybackCommandErrorCode) {
@@ -1596,7 +1610,7 @@ impl PlaybackController {
         self.last_error = Some(code);
         self.source = None;
         self.playback_settings = None;
-        self.scheduler = PlaybackScheduler::new();
+        self.reset_scheduler();
         self.policy_state.user_stop();
         self.publish_event();
     }
