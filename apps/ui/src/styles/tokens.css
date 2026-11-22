@@ -1,0 +1,58 @@
+:root {
+  /* Color */
+  --color-text: #1b1f27;
+  --color-text-muted: #55606f;
+  --color-bg: #f3f4f7;
+  --color-surface: #fff;
+  --color-surface-subtle: #f7f8fa;
+  --color-surface-muted: #eceff4;
+  --color-border: #dcdfe6;
+  --color-border-strong: #c4cad6;
+  --color-accent: #2f5fd0;
+  --color-accent-strong: #1f4aae;
+  --color-on-accent: #fff;
+  --color-danger: #b42318;
+  --color-warning-text: #8b4b10;
+  --color-warning-bg: #fff1d6;
+  --color-success-text: #17663a;
+  --color-success-bg: #e6f5eb;
+
+  /* Editor canvas */
+  --color-canvas-border: #8994a5;
+  --color-canvas-bg: #e4e8ef;
+  --color-canvas-check: #d3d9e2;
+  --color-handle: #fff;
+  --color-accent-overlay: rgb(47 95 208 / 12%);
+
+  /* Typography */
+  --font-family: "Segoe UI", system-ui, sans-serif;
+  --font-size-xs: 0.8rem;
+  --font-size-sm: 0.875rem;
+  --font-size-md: 1rem;
+  --font-size-lg: 1.15rem;
+  --font-size-xl: 1.6rem;
+  --font-weight-regular: 400;
+  --font-weight-semibold: 600;
+
+  /* Spacing */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+
+  /* Shape and depth */
+  --radius-sm: 0.375rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --radius-pill: 999px;
+  --shadow-panel: 0 1px 2px rgb(16 24 40 / 6%);
+
+  /* Layout */
+  --content-width: 64rem;
+
+  /* Focus */
+  --focus-ring: 3px solid var(--color-accent);
+  --focus-offset: 2px;
+}

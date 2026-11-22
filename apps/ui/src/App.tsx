@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 
+import "./styles/tokens.css";
+import "./styles/base.css";
 import "./App.css";
 import { EditorHistory, resolveEditorShortcut } from "./editor-history.mjs";
 import { applyDisplayProfiles, buildDisplayProfiles, makeDisplayEdits } from "./display-manager.mjs";
@@ -1221,14 +1223,20 @@ function App() {
 
   return (
     <main className="app-shell">
-      <h1>wallpaper-lite</h1>
-      <p>Desktop application shell</p>
-      <button className="host-check" disabled={checkingHost} onClick={checkHost}>
-        {checkingHost ? "Checking..." : "Check wallpaper host"}
-      </button>
-      <p aria-live="polite" className="host-status" role="status">{hostStatus}</p>
+      <header className="app-header">
+        <div>
+          <h1>wallpaper-lite</h1>
+          <p>Desktop application shell</p>
+        </div>
+        <div className="app-header-actions">
+          <p aria-live="polite" className="host-status" role="status">{hostStatus}</p>
+          <button className="ui-button--primary" disabled={checkingHost} onClick={checkHost}>
+            {checkingHost ? "Checking..." : "Check wallpaper host"}
+          </button>
+        </div>
+      </header>
 
-      <section className="performance-dashboard" aria-labelledby="performance-dashboard-title">
+      <section className="ui-panel performance-dashboard" aria-labelledby="performance-dashboard-title">
         <div className="performance-dashboard-heading">
           <div>
             <h2 id="performance-dashboard-title">Live performance</h2>
@@ -1301,7 +1309,7 @@ function App() {
         )}
       </section>
 
-      <section className="performance-policy" aria-labelledby="performance-policy-title">
+      <section className="ui-panel performance-policy" aria-labelledby="performance-policy-title">
         <div className="performance-policy-heading">
           <div>
             <h2 id="performance-policy-title">Power-saving policies</h2>
@@ -1370,7 +1378,7 @@ function App() {
         {performancePolicyMessage && <p aria-live="polite" className="performance-policy-status" role="status">{performancePolicyMessage}</p>}
       </section>
 
-      <section className="display-manager" aria-labelledby="display-manager-title">
+      <section className="ui-panel display-manager" aria-labelledby="display-manager-title">
         <div className="display-manager-heading">
           <div>
             <h2 id="display-manager-title">Displays</h2>
@@ -1499,7 +1507,7 @@ function App() {
         <p className="display-manager-status" aria-live="polite" role="status">{displayStatus}</p>
       </section>
 
-      <section className="playback-panel" aria-labelledby="playback-title">
+      <section className="ui-panel playback-panel" aria-labelledby="playback-title">
         <h2 id="playback-title">Video playback</h2>
         {playbackState?.wallpaperId == null ? (
           <p>No video is active. Start a video from its library card.</p>
@@ -1632,7 +1640,7 @@ function App() {
         <p className="playback-message" aria-live="polite" role="status">{playbackMessage}</p>
       </section>
 
-      <section className="import-panel" aria-labelledby="import-title">
+      <section className="ui-panel import-panel" aria-labelledby="import-title">
         <h2 id="import-title">Import media</h2>
         <div className="import-actions">
           <button disabled={importing} onClick={() => void importSelection(false)}>Choose files</button>
@@ -1654,7 +1662,7 @@ function App() {
       </section>
 
       {editorEntry && (
-        <section className="editor-preview-panel" aria-labelledby="editor-preview-title">
+        <section className="ui-panel editor-preview-panel" aria-labelledby="editor-preview-title">
           <div className="editor-preview-heading">
             <div>
               <h2 id="editor-preview-title">Preview: {editorEntry.displayName}</h2>
@@ -1849,7 +1857,7 @@ function App() {
         </section>
       )}
 
-      <section className="library-panel" aria-labelledby="library-title">
+      <section className="ui-panel library-panel" aria-labelledby="library-title">
         <div className="library-heading">
           <div>
             <h2 id="library-title">Wallpaper library</h2>
