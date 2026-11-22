@@ -20,6 +20,14 @@ pub struct PerformancePolicySettings {
     fullscreen_action: PolicyAction,
     session_lock_action: PolicyAction,
     battery_action: PolicyAction,
+    #[serde(default)]
+    battery_fps_limit: Option<u16>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PerformancePolicyValidationError {
+    BatteryFpsOutOfRange,
+    BatteryFpsConflictsWithPause,
 }
 
 impl<'de> Deserialize<'de> for PerformancePolicySettings {
@@ -34,6 +42,8 @@ impl<'de> Deserialize<'de> for PerformancePolicySettings {
             fullscreen_action: PolicyAction,
             session_lock_action: PolicyAction,
             battery_action: PolicyAction,
+            #[serde(default)]
+            battery_fps_limit: Option<u16>,
         }
 
         let value = WireSettings::deserialize(deserializer)?;
@@ -42,11 +52,24 @@ impl<'de> Deserialize<'de> for PerformancePolicySettings {
                 "unsupported performance policy schema",
             ));
         }
+        if let Some(limit) = value.battery_fps_limit {
+            if !(1..=120).contains(&limit) {
+                return Err(serde::de::Error::custom(
+                    "battery FPS limit is out of range",
+                ));
+            }
+            if value.battery_action != PolicyAction::Continue {
+                return Err(serde::de::Error::custom(
+                    "battery FPS limit conflicts with the battery pause action",
+                ));
+            }
+        }
         Ok(Self {
             schema_version: value.schema_version,
             fullscreen_action: value.fullscreen_action,
             session_lock_action: value.session_lock_action,
             battery_action: value.battery_action,
+            battery_fps_limit: value.battery_fps_limit,
         })
     }
 }
@@ -58,6 +81,7 @@ impl Default for PerformancePolicySettings {
             fullscreen_action: PolicyAction::PausePlayback,
             session_lock_action: PolicyAction::PausePlayback,
             battery_action: PolicyAction::Continue,
+            battery_fps_limit: None,
         }
     }
 }
@@ -73,6 +97,7 @@ impl PerformancePolicySettings {
             fullscreen_action,
             session_lock_action,
             battery_action,
+            battery_fps_limit: None,
         }
     }
 
@@ -86,6 +111,26 @@ impl PerformancePolicySettings {
 
     pub const fn battery_action(&self) -> PolicyAction {
         self.battery_action
+    }
+
+    pub const fn battery_fps_limit(&self) -> Option<u16> {
+        self.battery_fps_limit
+    }
+
+    pub fn with_battery_fps_limit(
+        mut self,
+        limit: Option<u16>,
+    ) -> Result<Self, PerformancePolicyValidationError> {
+        if let Some(limit) = limit {
+            if !(1..=120).contains(&limit) {
+                return Err(PerformancePolicyValidationError::BatteryFpsOutOfRange);
+            }
+            if self.battery_action != PolicyAction::Continue {
+                return Err(PerformancePolicyValidationError::BatteryFpsConflictsWithPause);
+            }
+        }
+        self.battery_fps_limit = limit;
+        Ok(self)
     }
 
     pub const fn schema_version(&self) -> u32 {
@@ -117,6 +162,11 @@ impl PerformancePolicySettings {
             action,
             active_signals: signals,
             user_paused,
+            battery_fps_limit: if signals.on_battery {
+                self.battery_fps_limit
+            } else {
+                None
+            },
         }
     }
 }
@@ -149,6 +199,7 @@ pub struct PerformanceDecision {
     action: PolicyAction,
     active_signals: PerformanceSignals,
     user_paused: bool,
+    battery_fps_limit: Option<u16>,
 }
 
 impl PerformanceDecision {
@@ -162,6 +213,10 @@ impl PerformanceDecision {
 
     pub const fn user_paused(self) -> bool {
         self.user_paused
+    }
+
+    pub const fn battery_fps_limit(self) -> Option<u16> {
+        self.battery_fps_limit
     }
 }
 
@@ -270,5 +325,48 @@ mod tests {
         let unsupported = r#"{"schemaVersion":2,"fullscreenAction":"continue","sessionLockAction":"continue","batteryAction":"continue"}"#;
         assert!(serde_json::from_str::<PerformancePolicySettings>(unknown_field).is_err());
         assert!(serde_json::from_str::<PerformancePolicySettings>(unsupported).is_err());
+    }
+
+    #[test]
+    fn battery_fps_limit_is_bounded_and_only_active_on_battery() {
+        let settings = PerformancePolicySettings::default()
+            .with_battery_fps_limit(Some(30))
+            .unwrap();
+        assert_eq!(
+            settings
+                .evaluate(
+                    PerformanceSignals {
+                        on_battery: true,
+                        ..PerformanceSignals::default()
+                    },
+                    false,
+                )
+                .battery_fps_limit(),
+            Some(30)
+        );
+        assert_eq!(
+            settings
+                .evaluate(PerformanceSignals::default(), false)
+                .battery_fps_limit(),
+            None
+        );
+        assert!(settings.clone().with_battery_fps_limit(Some(0)).is_err());
+        assert!(settings.with_battery_fps_limit(Some(121)).is_err());
+        assert!(
+            PerformancePolicySettings::new(
+                PolicyAction::Continue,
+                PolicyAction::Continue,
+                PolicyAction::PausePlayback,
+            )
+            .with_battery_fps_limit(Some(30))
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn old_schema_one_policy_defaults_missing_battery_cap_to_none() {
+        let old = r#"{"schemaVersion":1,"fullscreenAction":"pause_playback","sessionLockAction":"pause_playback","batteryAction":"continue"}"#;
+        let settings: PerformancePolicySettings = serde_json::from_str(old).unwrap();
+        assert_eq!(settings.battery_fps_limit(), None);
     }
 }

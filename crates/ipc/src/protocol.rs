@@ -2,13 +2,14 @@ use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::{mpsc, oneshot};
 use wallpaper_core::editor_settings::WallpaperEditorSettings;
+use wallpaper_core::performance_policy::PerformancePolicySettings;
 use wallpaper_core::playback_settings::PlaybackSettings;
 
 use crate::{IpcError, error::from_io};
 
 pub const PIPE_NAME: &str = r"\\.\pipe\wallpaper-lite";
 pub const PLAYBACK_EVENTS_PIPE_NAME: &str = r"\\.\pipe\wallpaper-lite-playback-events";
-pub const PROTOCOL_VERSION: u16 = 9;
+pub const PROTOCOL_VERSION: u16 = 10;
 pub const MAX_FRAME_BYTES: usize = 4 * 1024;
 pub(crate) const IO_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
 const COMMAND_QUEUE_CAPACITY: usize = 16;
@@ -54,6 +55,9 @@ pub enum Command {
     ApplyPlaybackSettings {
         settings: PlaybackSettings,
         source_path: String,
+    },
+    ApplyPerformancePolicySettings {
+        settings: PerformancePolicySettings,
     },
     Play,
     Pause,
@@ -104,6 +108,7 @@ pub enum ResponseResult {
     Pong,
     EditorSettingsApplied,
     PlaybackSettingsApplied,
+    PerformancePolicyApplied,
     DisplayAssignmentsRefreshed {
         failed_targets: Vec<DisplayTargetFailure>,
     },
@@ -167,6 +172,8 @@ pub enum PlaybackCommandErrorCode {
     PlaybackSettingsApplyFailed,
     PlaybackSettingsSourceMismatch,
     DisplayAssignmentsApplyFailed,
+    PerformancePolicyInvalid,
+    PerformancePolicyApplyFailed,
 }
 
 #[cfg(test)]

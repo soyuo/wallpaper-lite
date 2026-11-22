@@ -35,6 +35,10 @@ pub enum ErrorCode {
     InvalidDisplayProfiles,
     DisplayProfilesApplyFailed,
     DisplayProfilesRollbackFailed,
+    PerformancePolicyStorageFailed,
+    InvalidPerformancePolicy,
+    PerformancePolicyApplyFailed,
+    PerformancePolicyRollbackFailed,
     DesktopHostUnavailable,
     Internal,
 }
@@ -73,6 +77,10 @@ impl ErrorCode {
             Self::InvalidDisplayProfiles => "invalid_display_profiles",
             Self::DisplayProfilesApplyFailed => "display_profiles_apply_failed",
             Self::DisplayProfilesRollbackFailed => "display_profiles_rollback_failed",
+            Self::PerformancePolicyStorageFailed => "performance_policy_storage_failed",
+            Self::InvalidPerformancePolicy => "invalid_performance_policy",
+            Self::PerformancePolicyApplyFailed => "performance_policy_apply_failed",
+            Self::PerformancePolicyRollbackFailed => "performance_policy_rollback_failed",
             Self::DesktopHostUnavailable => "desktop_host_unavailable",
             Self::Internal => "internal",
         }

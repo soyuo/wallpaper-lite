@@ -10,6 +10,7 @@ use wallpaper_media::{CatalogStore, ImportResult, import_local_media};
 mod displays;
 mod editor;
 mod library;
+mod performance;
 mod playback;
 
 const APP_LOG_DIRECTORY: &str = "com.soyuo.wallpaper-lite";
@@ -171,6 +172,8 @@ pub fn run() -> process::ExitCode {
             library::set_library_favorite,
             library::relocate_library_entry,
             playback::get_playback_panel,
+            performance::get_performance_policy_settings,
+            performance::apply_performance_policy_settings,
             playback::playback_state,
             playback::load_video_for_playback,
             playback::control_playback,

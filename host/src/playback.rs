@@ -1,7 +1,7 @@
 use std::{
     path::PathBuf,
     sync::{
-        Arc,
+        Arc, RwLock,
         atomic::{AtomicI64, Ordering},
         mpsc::{self, Receiver, SyncSender, TryRecvError, TrySendError},
     },
@@ -58,7 +58,7 @@ impl PlaybackWorker {
             commands,
             device,
             recovery,
-            PerformancePolicySettings::default(),
+            Arc::new(RwLock::new(PerformancePolicySettings::default())),
             None,
             None,
         )
@@ -68,7 +68,7 @@ impl PlaybackWorker {
         mut commands: PlaybackCommandReceiver,
         device: ID3D11Device,
         recovery: &DesktopRecoveryWorker,
-        policy_settings: PerformancePolicySettings,
+        policy_settings: Arc<RwLock<PerformancePolicySettings>>,
         signal_receiver: Option<tokio::sync::watch::Receiver<PerformanceSignalSnapshot>>,
         display_refresh_sender: Option<tokio::sync::mpsc::UnboundedSender<DisplayRefreshRequest>>,
     ) -> std::io::Result<(Self, tokio::sync::watch::Receiver<PlaybackStateEvent>)> {
@@ -185,6 +185,7 @@ struct PlaybackController {
     deferred_frame: Option<VideoFrameMessage>,
     eos_pending: bool,
     scheduler: PlaybackScheduler,
+    configured_fps_limit: u16,
     playback_settings: Option<PlaybackSettings>,
     clock_origin: Instant,
     sequence: u64,
@@ -194,7 +195,7 @@ struct PlaybackController {
     event_sender: tokio::sync::watch::Sender<PlaybackStateEvent>,
     last_event_sent: Instant,
     display_refresh_sender: Option<tokio::sync::mpsc::UnboundedSender<DisplayRefreshRequest>>,
-    policy_settings: PerformancePolicySettings,
+    policy_settings: Arc<RwLock<PerformancePolicySettings>>,
     signal_receiver: Option<tokio::sync::watch::Receiver<PerformanceSignalSnapshot>>,
     policy_state: PlaybackPolicyState,
 }
@@ -213,9 +214,23 @@ struct PlaybackPolicyState {
     user_intent: UserPlaybackIntent,
     paused_by_policy: bool,
     play_requested_while_blocked: bool,
+    battery_fps_limit: Option<u16>,
 }
 
 impl PlaybackPolicyState {
+    fn update_battery_fps_limit(&mut self, next: Option<u16>) -> bool {
+        let changed = self.battery_fps_limit != next;
+        self.battery_fps_limit = next;
+        changed
+    }
+
+    const fn effective_fps_limit(self, configured: u16) -> u16 {
+        match self.battery_fps_limit {
+            Some(cap) if cap < configured => cap,
+            _ => configured,
+        }
+    }
+
     fn user_play(&mut self) -> bool {
         self.user_intent = UserPlaybackIntent::Playing;
         if self.action == PolicyAction::PausePlayback {
@@ -694,7 +709,7 @@ impl PlaybackController {
             device,
             frame_sender,
             event_sender,
-            PerformancePolicySettings::default(),
+            Arc::new(RwLock::new(PerformancePolicySettings::default())),
             None,
             None,
         )
@@ -704,7 +719,7 @@ impl PlaybackController {
         device: ID3D11Device,
         frame_sender: RecoveryFrameSender,
         event_sender: tokio::sync::watch::Sender<PlaybackStateEvent>,
-        policy_settings: PerformancePolicySettings,
+        policy_settings: Arc<RwLock<PerformancePolicySettings>>,
         signal_receiver: Option<tokio::sync::watch::Receiver<PerformanceSignalSnapshot>>,
         display_refresh_sender: Option<tokio::sync::mpsc::UnboundedSender<DisplayRefreshRequest>>,
     ) -> Self {
@@ -717,6 +732,7 @@ impl PlaybackController {
             deferred_frame: None,
             eos_pending: false,
             scheduler: PlaybackScheduler::new(),
+            configured_fps_limit: 60,
             playback_settings: None,
             clock_origin: Instant::now(),
             sequence: 0,
@@ -748,7 +764,30 @@ impl PlaybackController {
         } else {
             Default::default()
         };
-        let action = self.policy_settings.evaluate(signals, false).action();
+        let settings = self
+            .policy_settings
+            .read()
+            .map(|settings| settings.clone())
+            .unwrap_or_default();
+        let decision = settings.evaluate(signals, false);
+        let fps_limit_changed = self
+            .policy_state
+            .update_battery_fps_limit(decision.battery_fps_limit());
+        if fps_limit_changed {
+            self.apply_effective_fps_limit();
+            tracing::info!(
+                component = "performance",
+                event = "battery_fps_limit_changed",
+                on_battery = signals.on_battery,
+                configured_fps = self.configured_fps_limit,
+                battery_fps_limit = ?decision.battery_fps_limit(),
+                effective_fps = self
+                    .policy_state
+                    .effective_fps_limit(self.configured_fps_limit),
+                "Applied temporary battery frame-rate policy"
+            );
+        }
+        let action = decision.action();
         let transition = self
             .policy_state
             .transition(action, self.scheduler.state() == PlaybackState::Playing);
@@ -791,6 +830,17 @@ impl PlaybackController {
                 return;
             }
             self.publish_event();
+        } else if fps_limit_changed {
+            self.publish_event();
+        }
+    }
+
+    fn apply_effective_fps_limit(&mut self) {
+        let frames_per_second = self
+            .policy_state
+            .effective_fps_limit(self.configured_fps_limit);
+        if let Ok(limit) = VideoFpsLimit::custom(frames_per_second) {
+            self.scheduler.set_fps_limit(limit);
         }
     }
 
@@ -938,6 +988,17 @@ impl PlaybackController {
             };
         }
         let command = match command {
+            Command::ApplyPerformancePolicySettings { settings } => {
+                let Ok(mut current) = self.policy_settings.write() else {
+                    return ResponseResult::Error {
+                        code: PlaybackCommandErrorCode::PerformancePolicyApplyFailed,
+                    };
+                };
+                *current = settings;
+                drop(current);
+                self.poll_policy();
+                return ResponseResult::PerformancePolicyApplied;
+            }
             Command::ApplyPlaybackSettings {
                 settings,
                 source_path,
@@ -1053,9 +1114,10 @@ impl PlaybackController {
                     .map_err(|_| PlaybackCommandErrorCode::PlaybackFailed)
             }),
             Command::SetFps { frames_per_second } => self.require_source().and_then(|()| {
-                let limit = VideoFpsLimit::custom(frames_per_second)
+                VideoFpsLimit::custom(frames_per_second)
                     .map_err(|_| PlaybackCommandErrorCode::UnsupportedFps)?;
-                self.scheduler.set_fps_limit(limit);
+                self.configured_fps_limit = frames_per_second;
+                self.apply_effective_fps_limit();
                 Ok(())
             }),
             Command::GetPlaybackState => Ok(()),
@@ -1070,6 +1132,9 @@ impl PlaybackController {
             }
             Command::RefreshDisplayAssignments => {
                 Err(PlaybackCommandErrorCode::DisplayAssignmentsApplyFailed)
+            }
+            Command::ApplyPerformancePolicySettings { .. } => {
+                Err(PlaybackCommandErrorCode::PerformancePolicyApplyFailed)
             }
             Command::Ping => return ResponseResult::Pong,
         };
@@ -1124,10 +1189,9 @@ impl PlaybackController {
             Ok(speed) => speed,
             Err(_) => return self.error(PlaybackCommandErrorCode::PlaybackSettingsInvalid),
         };
-        let fps_limit = match VideoFpsLimit::custom(settings.fps_limit()) {
-            Ok(fps_limit) => fps_limit,
-            Err(_) => return self.error(PlaybackCommandErrorCode::PlaybackSettingsInvalid),
-        };
+        if VideoFpsLimit::custom(settings.fps_limit()).is_err() {
+            return self.error(PlaybackCommandErrorCode::PlaybackSettingsInvalid);
+        }
         let now = self.now_100ns();
         if self.scheduler.state() == PlaybackState::Playing
             && settings.loop_mode() == LoopMode::Segment
@@ -1169,7 +1233,14 @@ impl PlaybackController {
         }) {
             return self.error(PlaybackCommandErrorCode::PlaybackSettingsApplyFailed);
         }
-        self.scheduler.set_fps_limit(fps_limit);
+        self.configured_fps_limit = settings.fps_limit();
+        self.scheduler.set_fps_limit(
+            VideoFpsLimit::custom(
+                self.policy_state
+                    .effective_fps_limit(self.configured_fps_limit),
+            )
+            .expect("validated configured and battery FPS limits"),
+        );
         self.playback_settings = Some(settings);
         self.publish_event();
         ResponseResult::PlaybackSettingsApplied
@@ -1630,6 +1701,22 @@ mod tests {
                 .transition(PolicyAction::Continue, true)
                 .resume_playback
         );
+    }
+
+    #[test]
+    fn battery_fps_cap_is_temporary_and_restores_each_targets_base_limit() {
+        let mut first_target = PlaybackPolicyState::default();
+        let mut second_target = PlaybackPolicyState::default();
+        assert!(first_target.update_battery_fps_limit(Some(30)));
+        assert!(second_target.update_battery_fps_limit(Some(30)));
+        assert_eq!(first_target.effective_fps_limit(45), 30);
+        assert_eq!(second_target.effective_fps_limit(60), 30);
+
+        assert!(first_target.update_battery_fps_limit(None));
+        assert!(second_target.update_battery_fps_limit(None));
+        assert_eq!(first_target.effective_fps_limit(45), 45);
+        assert_eq!(second_target.effective_fps_limit(60), 60);
+        assert!(!first_target.update_battery_fps_limit(None));
     }
 
     #[test]
