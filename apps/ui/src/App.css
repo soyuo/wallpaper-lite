@@ -668,3 +668,4 @@ label {
     display: flex;
   }
 }
+.app-nav-dirty{color:var(--color-warning,currentColor)}

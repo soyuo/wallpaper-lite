@@ -65,6 +65,7 @@ function App() {
             <li key={item.id}>
               <button className="app-nav-item" aria-current={page === item.id ? "page" : undefined} onClick={() => setPage(item.id)}>
                 {item.label}
+                {item.id === "editor" && editorState.editorDirty && <span className="app-nav-dirty" role="img" aria-label="Unapplied changes"> •</span>}
               </button>
             </li>
           ))}
@@ -94,7 +95,12 @@ function App() {
       <PlaybackPanelView hidden={page !== "playback"} state={playbackState} />
       {page === "editor" && !editorState.editorEntry && (<p className="app-empty">Choose a wallpaper in the Library and press Edit.</p>)}
       <EditorPanel hidden={page !== "editor"} state={editorState} previews={previews} />
-      <LibraryPage hidden={page !== "library"} state={libraryState} onOpenEditor={(entry) => void editorState.openEditorPreview(entry)} onStartPlayback={(entry) => void playbackState.startPlayback(entry)} />
+      <LibraryPage hidden={page !== "library"} state={libraryState} onOpenEditor={(entry) => {
+        const { editorDirty, editorEntry } = editorState;
+        if (editorDirty && editorEntry && editorEntry.id !== entry.id
+          && !window.confirm(`Discard unapplied changes to ${editorEntry.displayName} and open ${entry.displayName}?`)) return;
+        void editorState.openEditorPreview(entry);
+      }} onStartPlayback={(entry) => void playbackState.startPlayback(entry)} />
     </main>
     </div>
   );
