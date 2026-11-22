@@ -267,6 +267,7 @@ fn main() -> process::ExitCode {
                 PerformancePolicySettings::default()
             }
         };
+    let policy_settings = std::sync::Arc::new(std::sync::RwLock::new(policy_settings));
     let mut signal_monitor = match PerformanceSignalMonitor::start() {
         Ok(monitor) => {
             tracing::info!(
@@ -295,7 +296,10 @@ fn main() -> process::ExitCode {
         .as_mut()
         .map(|receiver| policy_signals(&receiver.borrow_and_update()))
         .unwrap_or_default();
-    let initial_action = policy_settings.evaluate(initial_signals, false).action();
+    let initial_action = policy_settings
+        .read()
+        .map(|settings| settings.evaluate(initial_signals, false).action())
+        .unwrap_or(PolicyAction::Continue);
     let initial_rendering_paused = initial_action != PolicyAction::Continue;
     if initial_rendering_paused && !desktop_recovery.frame_sender().set_rendering_paused(true) {
         tracing::warn!(

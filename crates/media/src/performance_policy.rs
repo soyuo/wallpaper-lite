@@ -204,4 +204,23 @@ mod tests {
         );
         assert_eq!(fs::read(store.path).unwrap(), original_bytes);
     }
+
+    #[test]
+    fn battery_cap_persists_and_invalid_update_preserves_last_good_file() {
+        let directory = TestDirectory::new();
+        let store = PerformancePolicyStore::at_path(directory.file());
+        let settings = PerformancePolicySettings::default()
+            .with_battery_fps_limit(Some(30))
+            .unwrap();
+        store.save(&settings).unwrap();
+        assert_eq!(store.load().unwrap(), settings);
+        let original_bytes = fs::read(&store.path).unwrap();
+
+        let invalid = br#"{"schemaVersion":1,"fullscreenAction":"pause_playback","sessionLockAction":"pause_playback","batteryAction":"continue","batteryFpsLimit":0}"#;
+        assert_eq!(
+            store.write_candidate(invalid),
+            Err(PerformancePolicyStoreError::InvalidSettings)
+        );
+        assert_eq!(fs::read(store.path).unwrap(), original_bytes);
+    }
 }

@@ -12,6 +12,8 @@ import {
   type EditorPreview,
   type DisplayManagerSnapshot,
   type DisplayPresentationMode,
+  type PerformancePolicySettings,
+  type PolicyAction,
   type ImportFailure,
   type ImportResult,
   type LibraryEntry,
@@ -276,6 +278,9 @@ function App() {
   const [displayStatus, setDisplayStatus] = useState("Display assignments have not been loaded.");
   const [displayLoading, setDisplayLoading] = useState(false);
   const [displaySaving, setDisplaySaving] = useState(false);
+  const [performancePolicy, setPerformancePolicy] = useState<PerformancePolicySettings | null>(null);
+  const [performancePolicySaving, setPerformancePolicySaving] = useState(false);
+  const [performancePolicyMessage, setPerformancePolicyMessage] = useState("");
   const [playbackPanel, setPlaybackPanel] = useState<PlaybackPanel | null>(null);
   const [playbackSettingsDraft, setPlaybackSettingsDraft] = useState<PlaybackSettings | null>(null);
   const [playbackMessage, setPlaybackMessage] = useState("");
@@ -344,6 +349,35 @@ function App() {
   useEffect(() => {
     void refreshLibrary();
   }, [refreshLibrary]);
+
+  useEffect(() => {
+    let stopped = false;
+    void hostAdapter.performancePolicySettings().then((settings) => {
+      if (!stopped) setPerformancePolicy(settings);
+    }).catch((error: unknown) => {
+      if (!stopped) setPerformancePolicyMessage(error instanceof Error ? error.message : "Performance policy settings could not be loaded.");
+    });
+    return () => { stopped = true; };
+  }, []);
+
+  function updatePerformancePolicy(updates: Partial<PerformancePolicySettings>) {
+    setPerformancePolicy((current) => current ? { ...current, ...updates } : current);
+    setPerformancePolicyMessage("");
+  }
+
+  async function savePerformancePolicy() {
+    if (!performancePolicy) return;
+    setPerformancePolicySaving(true);
+    setPerformancePolicyMessage("");
+    try {
+      await hostAdapter.applyPerformancePolicySettings(performancePolicy);
+      setPerformancePolicyMessage("Power-saving policy saved and applied to active playback targets.");
+    } catch (error: unknown) {
+      setPerformancePolicyMessage(error instanceof Error ? error.message : "Power-saving policy could not be applied.");
+    } finally {
+      setPerformancePolicySaving(false);
+    }
+  }
 
   useEffect(() => {
     let stopped = false;
@@ -1144,6 +1178,75 @@ function App() {
         {checkingHost ? "Checking..." : "Check wallpaper host"}
       </button>
       <p aria-live="polite" className="host-status" role="status">{hostStatus}</p>
+
+      <section className="performance-policy" aria-labelledby="performance-policy-title">
+        <div className="performance-policy-heading">
+          <div>
+            <h2 id="performance-policy-title">Power-saving policies</h2>
+            <p>Fullscreen and session actions affect playback; battery options are temporary and keep each display’s saved FPS.</p>
+          </div>
+          <button disabled={!performancePolicy || performancePolicySaving} onClick={() => void savePerformancePolicy()}>
+            {performancePolicySaving ? "Applying..." : "Apply policies"}
+          </button>
+        </div>
+        {performancePolicy ? (
+          <div className="performance-policy-controls">
+            {([
+              ["fullscreenAction", "Fullscreen app"],
+              ["sessionLockAction", "Session lock"],
+            ] as const).map(([key, label]) => (
+              <label key={key}>
+                {label}
+                <select
+                  aria-label={`${label} action`}
+                  disabled={performancePolicySaving}
+                  value={performancePolicy[key]}
+                  onChange={(event) => updatePerformancePolicy({ [key]: event.currentTarget.value as PolicyAction })}
+                >
+                  <option value="continue">Continue</option>
+                  <option value="pause_rendering">Pause rendering</option>
+                  <option value="pause_playback">Pause playback</option>
+                </select>
+              </label>
+            ))}
+            <label>
+              On battery
+              <select
+                aria-label="Battery action"
+                disabled={performancePolicySaving}
+                value={performancePolicy.batteryAction}
+                onChange={(event) => {
+                  const batteryAction = event.currentTarget.value as PolicyAction;
+                  updatePerformancePolicy({ batteryAction, batteryFpsLimit: batteryAction === "continue" ? performancePolicy.batteryFpsLimit : null });
+                }}
+              >
+                <option value="continue">Continue</option>
+                <option value="pause_rendering">Pause rendering</option>
+                <option value="pause_playback">Pause playback</option>
+              </select>
+            </label>
+            <label>
+              Battery FPS cap (optional, 1–120)
+              <input
+                aria-label="Battery FPS cap"
+                type="number"
+                min={1}
+                max={120}
+                step={1}
+                placeholder="No cap"
+                disabled={performancePolicySaving || performancePolicy.batteryAction !== "continue"}
+                value={performancePolicy.batteryFpsLimit ?? ""}
+                onChange={(event) => {
+                  const raw = event.currentTarget.value;
+                  const parsed = raw === "" ? null : Number(raw);
+                  updatePerformancePolicy({ batteryFpsLimit: parsed === null || Number.isInteger(parsed) ? parsed : performancePolicy.batteryFpsLimit });
+                }}
+              />
+            </label>
+          </div>
+        ) : <p role="status">Loading power-saving policies…</p>}
+        {performancePolicyMessage && <p aria-live="polite" className="performance-policy-status" role="status">{performancePolicyMessage}</p>}
+      </section>
 
       <section className="display-manager" aria-labelledby="display-manager-title">
         <div className="display-manager-heading">

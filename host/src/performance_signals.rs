@@ -26,13 +26,13 @@ pub struct PerformanceSignalSnapshot {
     pub health: SignalDetectorHealth,
 }
 
-/// Build the signals currently owned by Phase 7's automatic pause policies.
-/// Power/battery state is intentionally left to the later battery-policy issue.
+/// Build the signals currently owned by Phase 7's automatic playback policies.
+/// An unknown initial power state fails open; the monitor retains the last known value.
 pub fn policy_signals(snapshot: &PerformanceSignalSnapshot) -> PerformanceSignals {
     PerformanceSignals {
         fullscreen: snapshot.fullscreen.unwrap_or(false),
         session_locked: snapshot.session_locked.unwrap_or(false),
-        on_battery: false,
+        on_battery: snapshot.on_battery.unwrap_or(false),
     }
 }
 
@@ -684,16 +684,16 @@ mod tests {
     use wallpaper_core::performance_policy::PerformanceSignals;
 
     #[test]
-    fn unavailable_signals_fail_open_and_battery_remains_out_of_scope() {
+    fn unavailable_signals_fail_open_and_known_battery_state_is_used() {
         assert_eq!(
             policy_signals(&PerformanceSignalSnapshot::default()),
             PerformanceSignals::default()
         );
-        let snapshot = PerformanceSignalSnapshot {
-            on_battery: Some(true),
-            ..PerformanceSignalSnapshot::default()
-        };
-        assert_eq!(policy_signals(&snapshot), PerformanceSignals::default());
+        let mut snapshot = PerformanceSignalSnapshot::default();
+        assert!(snapshot.apply(SignalUpdate::OnBattery(Some(true), None)));
+        assert!(policy_signals(&snapshot).on_battery);
+        assert!(snapshot.apply(SignalUpdate::OnBattery(None, Some(5))));
+        assert!(policy_signals(&snapshot).on_battery);
     }
 
     #[test]

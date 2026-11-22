@@ -634,6 +634,23 @@ body {
 .playback-segment-fields p { color: #526174; }
 .playback-message { min-height: 1.25em; color: #8b2525; }
 
+.performance-policy {
+  display: grid;
+  gap: 0.8rem;
+  margin: 1rem 0;
+  padding: 1rem;
+  border: 1px solid #c8ced8;
+  border-radius: 0.75rem;
+  background: #fff;
+}
+.performance-policy h2,
+.performance-policy p { margin: 0; }
+.performance-policy-heading { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; }
+.performance-policy-heading > div { display: grid; gap: 0.25rem; }
+.performance-policy-controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr)); gap: 0.75rem; }
+.performance-policy-controls label { display: grid; gap: 0.3rem; }
+.performance-policy-status { min-height: 1.25rem; color: #526174; }
+
 .display-manager {
   display: grid;
   gap: 0.9rem;

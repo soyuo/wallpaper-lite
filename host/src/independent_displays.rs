@@ -3,7 +3,10 @@
 use std::{
     collections::HashSet,
     path::PathBuf,
-    sync::mpsc::{self, Receiver, Sender, SyncSender},
+    sync::{
+        Arc, RwLock,
+        mpsc::{self, Receiver, Sender, SyncSender},
+    },
     thread,
     time::{Duration, Instant},
 };
@@ -585,7 +588,7 @@ impl DisplayTargetSet {
         runtime: &tokio::runtime::Runtime,
         assignments: &[ResolvedDisplayAssignment],
         primary_bounds: Option<DisplayRect>,
-        policy_settings: &PerformancePolicySettings,
+        policy_settings: &Arc<RwLock<PerformancePolicySettings>>,
         signal_receiver: Option<&tokio::sync::watch::Receiver<PerformanceSignalSnapshot>>,
     ) -> Self {
         let mut targets = Vec::new();
@@ -658,7 +661,7 @@ impl DisplayTargetSet {
         &mut self,
         runtime: &tokio::runtime::Runtime,
         assignments: &ResolvedDisplayAssignments,
-        policy_settings: &PerformancePolicySettings,
+        policy_settings: &Arc<RwLock<PerformancePolicySettings>>,
         signal_receiver: Option<&tokio::sync::watch::Receiver<PerformanceSignalSnapshot>>,
     ) -> Vec<DisplayTargetFailure> {
         let mut failures = Vec::new();
@@ -797,7 +800,7 @@ impl DisplayTargetManager {
     pub(crate) fn start(
         assignments: &[ResolvedDisplayAssignment],
         primary_bounds: Option<DisplayRect>,
-        policy_settings: PerformancePolicySettings,
+        policy_settings: Arc<RwLock<PerformancePolicySettings>>,
         signal_receiver: Option<tokio::sync::watch::Receiver<PerformanceSignalSnapshot>>,
     ) -> Self {
         let (commands, receiver) = mpsc::channel();
@@ -910,7 +913,7 @@ fn run_display_target_worker(
     receiver: Receiver<DisplayTargetCommand>,
     initial_assignments: Vec<ResolvedDisplayAssignment>,
     primary_bounds: Option<DisplayRect>,
-    policy_settings: PerformancePolicySettings,
+    policy_settings: Arc<RwLock<PerformancePolicySettings>>,
     mut signal_receiver: Option<tokio::sync::watch::Receiver<PerformanceSignalSnapshot>>,
 ) {
     let runtime = match tokio::runtime::Builder::new_current_thread()
@@ -962,23 +965,23 @@ fn run_display_target_worker(
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
         }
 
-        let next_action = if let Some(signals) = signal_receiver.as_mut() {
-            match signals.has_changed() {
-                Ok(true) => {
-                    let snapshot = signals.borrow_and_update().clone();
-                    policy_settings
-                        .evaluate(policy_signals(&snapshot), false)
-                        .action()
-                }
-                Ok(false) => last_action,
-                Err(_) => {
-                    signal_receiver = None;
-                    PolicyAction::Continue
-                }
-            }
-        } else {
-            PolicyAction::Continue
-        };
+        let signal_snapshot = signal_receiver
+            .as_ref()
+            .map(|signals| signals.borrow().clone());
+        if signal_receiver
+            .as_ref()
+            .is_some_and(|signals| signals.has_changed().is_err())
+        {
+            signal_receiver = None;
+        }
+        let next_action = signal_snapshot
+            .as_ref()
+            .map(|snapshot| {
+                current_policy_settings(&policy_settings)
+                    .evaluate(policy_signals(snapshot), false)
+                    .action()
+            })
+            .unwrap_or(PolicyAction::Continue);
         if next_action != last_action {
             targets.set_rendering_paused(next_action != PolicyAction::Continue);
             last_action = next_action;
@@ -986,14 +989,25 @@ fn run_display_target_worker(
     }
 }
 
+fn current_policy_settings(
+    settings: &Arc<RwLock<PerformancePolicySettings>>,
+) -> PerformancePolicySettings {
+    settings
+        .read()
+        .map(|settings| settings.clone())
+        .unwrap_or_default()
+}
+
 fn evaluate_policy_action(
-    settings: &PerformancePolicySettings,
+    settings: &Arc<RwLock<PerformancePolicySettings>>,
     signal_receiver: Option<&tokio::sync::watch::Receiver<PerformanceSignalSnapshot>>,
 ) -> PolicyAction {
     let signals = signal_receiver
         .map(|receiver| policy_signals(&receiver.borrow()))
         .unwrap_or_default();
-    settings.evaluate(signals, false).action()
+    current_policy_settings(settings)
+        .evaluate(signals, false)
+        .action()
 }
 
 struct DisplayTarget {
@@ -1009,7 +1023,7 @@ impl DisplayTarget {
     fn start(
         runtime: &tokio::runtime::Runtime,
         assignment: ResolvedDisplayAssignment,
-        policy_settings: PerformancePolicySettings,
+        policy_settings: Arc<RwLock<PerformancePolicySettings>>,
         signal_receiver: Option<tokio::sync::watch::Receiver<PerformanceSignalSnapshot>>,
     ) -> Result<Self, (String, &'static str)> {
         let device_name = assignment.display.device_name().to_owned();
@@ -1756,8 +1770,12 @@ mod tests {
 
     #[test]
     fn display_target_manager_handles_queued_topology_events_and_stops() {
-        let mut manager =
-            DisplayTargetManager::start(&[], None, PerformancePolicySettings::default(), None);
+        let mut manager = DisplayTargetManager::start(
+            &[],
+            None,
+            Arc::new(RwLock::new(PerformancePolicySettings::default())),
+            None,
+        );
         manager.explorer_exited();
         manager.explorer_restarted();
         manager.reconcile(&ResolvedDisplayAssignments {

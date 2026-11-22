@@ -162,6 +162,16 @@ export interface DisplayManagerSnapshot {
   targetFailures: DisplayTargetFailure[];
 }
 
+export type PolicyAction = "continue" | "pause_rendering" | "pause_playback";
+
+export interface PerformancePolicySettings {
+  schemaVersion: number;
+  fullscreenAction: PolicyAction;
+  sessionLockAction: PolicyAction;
+  batteryAction: PolicyAction;
+  batteryFpsLimit: number | null;
+}
+
 export type AppErrorCode =
   | "host_unavailable"
   | "timeout"
@@ -189,6 +199,10 @@ export type AppErrorCode =
   | "invalid_display_profiles"
   | "display_profiles_apply_failed"
   | "display_profiles_rollback_failed"
+  | "performance_policy_storage_failed"
+  | "invalid_performance_policy"
+  | "performance_policy_apply_failed"
+  | "performance_policy_rollback_failed"
   | "internal";
 
 interface AppErrorPayload {
@@ -232,6 +246,8 @@ export interface HostAdapter {
   applyPlaybackSettings(id: number, settings: PlaybackSettings): Promise<PlaybackPanel>;
   displayManagerSnapshot(): Promise<DisplayManagerSnapshot>;
   applyDisplayProfiles(profiles: DisplayProfile[]): Promise<DisplayProfileApplyOutcome>;
+  performancePolicySettings(): Promise<PerformancePolicySettings>;
+  applyPerformancePolicySettings(settings: PerformancePolicySettings): Promise<void>;
 }
 
 function isAppErrorPayload(value: unknown): value is AppErrorPayload {
@@ -286,6 +302,10 @@ function isAppErrorCode(value: unknown): value is AppErrorCode {
     value === "invalid_display_profiles" ||
     value === "display_profiles_apply_failed" ||
     value === "display_profiles_rollback_failed" ||
+    value === "performance_policy_storage_failed" ||
+    value === "invalid_performance_policy" ||
+    value === "performance_policy_apply_failed" ||
+    value === "performance_policy_rollback_failed" ||
     value === "internal"
   );
 }
@@ -379,5 +399,11 @@ export const hostAdapter: HostAdapter = {
   },
   applyDisplayProfiles(profiles) {
     return invokeAppCommand<DisplayProfileApplyOutcome>("apply_display_profiles", { profiles });
+  },
+  performancePolicySettings() {
+    return invokeAppCommand<PerformancePolicySettings>("get_performance_policy_settings");
+  },
+  applyPerformancePolicySettings(settings) {
+    return invokeAppCommand<void>("apply_performance_policy_settings", { settings });
   },
 };
