@@ -172,6 +172,38 @@ export interface PerformancePolicySettings {
   batteryFpsLimit: number | null;
 }
 
+export interface ActivePerformancePolicyCauses {
+  fullscreen: boolean;
+  sessionLocked: boolean;
+  onBattery: boolean;
+  effectiveAction: PolicyAction;
+  batteryFpsLimit: number | null;
+}
+
+export interface TargetPerformanceMetrics {
+  displayId: string;
+  mediaKind: "image" | "video" | "unknown";
+  sourceFps: number | null;
+  renderedFps: number | null;
+  frameIntervalMs: number | null;
+  droppedFramesTotal: number;
+  decodeLatencyMs: number | null;
+  presentLatencyMs: number | null;
+}
+
+export interface PerformanceMetricsSnapshot {
+  schemaVersion: number;
+  sampledAtUnixMs: number;
+  activePolicyCauses: ActivePerformancePolicyCauses | null;
+  processWorkingSetBytes: number | null;
+  processPrivateBytes: number | null;
+  gpuLocalUsageBytes: number | null;
+  gpuLocalBudgetBytes: number | null;
+  gpuNonLocalUsageBytes: number | null;
+  gpuNonLocalBudgetBytes: number | null;
+  targets: TargetPerformanceMetrics[];
+}
+
 export type AppErrorCode =
   | "host_unavailable"
   | "timeout"
@@ -247,6 +279,7 @@ export interface HostAdapter {
   displayManagerSnapshot(): Promise<DisplayManagerSnapshot>;
   applyDisplayProfiles(profiles: DisplayProfile[]): Promise<DisplayProfileApplyOutcome>;
   performancePolicySettings(): Promise<PerformancePolicySettings>;
+  performanceMetrics(): Promise<PerformanceMetricsSnapshot>;
   applyPerformancePolicySettings(settings: PerformancePolicySettings): Promise<void>;
 }
 
@@ -402,6 +435,9 @@ export const hostAdapter: HostAdapter = {
   },
   performancePolicySettings() {
     return invokeAppCommand<PerformancePolicySettings>("get_performance_policy_settings");
+  },
+  performanceMetrics() {
+    return invokeAppCommand<PerformanceMetricsSnapshot>("get_performance_metrics");
   },
   applyPerformancePolicySettings(settings) {
     return invokeAppCommand<void>("apply_performance_policy_settings", { settings });

@@ -2,14 +2,14 @@ use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::{mpsc, oneshot};
 use wallpaper_core::editor_settings::WallpaperEditorSettings;
-use wallpaper_core::performance_policy::PerformancePolicySettings;
+use wallpaper_core::performance_policy::{PerformancePolicySettings, PolicyAction};
 use wallpaper_core::playback_settings::PlaybackSettings;
 
 use crate::{IpcError, error::from_io};
 
 pub const PIPE_NAME: &str = r"\\.\pipe\wallpaper-lite";
 pub const PLAYBACK_EVENTS_PIPE_NAME: &str = r"\\.\pipe\wallpaper-lite-playback-events";
-pub const PROTOCOL_VERSION: u16 = 11;
+pub const PROTOCOL_VERSION: u16 = 12;
 pub const MAX_FRAME_BYTES: usize = 16 * 1024;
 pub(crate) const IO_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
 const COMMAND_QUEUE_CAPACITY: usize = 16;
@@ -127,6 +127,7 @@ pub enum ResponseResult {
 pub struct PerformanceMetricsSnapshot {
     pub schema_version: u16,
     pub sampled_at_unix_ms: u64,
+    pub active_policy_causes: Option<ActivePerformancePolicyCauses>,
     pub process_working_set_bytes: Option<u64>,
     pub process_private_bytes: Option<u64>,
     pub gpu_local_usage_bytes: Option<u64>,
@@ -134,6 +135,16 @@ pub struct PerformanceMetricsSnapshot {
     pub gpu_non_local_usage_bytes: Option<u64>,
     pub gpu_non_local_budget_bytes: Option<u64>,
     pub targets: Vec<TargetPerformanceMetrics>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ActivePerformancePolicyCauses {
+    pub fullscreen: bool,
+    pub session_locked: bool,
+    pub on_battery: bool,
+    pub effective_action: PolicyAction,
+    pub battery_fps_limit: Option<u16>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -344,8 +355,8 @@ mod display_refresh_tests {
 #[cfg(test)]
 mod performance_metrics_tests {
     use super::{
-        Command, PROTOCOL_VERSION, PerformanceMediaKind, PerformanceMetricsSnapshot, Request,
-        ResponseResult, TargetPerformanceMetrics,
+        ActivePerformancePolicyCauses, Command, PROTOCOL_VERSION, PerformanceMediaKind,
+        PerformanceMetricsSnapshot, Request, ResponseResult, TargetPerformanceMetrics,
     };
 
     #[test]
@@ -357,8 +368,15 @@ mod performance_metrics_tests {
         assert_eq!(decoded.command, Command::GetPerformanceMetrics);
 
         let response = ResponseResult::PerformanceMetrics(PerformanceMetricsSnapshot {
-            schema_version: 1,
+            schema_version: 2,
             sampled_at_unix_ms: 123,
+            active_policy_causes: Some(ActivePerformancePolicyCauses {
+                fullscreen: true,
+                session_locked: false,
+                on_battery: true,
+                effective_action: wallpaper_core::performance_policy::PolicyAction::PauseRendering,
+                battery_fps_limit: Some(30),
+            }),
             process_working_set_bytes: None,
             process_private_bytes: None,
             gpu_local_usage_bytes: None,
@@ -377,7 +395,7 @@ mod performance_metrics_tests {
             }],
         });
         let value = serde_json::to_value(response).unwrap();
-        assert_eq!(value["performance_metrics"]["schemaVersion"], 1);
+        assert_eq!(value["performance_metrics"]["schemaVersion"], 2);
         assert_eq!(
             value["performance_metrics"]["processWorkingSetBytes"],
             serde_json::Value::Null

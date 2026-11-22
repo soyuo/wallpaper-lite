@@ -4,7 +4,9 @@ use wallpaper_core::{
     error::{AppError, ErrorCode},
     performance_policy::PerformancePolicySettings,
 };
-use wallpaper_ipc::protocol::{Command, PlaybackCommandErrorCode, ResponseResult};
+use wallpaper_ipc::protocol::{
+    Command, PerformanceMetricsSnapshot, PlaybackCommandErrorCode, ResponseResult,
+};
 use wallpaper_media::PerformancePolicyStore;
 
 static APPLY_POLICY_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
@@ -18,6 +20,20 @@ fn storage_error() -> AppError {
         ErrorCode::PerformancePolicyStorageFailed,
         "Automatic playback policies could not be loaded or saved.",
     )
+}
+
+#[tauri::command]
+pub async fn get_performance_metrics() -> Result<PerformanceMetricsSnapshot, AppError> {
+    match wallpaper_ipc::client::request(Command::GetPerformanceMetrics)
+        .await
+        .map_err(|error| error.to_app_error())?
+    {
+        ResponseResult::PerformanceMetrics(snapshot) => Ok(snapshot),
+        _ => Err(policy_error(
+            ErrorCode::Internal,
+            "The wallpaper host could not return performance metrics.",
+        )),
+    }
 }
 
 async fn apply_to_host(settings: PerformancePolicySettings) -> Result<(), AppError> {

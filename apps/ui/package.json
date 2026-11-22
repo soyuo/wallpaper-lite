@@ -9,6 +9,7 @@
     "test:editor": "node --test tests/editor-history.test.mjs",
     "test:displays": "node --test tests/display-manager.test.mjs",
     "test:playback": "node --test tests/playback-time.test.mjs",
+    "test:performance": "node --test tests/performance-dashboard.test.mjs",
     "preview": "vite preview",
     "tauri": "tauri"
   },
