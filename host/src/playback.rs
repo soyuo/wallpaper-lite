@@ -12,8 +12,9 @@ use std::{
 use wallpaper_core::performance_policy::{PerformancePolicySettings, PolicyAction};
 use wallpaper_core::playback_settings::{LoopMode, PlaybackSettings, SegmentRange};
 use wallpaper_ipc::protocol::{
-    Command, IpcPlaybackState, PerformanceMediaKind, PlaybackCommandErrorCode,
-    PlaybackCommandReceiver, PlaybackCommandRequest, PlaybackStateEvent, ResponseResult,
+    ActivePerformancePolicyCauses, Command, IpcPlaybackState, PerformanceMediaKind,
+    PlaybackCommandErrorCode, PlaybackCommandReceiver, PlaybackCommandRequest, PlaybackStateEvent,
+    ResponseResult,
 };
 use wallpaper_media::{
     DecodedVideoFrame, MediaError, PlaybackScheduler, PlaybackState, VideoFpsLimit, VideoMetadata,
@@ -258,6 +259,7 @@ struct PlaybackController {
     policy_state: PlaybackPolicyState,
     metrics_registry: PerformanceMetricsRegistry,
     metrics_recorder: Option<PerformanceMetricsRecorder>,
+    last_metrics_policy_causes: Option<ActivePerformancePolicyCauses>,
     last_metrics_dropped_count: u64,
 }
 
@@ -842,6 +844,7 @@ impl PlaybackController {
             policy_state: PlaybackPolicyState::default(),
             metrics_registry,
             metrics_recorder,
+            last_metrics_policy_causes: None,
             last_metrics_dropped_count: 0,
         }
     }
@@ -886,6 +889,18 @@ impl PlaybackController {
             );
         }
         let action = decision.action();
+        let metrics_policy_causes = ActivePerformancePolicyCauses {
+            fullscreen: signals.fullscreen,
+            session_locked: signals.session_locked,
+            on_battery: signals.on_battery,
+            effective_action: action,
+            battery_fps_limit: decision.battery_fps_limit(),
+        };
+        if self.last_metrics_policy_causes.as_ref() != Some(&metrics_policy_causes) {
+            self.metrics_registry
+                .set_active_policy_causes(metrics_policy_causes.clone());
+            self.last_metrics_policy_causes = Some(metrics_policy_causes);
+        }
         let transition = self
             .policy_state
             .transition(action, self.scheduler.state() == PlaybackState::Playing);

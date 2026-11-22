@@ -651,6 +651,42 @@ body {
 .performance-policy-controls label { display: grid; gap: 0.3rem; }
 .performance-policy-status { min-height: 1.25rem; color: #526174; }
 
+.performance-dashboard {
+  display: grid;
+  gap: 0.8rem;
+  margin: 1rem 0;
+  padding: 1rem;
+  border: 1px solid #c8ced8;
+  border-radius: 0.75rem;
+  background: #fff;
+}
+.performance-dashboard h2,
+.performance-dashboard h3,
+.performance-dashboard p { margin: 0; }
+.performance-dashboard-heading,
+.performance-target-heading { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; }
+.performance-dashboard-heading > div { display: grid; gap: 0.25rem; }
+.performance-dashboard-heading > div > p,
+.performance-target-card > p,
+.performance-sample-time { color: #526174; }
+.performance-live,
+.performance-stale { flex: none; padding: 0.25rem 0.55rem; border-radius: 999px; font-size: 0.82rem; font-weight: 650; }
+.performance-live { color: #17663a; background: #e6f5eb; }
+.performance-stale { color: #8b4b10; background: #fff1d6; }
+.performance-dashboard-warning { color: #8b4b10; overflow-wrap: anywhere; }
+.performance-memory-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr)); gap: 0.45rem 1rem; padding: 0.75rem; background: #f4f6f8; border-radius: 0.55rem; }
+.performance-memory-grid p { overflow-wrap: anywhere; }
+.performance-policy-causes { display: grid; gap: 0.35rem; }
+.performance-target-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(19rem, 1fr)); gap: 0.75rem; }
+.performance-target-card { display: grid; align-content: start; gap: 0.55rem; min-width: 0; padding: 0.8rem; border: 1px solid #d8dde5; border-radius: 0.6rem; }
+.performance-target-heading h3 { overflow-wrap: anywhere; }
+.performance-target-heading span { flex: none; color: #526174; font-size: 0.82rem; }
+.performance-target-card dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.6rem; margin: 0; }
+.performance-target-card dl > div { min-width: 0; }
+.performance-target-card dt { color: #526174; font-size: 0.82rem; }
+.performance-target-card dd { margin: 0.12rem 0 0; font-weight: 650; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.performance-sample-time { font-size: 0.85rem; }
+
 .display-manager {
   display: grid;
   gap: 0.9rem;

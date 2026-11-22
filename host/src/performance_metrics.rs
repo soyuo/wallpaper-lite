@@ -9,11 +9,12 @@ use std::{
 };
 
 use wallpaper_ipc::protocol::{
-    PerformanceMediaKind, PerformanceMetricsSnapshot, TargetPerformanceMetrics,
+    ActivePerformancePolicyCauses, PerformanceMediaKind, PerformanceMetricsSnapshot,
+    TargetPerformanceMetrics,
 };
 use windows::core::Interface;
 
-const METRICS_SCHEMA_VERSION: u16 = 1;
+const METRICS_SCHEMA_VERSION: u16 = 2;
 const METRICS_INTERVAL: Duration = Duration::from_secs(1);
 const MAX_METRIC_TARGETS: usize = 16;
 const MAX_DISPLAY_ID_BYTES: usize = 256;
@@ -24,6 +25,7 @@ pub(crate) struct PerformanceMetricsRegistry(Arc<Mutex<RegistryState>>);
 #[derive(Default)]
 struct RegistryState {
     targets: BTreeMap<String, TargetPerformanceMetrics>,
+    active_policy_causes: Option<ActivePerformancePolicyCauses>,
     process_working_set_bytes: Option<u64>,
     process_private_bytes: Option<u64>,
     gpu_local_usage_bytes: Option<u64>,
@@ -85,6 +87,15 @@ impl PerformanceMetricsRegistry {
         }
     }
 
+    pub(crate) fn set_active_policy_causes(&self, causes: ActivePerformancePolicyCauses) {
+        if let Ok(mut state) = self.0.lock()
+            && state.active_policy_causes.as_ref() != Some(&causes)
+        {
+            state.active_policy_causes = Some(causes);
+            state.sampled_at_unix_ms = unix_time_ms();
+        }
+    }
+
     pub(crate) fn set_media_kind(&self, display_id: &str, media_kind: PerformanceMediaKind) {
         if let Ok(mut state) = self.0.lock()
             && let Some(target) = state.targets.get_mut(display_id)
@@ -125,6 +136,7 @@ impl PerformanceMetricsRegistry {
             return PerformanceMetricsSnapshot {
                 schema_version: METRICS_SCHEMA_VERSION,
                 sampled_at_unix_ms: unix_time_ms(),
+                active_policy_causes: None,
                 process_working_set_bytes: None,
                 process_private_bytes: None,
                 gpu_local_usage_bytes: None,
@@ -137,6 +149,7 @@ impl PerformanceMetricsRegistry {
         PerformanceMetricsSnapshot {
             schema_version: METRICS_SCHEMA_VERSION,
             sampled_at_unix_ms: state.sampled_at_unix_ms,
+            active_policy_causes: state.active_policy_causes.clone(),
             process_working_set_bytes: state.process_working_set_bytes,
             process_private_bytes: state.process_private_bytes,
             gpu_local_usage_bytes: state.gpu_local_usage_bytes,

@@ -1,9 +1,10 @@
 # Playback and rendering metrics
 
 The host publishes a versioned performance snapshot through the named-pipe IPC
-`GetPerformanceMetrics` command. The current payload uses schema version `1` and
-protocol version `11`. Metrics are available to clients; a dashboard is outside
-this feature's scope.
+`GetPerformanceMetrics` command. The current payload uses schema version `2` and
+protocol version `12`. The UI dashboard polls once per second and marks samples
+older than 3.5 seconds stale. A failed refresh retains the last sample and shows
+the refresh error.
 
 ## Snapshot contract
 
@@ -13,6 +14,8 @@ Every memory value and each FPS, frame-interval, or latency value is optional.
 JSON `null` means the counter is unavailable, unsupported, not yet sampled, or
 not applicable; clients must not interpret it as zero. Image targets report
 their media kind and leave continuous playback/rendering counters unavailable.
+The snapshot also reports the current fullscreen, session-lock, and battery
+signals, the effective automatic action, and any temporary battery FPS cap.
 
 For video targets, source FPS counts decoded frames accepted by the playback
 actor during the sample window; rendered FPS counts frames whose presentation
@@ -37,3 +40,6 @@ or drops therefore cannot be combined with another display's counters. Registry
 tests cover the cadence, target isolation, and capacity bounds; frame-queue tests
 cover the cumulative drop counter. Runtime metrics are observable through the
 typed IPC response and can be queried without subscribing to playback events.
+The dashboard joins target IDs with the display snapshot to label connected
+targets, shows saved assignments for disconnected displays, and renders target
+failures beside healthy target rows rather than suppressing the snapshot.

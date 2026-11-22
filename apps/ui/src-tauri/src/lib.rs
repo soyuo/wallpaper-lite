@@ -173,6 +173,7 @@ pub fn run() -> process::ExitCode {
             library::relocate_library_entry,
             playback::get_playback_panel,
             performance::get_performance_policy_settings,
+            performance::get_performance_metrics,
             performance::apply_performance_policy_settings,
             playback::playback_state,
             playback::load_video_for_playback,
