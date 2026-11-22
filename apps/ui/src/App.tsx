@@ -296,6 +296,28 @@ function LibraryCard({
   );
 }
 
+type EditorPreviewLike = { monitorWidth: number; monitorHeight: number; settings: WallpaperEditorSettings };
+
+// The preview bitmap is rendered once per load/apply; reflect pending move/resize drags on it live.
+function editorDragTransform(preview: EditorPreviewLike, draft: WallpaperEditorSettings | null): React.CSSProperties | undefined {
+  if (!draft) return undefined;
+  const { monitorWidth: mw, monitorHeight: mh } = preview;
+  if (mw <= 0 || mh <= 0) return undefined;
+  const base = preview.settings.render;
+  const next = draft.render;
+  const baseSize = base.sizePx ?? { width: mw, height: mh };
+  const nextSize = next.sizePx ?? { width: mw, height: mh };
+  const dx = ((next.positionPx.x - base.positionPx.x) / mw) * 100;
+  const dy = ((next.positionPx.y - base.positionPx.y) / mh) * 100;
+  const sx = nextSize.width / baseSize.width;
+  const sy = nextSize.height / baseSize.height;
+  if (dx === 0 && dy === 0 && sx === 1 && sy === 1) return undefined;
+  return {
+    transformOrigin: `${(base.positionPx.x / mw) * 100}% ${(base.positionPx.y / mh) * 100}%`,
+    transform: `translate(${dx}%, ${dy}%) scale(${sx}, ${sy})`,
+  };
+}
+
 function App() {
   const [checkingHost, setCheckingHost] = useState(false);
   const [hostStatus, setHostStatus] = useState("Host connection has not been checked.");
@@ -1733,7 +1755,7 @@ function App() {
                 width: `min(100%, ${Math.min(56, 32 * editorPreview.width / editorPreview.height)}rem)`,
               }}
             >
-              <img draggable={false} src={editorPreview.dataUrl} alt={`Rendered ${editorEntry.displayName}`} />
+              <img draggable={false} src={editorPreview.dataUrl} alt={`Rendered ${editorEntry.displayName}`} style={editorDragTransform(editorPreview, editorSettingsDraft)} />
               <button
                 className="editor-resize-handle"
                 aria-label="Resize wallpaper; hold Shift to lock aspect ratio and Alt to resize from center"
