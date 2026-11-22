@@ -53,6 +53,34 @@ pub enum RendererError {
 }
 
 impl RendererError {
+    /// True when a D3D or DXGI operation reports a removed, reset, or hung device.
+    pub const fn is_device_lost(self) -> bool {
+        let hresult = match self {
+            Self::DeviceCreation { hresult }
+            | Self::PlacementBufferCreation { hresult }
+            | Self::SwapChainCreation { hresult }
+            | Self::SwapChainResize { hresult }
+            | Self::BackBufferAccess { hresult }
+            | Self::RenderTargetCreation { hresult }
+            | Self::ImageTextureCreation { hresult }
+            | Self::ImageViewCreation { hresult }
+            | Self::ShaderCompilation { hresult }
+            | Self::ShaderCreation { hresult }
+            | Self::SamplerCreation { hresult }
+            | Self::RasterizerCreation { hresult }
+            | Self::Present { hresult } => hresult as u32,
+            _ => return false,
+        };
+
+        matches!(
+            hresult,
+            0x887A0005 // DXGI_ERROR_DEVICE_REMOVED
+                | 0x887A0006 // DXGI_ERROR_DEVICE_HUNG
+                | 0x887A0007 // DXGI_ERROR_DEVICE_RESET
+                | 0x887A0020 // DXGI_ERROR_DRIVER_INTERNAL_ERROR
+        )
+    }
+
     pub const fn to_app_error(self) -> AppError {
         match self {
             Self::UnsupportedPlatform => AppError::new(
@@ -62,6 +90,10 @@ impl RendererError {
             Self::InvalidEditorSettings => AppError::new(
                 ErrorCode::InvalidEditorSettings,
                 "The wallpaper editor settings are invalid.",
+            ),
+            error if error.is_device_lost() => AppError::new(
+                ErrorCode::GraphicsDeviceLost,
+                "The graphics device was removed and wallpaper recovery is in progress.",
             ),
             _ => AppError::new(
                 ErrorCode::GraphicsInitializationFailed,
@@ -125,6 +157,7 @@ fn diagnostic(stage: &str, hresult: i32) -> String {
 }
 
 /// Owns the D3D11 device and immediate context through their COM lifetimes.
+#[derive(Clone)]
 pub struct D3d11Device {
     #[cfg(target_os = "windows")]
     device: windows::Win32::Graphics::Direct3D11::ID3D11Device,
@@ -135,14 +168,12 @@ pub struct D3d11Device {
 
 /// D3D11 still-image and video-frame presenter is implemented on Windows only.
 #[cfg(not(target_os = "windows"))]
-pub struct D3d11ImagePresenter<'a> {
-    _device: std::marker::PhantomData<&'a D3d11Device>,
-}
+pub struct D3d11ImagePresenter {}
 
 #[cfg(not(target_os = "windows"))]
-impl<'a> D3d11ImagePresenter<'a> {
+impl D3d11ImagePresenter {
     pub fn new(
-        _device: &'a D3d11Device,
+        _device: &D3d11Device,
         _window_handle: isize,
         _image: &wallpaper_media::DecodedImage,
     ) -> Result<Self, RendererError> {
@@ -150,7 +181,7 @@ impl<'a> D3d11ImagePresenter<'a> {
     }
 
     pub fn new_with_placement(
-        _device: &'a D3d11Device,
+        _device: &D3d11Device,
         _window_handle: isize,
         _image: &wallpaper_media::DecodedImage,
         _placement_mode: PlacementMode,
@@ -159,7 +190,7 @@ impl<'a> D3d11ImagePresenter<'a> {
     }
 
     pub fn new_with_transform(
-        _device: &'a D3d11Device,
+        _device: &D3d11Device,
         _window_handle: isize,
         _image: &wallpaper_media::DecodedImage,
         _placement_mode: PlacementMode,
@@ -169,7 +200,7 @@ impl<'a> D3d11ImagePresenter<'a> {
     }
 
     pub fn new_with_color_adjustments(
-        _device: &'a D3d11Device,
+        _device: &D3d11Device,
         _window_handle: isize,
         _image: &wallpaper_media::DecodedImage,
         _color_adjustments: ColorAdjustments,
@@ -178,7 +209,7 @@ impl<'a> D3d11ImagePresenter<'a> {
     }
 
     pub fn new_with_video_frame(
-        _device: &'a D3d11Device,
+        _device: &D3d11Device,
         _window_handle: isize,
         _frame: &wallpaper_media::DecodedVideoFrame,
     ) -> Result<Self, RendererError> {
@@ -347,9 +378,23 @@ impl D3d11Device {
 
 #[cfg(all(test, target_os = "windows"))]
 mod tests {
-    use super::D3d11Device;
+    use super::{D3d11Device, RendererError};
     use windows::Win32::Graphics::Direct3D11::ID3D11Multithread;
     use windows::core::Interface;
+
+    #[test]
+    fn device_removed_reset_hung_and_driver_failures_are_distinguished() {
+        for hresult in [0x887A0005_u32, 0x887A0006, 0x887A0007, 0x887A0020] {
+            assert!(
+                RendererError::Present {
+                    hresult: hresult as i32,
+                }
+                .is_device_lost()
+            );
+        }
+        assert!(!RendererError::Present { hresult: -1 }.is_device_lost());
+        assert!(!RendererError::InvalidVideoFrame.is_device_lost());
+    }
 
     #[test]
     fn creates_and_releases_hardware_device_and_immediate_context() {

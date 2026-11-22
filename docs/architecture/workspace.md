@@ -94,6 +94,9 @@ when AC power returns. Runtime evidence is in
 [`docs/development/phase-7-signal-detection.md`](../development/phase-7-signal-detection.md),
 [`docs/development/phase-7-automatic-pause-acceptance.md`](../development/phase-7-automatic-pause-acceptance.md),
 and [`docs/development/phase-7-battery-policy-acceptance.md`](../development/phase-7-battery-policy-acceptance.md).
+Target-local D3D device-loss classification and bounded presenter/device
+recreation are described in
+[`../development/phase-7-device-loss-recovery.md`](../development/phase-7-device-loss-recovery.md).
 
 See [`display-management.md`](display-management.md) for stable target IDs,
 physical bounds, refresh rate, DPI scale, profile validation/persistence,
