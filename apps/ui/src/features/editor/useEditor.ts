@@ -483,6 +483,7 @@ export function useEditor({ previews, setPreviews, setRecentIds, onOpen }: Edito
     createCropMode,
     cropPointer,
     editorBusy,
+    editorDirty,
     editorEntry,
     editorError,
     editorHistory,
