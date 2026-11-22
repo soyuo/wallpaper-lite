@@ -1,0 +1,213 @@
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+:root {
+  color-scheme: dark;
+  color: var(--color-text);
+  background: var(--color-bg);
+  font-family: var(--font-family);
+  font-size: var(--font-size-md);
+  line-height: 1.5;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  min-width: 320px;
+  min-height: 100vh;
+  margin: 0;
+}
+
+h1,
+h2,
+h3,
+p,
+dl,
+dd,
+fieldset {
+  margin: 0;
+}
+
+h1 {
+  font-size: var(--font-size-xl);
+  font-weight: var(--font-weight-semibold);
+}
+
+h2 {
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
+}
+
+h3 {
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
+}
+
+label {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-regular);
+}
+
+legend {
+  padding: 0 var(--space-1);
+  font-weight: var(--font-weight-semibold);
+}
+
+fieldset {
+  min-width: 0;
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+/* Controls. :where() keeps specificity at zero so class rules can refine them. */
+:where(button) {
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  color: inherit;
+  background: var(--color-surface);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-regular);
+  cursor: pointer;
+}
+
+:where(select, input:not([type="checkbox"], [type="radio"], [type="range"])) {
+  width: 100%;
+  min-width: 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  color: inherit;
+  background: var(--color-surface);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-regular);
+}
+
+:where(input[type="checkbox"], input[type="radio"], input[type="range"]) {
+  accent-color: var(--color-accent);
+}
+
+:where(input[type="range"]) {
+  width: 100%;
+}
+
+:where(button:hover:not(:disabled)) {
+  background: var(--color-surface-muted);
+}
+
+:where(button:active:not(:disabled)) {
+  background: var(--color-border);
+}
+
+:where(button:disabled, select:disabled, input:disabled) {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+:where(button, select, input, textarea):focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-offset);
+}
+
+[hidden] {
+  display: none !important;
+}
+
+.ui-button--primary {
+  border-color: transparent;
+  color: var(--color-on-accent);
+  background: var(--color-accent);
+}
+
+.ui-button--primary:hover:not(:disabled) {
+  background: var(--color-accent-strong);
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* Dropdown: custom chevron, native arrow removed */
+:where(select) {
+  padding-right: var(--space-6);
+  appearance: none;
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--color-text-muted) 50%),
+    linear-gradient(135deg, var(--color-text-muted) 50%, transparent 50%);
+  background-position: calc(100% - 1.1rem) 55%, calc(100% - 0.8rem) 55%;
+  background-size: 0.3rem 0.3rem;
+  background-repeat: no-repeat;
+  cursor: pointer;
+}
+
+:where(select:hover:not(:disabled), input:hover:not(:disabled):not([type="checkbox"], [type="range"])) {
+  border-color: var(--color-text-muted);
+}
+
+:where(select) option {
+  color: var(--color-text);
+  background: var(--color-surface);
+}
+
+:where(input::placeholder) {
+  color: var(--color-text-muted);
+  opacity: 0.8;
+}
+
+/* Number input spinners follow the theme */
+:where(input[type="number"]) {
+  appearance: textfield;
+}
+
+:where(input[type="number"])::-webkit-inner-spin-button,
+:where(input[type="number"])::-webkit-outer-spin-button {
+  opacity: 0.5;
+}
+
+/* Checkbox */
+:where(input[type="checkbox"]) {
+  width: 1.1rem;
+  height: 1.1rem;
+  margin: 0;
+  cursor: pointer;
+}
+
+/* Range slider */
+:where(input[type="range"]) {
+  height: 1.25rem;
+  cursor: pointer;
+}
+
+/* Scrollbars */
+* {
+  scrollbar-color: var(--color-border-strong) transparent;
+  scrollbar-width: thin;
+}
+
+::selection {
+  background: var(--color-accent);
+  color: var(--color-on-accent);
+}
+
+:where(hr) {
+  border: 0;
+  border-top: 1px solid var(--color-border);
+}
+
+:where(output) {
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+}

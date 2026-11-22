@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 
+import "./styles/tokens.css";
+import "./styles/base.css";
 import "./App.css";
 import { EditorHistory, resolveEditorShortcut } from "./editor-history.mjs";
 import { applyDisplayProfiles, buildDisplayProfiles, makeDisplayEdits } from "./display-manager.mjs";
@@ -126,6 +128,16 @@ function availabilityLabel(value: Availability): string {
   if (value === "unavailable") return "Unavailable";
   return "Available";
 }
+
+type AppPage = "library" | "editor" | "displays" | "playback" | "performance";
+
+const APP_PAGES: { id: AppPage; label: string }[] = [
+  { id: "library", label: "Library" },
+  { id: "editor", label: "Editor" },
+  { id: "displays", label: "Monitors" },
+  { id: "playback", label: "Playback" },
+  { id: "performance", label: "Performance" },
+];
 
 type EditorPointer = {
   kind: "move" | "resize";
@@ -284,6 +296,71 @@ function LibraryCard({
   );
 }
 
+type EditorPreviewLike = { monitorWidth: number; monitorHeight: number; settings: WallpaperEditorSettings };
+
+// The preview bitmap is rendered once per load/apply; reflect pending move/resize drags on it live.
+function editorDragTransform(preview: EditorPreviewLike, draft: WallpaperEditorSettings | null): React.CSSProperties | undefined {
+  if (!draft) return undefined;
+  const { monitorWidth: mw, monitorHeight: mh } = preview;
+  if (mw <= 0 || mh <= 0) return undefined;
+  const base = preview.settings.render;
+  const next = draft.render;
+  const baseSize = base.sizePx ?? { width: mw, height: mh };
+  const nextSize = next.sizePx ?? { width: mw, height: mh };
+  const dx = ((next.positionPx.x - base.positionPx.x) / mw) * 100;
+  const dy = ((next.positionPx.y - base.positionPx.y) / mh) * 100;
+  const sx = nextSize.width / baseSize.width;
+  const sy = nextSize.height / baseSize.height;
+  if (dx === 0 && dy === 0 && sx === 1 && sy === 1) return undefined;
+  return {
+    transformOrigin: `${(base.positionPx.x / mw) * 100}% ${(base.positionPx.y / mh) * 100}%`,
+    transform: `translate(${dx}%, ${dy}%) scale(${sx}, ${sy})`,
+  };
+}
+
+// Approximates crates/renderer placement.rs on the full source so the part outside the display stays visible.
+function editorGhostStyle(source: { width: number; height: number }, draft: WallpaperEditorSettings, mw: number, mh: number): React.CSSProperties | undefined {
+  const r = draft.render;
+  const c = r.crop;
+  const ew = source.width * c.width;
+  const eh = source.height * c.height;
+  if (mw <= 0 || mh <= 0 || ew <= 0 || eh <= 0 || c.width <= 0 || c.height <= 0) return undefined;
+  let scale = Math.max(mw / ew, mh / eh);
+  if (r.placementMode === "fit") scale = Math.min(mw / ew, mh / eh);
+  else if (r.placementMode === "center") scale = 1;
+  let boxW = ew * scale;
+  let boxH = eh * scale;
+  if (r.placementMode === "stretch") { boxW = mw; boxH = mh; }
+  // Destination rectangle before sizePx: Cover and Stretch fill the display, Fit/Center use the box.
+  const fills = r.placementMode === "cover" || r.placementMode === "custom" || r.placementMode === "stretch";
+  const baseW = fills ? mw : boxW;
+  const baseH = fills ? mh : boxH;
+  const rectW = r.sizePx?.width ?? baseW;
+  const rectH = r.sizePx?.height ?? baseH;
+  const kx = rectW / baseW;
+  const ky = rectH / baseH;
+  const boxWs = boxW * kx;
+  const boxHs = boxH * ky;
+  const rectL = (mw - rectW) / 2;
+  const rectT = (mh - rectH) / 2;
+  const left = (mw - boxWs) / 2 - c.x * (boxWs / c.width);
+  const top = (mh - boxHs) / 2 - c.y * (boxHs / c.height);
+  const width = boxWs / c.width;
+  const height = boxHs / c.height;
+  const ax = rectL + rectW * r.anchor.x;
+  const ay = rectT + rectH * r.anchor.y;
+  return {
+    position: "absolute",
+    left: `${(left / mw) * 100}%`,
+    top: `${(top / mh) * 100}%`,
+    width: `${(width / mw) * 100}%`,
+    height: `${(height / mh) * 100}%`,
+    clipPath: `inset(${c.y * 100}% ${(1 - c.x - c.width) * 100}% ${(1 - c.y - c.height) * 100}% ${c.x * 100}%)`,
+    transformOrigin: `${((ax - left) / width) * 100}% ${((ay - top) / height) * 100}%`,
+    transform: `translate(${(r.positionPx.x / width) * 100}%, ${(r.positionPx.y / height) * 100}%) rotate(${r.rotationDegrees}deg) scale(${r.scale.x}, ${r.scale.y})`,
+  };
+}
+
 function App() {
   const [checkingHost, setCheckingHost] = useState(false);
   const [hostStatus, setHostStatus] = useState("Host connection has not been checked.");
@@ -327,6 +404,29 @@ function App() {
   const [visibleCount, setVisibleCount] = useState(24);
   const [editorMonitors, setEditorMonitors] = useState<EditorMonitor[]>([]);
   const [editorMonitorId, setEditorMonitorId] = useState("");
+  const [page, setPage] = useState<AppPage>("library");
+  const [previewZoom, setPreviewZoom] = useState(1);
+  const [theme, setTheme] = useState<"dark" | "light">(() => (localStorage.getItem("wallpaper-lite.theme") === "light" ? "light" : "dark"));
+
+  const zoomPreview = useCallback((delta: number | "reset") => {
+    setPreviewZoom((zoom) => (delta === "reset" ? 1 : Math.min(4, Math.max(0.25, Math.round((zoom + delta) * 100) / 100))));
+  }, []);
+
+  const previewCanvasRef = useCallback((node: HTMLDivElement | null) => {
+    if (!node) return;
+    // Non-passive wheel listener so Ctrl+wheel zooms the preview instead of the whole page.
+    node.addEventListener("wheel", (event) => {
+      if (!event.ctrlKey) return;
+      event.preventDefault();
+      zoomPreview(event.deltaY < 0 ? 0.1 : -0.1);
+    }, { passive: false });
+  }, [zoomPreview]);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    localStorage.setItem("wallpaper-lite.theme", theme);
+  }, [theme]);
+
   const [editorEntry, setEditorEntry] = useState<LibraryEntry | null>(null);
   const [editorPreview, setEditorPreview] = useState<EditorPreview | null>(null);
   const [editorSettingsDraft, setEditorSettingsDraft] = useState<WallpaperEditorSettings | null>(null);
@@ -830,6 +930,7 @@ function App() {
   }
 
   async function openEditorPreview(entry: LibraryEntry) {
+    setPage("editor");
     setEditorEntry(entry);
     setEditorPreview(null);
     setEditorError("");
@@ -1016,8 +1117,8 @@ function App() {
     if (!pointer || !monitor || !editorSettingsDraft) return;
     const bounds = event.currentTarget.getBoundingClientRect();
     if (bounds.width <= 0 || bounds.height <= 0) return;
-    let dx = Math.round((event.clientX - pointer.startX) * monitor.width / bounds.width);
-    let dy = Math.round((event.clientY - pointer.startY) * monitor.height / bounds.height);
+    let dx = Math.round((event.clientX - pointer.startX) * monitor.width / bounds.width / previewZoom);
+    let dy = Math.round((event.clientY - pointer.startY) * monitor.height / bounds.height / previewZoom);
     if (event.shiftKey && pointer.kind === "resize") {
       const ratioDelta = Math.abs(dx) > Math.abs(dy * pointer.aspect) ? dx : dy * pointer.aspect;
       dx = Math.round(ratioDelta);
@@ -1220,15 +1321,37 @@ function App() {
   };
 
   return (
+    <div className="app-layout">
+      <nav className="app-sidebar" aria-label="Main">
+        <p className="app-brand">wallpaper-lite</p>
+        <ul>
+          {APP_PAGES.map((item) => (
+            <li key={item.id}>
+              <button className="app-nav-item" aria-current={page === item.id ? "page" : undefined} onClick={() => setPage(item.id)}>
+                {item.label}
+              </button>
+            </li>
+          ))}
+        </ul>
+        <button className="app-theme-toggle" onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>
+          {theme === "dark" ? "Light mode" : "Dark mode"}
+        </button>
+      </nav>
     <main className="app-shell">
-      <h1>wallpaper-lite</h1>
-      <p>Desktop application shell</p>
-      <button className="host-check" disabled={checkingHost} onClick={checkHost}>
-        {checkingHost ? "Checking..." : "Check wallpaper host"}
-      </button>
-      <p aria-live="polite" className="host-status" role="status">{hostStatus}</p>
+      <header className="app-header">
+        <div>
+          <h1>{APP_PAGES.find((item) => item.id === page)?.label}</h1>
+          <p>Desktop wallpaper</p>
+        </div>
+        <div className="app-header-actions">
+          <p aria-live="polite" className="host-status" role="status">{hostStatus}</p>
+          <button className="ui-button--primary" disabled={checkingHost} onClick={checkHost}>
+            {checkingHost ? "Checking..." : "Check wallpaper host"}
+          </button>
+        </div>
+      </header>
 
-      <section className="performance-dashboard" aria-labelledby="performance-dashboard-title">
+      <section className="ui-panel performance-dashboard" hidden={page !== "performance"} aria-labelledby="performance-dashboard-title">
         <div className="performance-dashboard-heading">
           <div>
             <h2 id="performance-dashboard-title">Live performance</h2>
@@ -1301,7 +1424,7 @@ function App() {
         )}
       </section>
 
-      <section className="performance-policy" aria-labelledby="performance-policy-title">
+      <section className="ui-panel performance-policy" hidden={page !== "performance"} aria-labelledby="performance-policy-title">
         <div className="performance-policy-heading">
           <div>
             <h2 id="performance-policy-title">Power-saving policies</h2>
@@ -1370,7 +1493,7 @@ function App() {
         {performancePolicyMessage && <p aria-live="polite" className="performance-policy-status" role="status">{performancePolicyMessage}</p>}
       </section>
 
-      <section className="display-manager" aria-labelledby="display-manager-title">
+      <section className="ui-panel display-manager" hidden={page !== "displays"} aria-labelledby="display-manager-title">
         <div className="display-manager-heading">
           <div>
             <h2 id="display-manager-title">Displays</h2>
@@ -1499,7 +1622,7 @@ function App() {
         <p className="display-manager-status" aria-live="polite" role="status">{displayStatus}</p>
       </section>
 
-      <section className="playback-panel" aria-labelledby="playback-title">
+      <section className="ui-panel playback-panel" hidden={page !== "playback"} aria-labelledby="playback-title">
         <h2 id="playback-title">Video playback</h2>
         {playbackState?.wallpaperId == null ? (
           <p>No video is active. Start a video from its library card.</p>
@@ -1632,7 +1755,7 @@ function App() {
         <p className="playback-message" aria-live="polite" role="status">{playbackMessage}</p>
       </section>
 
-      <section className="import-panel" aria-labelledby="import-title">
+      <section className="ui-panel import-panel" hidden={page !== "library"} aria-labelledby="import-title">
         <h2 id="import-title">Import media</h2>
         <div className="import-actions">
           <button disabled={importing} onClick={() => void importSelection(false)}>Choose files</button>
@@ -1653,8 +1776,9 @@ function App() {
         )}
       </section>
 
+      {page === "editor" && !editorEntry && (<p className="app-empty">Choose a wallpaper in the Library and press Edit.</p>)}
       {editorEntry && (
-        <section className="editor-preview-panel" aria-labelledby="editor-preview-title">
+        <section className="ui-panel editor-preview-panel" hidden={page !== "editor"} aria-labelledby="editor-preview-title">
           <div className="editor-preview-heading">
             <div>
               <h2 id="editor-preview-title">Preview: {editorEntry.displayName}</h2>
@@ -1678,7 +1802,18 @@ function App() {
             <p role="status">{editorError}</p>
           ) : editorPreview ? (
             <div
+              ref={previewCanvasRef}
+              tabIndex={0}
               className="editor-preview-canvas"
+              onKeyDown={(event) => {
+                if (!(event.ctrlKey || event.metaKey)) return;
+                if (event.key === "+" || event.key === "=") zoomPreview(0.1);
+                else if (event.key === "-") zoomPreview(-0.1);
+                else if (event.key === "0") zoomPreview("reset");
+                else return;
+                event.preventDefault();
+                event.stopPropagation();
+              }}
               aria-label={`Preview canvas ${editorPreview.monitorWidth} by ${editorPreview.monitorHeight}`}
               onPointerDown={(event) => beginEditorPointer(event, "move")}
               onPointerMove={moveEditorPointer}
@@ -1689,7 +1824,18 @@ function App() {
                 width: `min(100%, ${Math.min(56, 32 * editorPreview.width / editorPreview.height)}rem)`,
               }}
             >
-              <img draggable={false} src={editorPreview.dataUrl} alt={`Rendered ${editorEntry.displayName}`} />
+              <div className="editor-preview-ghost" aria-hidden="true">
+                <div className="editor-preview-zoom" style={{ transform: `scale(${previewZoom})` }}>
+                  {previews[editorEntry.id] && editorSettingsDraft && (
+                    <img draggable={false} src={previews[editorEntry.id].thumbnailDataUrl} alt="" style={editorGhostStyle(previews[editorEntry.id], editorSettingsDraft, editorPreview.monitorWidth, editorPreview.monitorHeight)} />
+                  )}
+                </div>
+              </div>
+              <div className="editor-preview-clip">
+                <div className="editor-preview-zoom" style={{ transform: `scale(${previewZoom})` }}>
+                <img draggable={false} src={editorPreview.dataUrl} alt={`Rendered ${editorEntry.displayName}`} style={editorDragTransform(editorPreview, editorSettingsDraft)} />
+              </div>
+              </div>
               <button
                 className="editor-resize-handle"
                 aria-label="Resize wallpaper; hold Shift to lock aspect ratio and Alt to resize from center"
@@ -1849,7 +1995,7 @@ function App() {
         </section>
       )}
 
-      <section className="library-panel" aria-labelledby="library-title">
+      <section className="ui-panel library-panel" hidden={page !== "library"} aria-labelledby="library-title">
         <div className="library-heading">
           <div>
             <h2 id="library-title">Wallpaper library</h2>
@@ -1939,6 +2085,7 @@ function App() {
         )}
       </section>
     </main>
+    </div>
   );
 }
 
