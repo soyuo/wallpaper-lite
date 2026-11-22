@@ -12,8 +12,8 @@ use std::{
 use wallpaper_core::performance_policy::{PerformancePolicySettings, PolicyAction};
 use wallpaper_core::playback_settings::{LoopMode, PlaybackSettings, SegmentRange};
 use wallpaper_ipc::protocol::{
-    Command, IpcPlaybackState, PlaybackCommandErrorCode, PlaybackCommandReceiver,
-    PlaybackCommandRequest, PlaybackStateEvent, ResponseResult,
+    Command, IpcPlaybackState, PerformanceMediaKind, PlaybackCommandErrorCode,
+    PlaybackCommandReceiver, PlaybackCommandRequest, PlaybackStateEvent, ResponseResult,
 };
 use wallpaper_media::{
     DecodedVideoFrame, MediaError, PlaybackScheduler, PlaybackState, VideoFpsLimit, VideoMetadata,
@@ -23,6 +23,9 @@ use wallpaper_renderer::RendererError;
 use windows::Win32::Graphics::Direct3D11::ID3D11Device;
 
 use crate::independent_displays::DisplayRefreshRequest;
+use crate::performance_metrics::{
+    PerformanceMemorySampler, PerformanceMetricsRecorder, PerformanceMetricsRegistry,
+};
 use crate::{
     performance_signals::{PerformanceSignalSnapshot, policy_signals},
     recovery::{ApplySettingsError, DesktopRecoveryWorker, RecoveryFrameSender},
@@ -46,6 +49,14 @@ fn segment_bounds_100ns(segment: SegmentRange) -> Result<(i64, i64), PlaybackCom
 pub(crate) struct PlaybackWorker {
     thread: Option<JoinHandle<()>>,
     stop_sender: Option<SyncSender<()>>,
+    memory_sampler: Option<PerformanceMemorySampler>,
+}
+
+pub(crate) struct PerformanceMetricsBinding {
+    pub(crate) display_id: String,
+    pub(crate) media_kind: PerformanceMediaKind,
+    pub(crate) registry: PerformanceMetricsRegistry,
+    pub(crate) sample_memory: bool,
 }
 
 impl PlaybackWorker {
@@ -66,13 +77,50 @@ impl PlaybackWorker {
     }
 
     pub(crate) fn start_with_policy_and_display_refresh(
-        mut commands: PlaybackCommandReceiver,
+        commands: PlaybackCommandReceiver,
         device: ID3D11Device,
         recovery: &DesktopRecoveryWorker,
         policy_settings: Arc<RwLock<PerformancePolicySettings>>,
         signal_receiver: Option<tokio::sync::watch::Receiver<PerformanceSignalSnapshot>>,
         display_refresh_sender: Option<tokio::sync::mpsc::UnboundedSender<DisplayRefreshRequest>>,
     ) -> std::io::Result<(Self, tokio::sync::watch::Receiver<PlaybackStateEvent>)> {
+        Self::start_with_performance_metrics(
+            commands,
+            device,
+            recovery,
+            policy_settings,
+            signal_receiver,
+            display_refresh_sender,
+            None,
+        )
+    }
+
+    pub(crate) fn start_with_performance_metrics(
+        mut commands: PlaybackCommandReceiver,
+        device: ID3D11Device,
+        recovery: &DesktopRecoveryWorker,
+        policy_settings: Arc<RwLock<PerformancePolicySettings>>,
+        signal_receiver: Option<tokio::sync::watch::Receiver<PerformanceSignalSnapshot>>,
+        display_refresh_sender: Option<tokio::sync::mpsc::UnboundedSender<DisplayRefreshRequest>>,
+        metrics: Option<PerformanceMetricsBinding>,
+    ) -> std::io::Result<(Self, tokio::sync::watch::Receiver<PlaybackStateEvent>)> {
+        let memory_sampler = metrics
+            .as_ref()
+            .filter(|metrics| metrics.sample_memory)
+            .and_then(|metrics| {
+                match PerformanceMemorySampler::start(device.clone(), metrics.registry.clone()) {
+                    Ok(sampler) => Some(sampler),
+                    Err(error) => {
+                        tracing::warn!(
+                            component = "performance",
+                            event = "memory_sampler_start_failed",
+                            error_kind = ?error.kind(),
+                            "Process and GPU memory metrics will remain unavailable"
+                        );
+                        None
+                    }
+                }
+            });
         let frame_sender = recovery.frame_sender();
         let (event_sender, event_receiver) = tokio::sync::watch::channel(PlaybackStateEvent {
             sequence: 0,
@@ -93,13 +141,14 @@ impl PlaybackWorker {
         let thread = thread::Builder::new()
             .name("wallpaper-video-playback".to_owned())
             .spawn(move || {
-                let mut controller = PlaybackController::new_with_policy_and_display_refresh(
+                let mut controller = PlaybackController::new_with_metrics(
                     device,
                     frame_sender,
                     event_sender,
                     policy_settings,
                     signal_receiver,
                     display_refresh_sender,
+                    metrics,
                 );
                 loop {
                     match stop_receiver.try_recv() {
@@ -133,6 +182,7 @@ impl PlaybackWorker {
             Self {
                 thread: Some(thread),
                 stop_sender: Some(stop_sender),
+                memory_sampler,
             },
             event_receiver,
         ))
@@ -143,6 +193,9 @@ impl PlaybackWorker {
             let _ = stop_sender.try_send(());
         }
         let Some(thread) = self.thread.as_ref() else {
+            if let Some(mut sampler) = self.memory_sampler.take() {
+                sampler.stop();
+            }
             return true;
         };
         let deadline = Instant::now() + WORKER_STOP_TIMEOUT;
@@ -157,6 +210,9 @@ impl PlaybackWorker {
                     event = "playback_worker_panicked",
                     "Playback worker stopped after a panic"
                 );
+            }
+            if let Some(mut sampler) = self.memory_sampler.take() {
+                sampler.stop();
             }
             true
         } else {
@@ -199,6 +255,9 @@ struct PlaybackController {
     policy_settings: Arc<RwLock<PerformancePolicySettings>>,
     signal_receiver: Option<tokio::sync::watch::Receiver<PerformanceSignalSnapshot>>,
     policy_state: PlaybackPolicyState,
+    metrics_registry: PerformanceMetricsRegistry,
+    metrics_recorder: Option<PerformanceMetricsRecorder>,
+    last_metrics_dropped_count: u64,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -330,6 +389,7 @@ enum VideoSourceEvent {
 struct VideoFrameMessage {
     generation: u64,
     frame: DecodedVideoFrame,
+    decode_latency: Duration,
 }
 
 struct SourceDecodeState {
@@ -454,6 +514,7 @@ impl VideoSourceWorker {
                             Err(TrySendError::Disconnected(_)) => return,
                         }
                     } else {
+                        let decode_started = Instant::now();
                         match source.read_next() {
                             Ok(VideoReadEvent::Frame(frame)) => {
                                 if frame.pts_100ns() >= decode.minimum_pts_100ns {
@@ -461,6 +522,7 @@ impl VideoSourceWorker {
                                     decode.pending_frame = Some(VideoFrameMessage {
                                         generation: decode.generation,
                                         frame,
+                                        decode_latency: decode_started.elapsed(),
                                     });
                                 }
                             }
@@ -724,6 +786,37 @@ impl PlaybackController {
         signal_receiver: Option<tokio::sync::watch::Receiver<PerformanceSignalSnapshot>>,
         display_refresh_sender: Option<tokio::sync::mpsc::UnboundedSender<DisplayRefreshRequest>>,
     ) -> Self {
+        Self::new_with_metrics(
+            device,
+            frame_sender,
+            event_sender,
+            policy_settings,
+            signal_receiver,
+            display_refresh_sender,
+            None,
+        )
+    }
+
+    fn new_with_metrics(
+        device: ID3D11Device,
+        frame_sender: RecoveryFrameSender,
+        event_sender: tokio::sync::watch::Sender<PlaybackStateEvent>,
+        policy_settings: Arc<RwLock<PerformancePolicySettings>>,
+        signal_receiver: Option<tokio::sync::watch::Receiver<PerformanceSignalSnapshot>>,
+        display_refresh_sender: Option<tokio::sync::mpsc::UnboundedSender<DisplayRefreshRequest>>,
+        metrics: Option<PerformanceMetricsBinding>,
+    ) -> Self {
+        let metrics_registry = metrics
+            .as_ref()
+            .map(|metrics| metrics.registry.clone())
+            .unwrap_or_default();
+        let metrics_recorder = metrics.map(|metrics| {
+            PerformanceMetricsRecorder::new(
+                metrics.display_id,
+                metrics.media_kind,
+                metrics.registry,
+            )
+        });
         Self {
             device,
             frame_sender,
@@ -746,6 +839,9 @@ impl PlaybackController {
             policy_settings,
             signal_receiver,
             policy_state: PlaybackPolicyState::default(),
+            metrics_registry,
+            metrics_recorder,
+            last_metrics_dropped_count: 0,
         }
     }
 
@@ -961,6 +1057,9 @@ impl PlaybackController {
                 self.pending_error = None;
                 self.last_error = None;
                 self.policy_state.user_stop();
+                if let Some(metrics) = self.metrics_recorder.as_mut() {
+                    metrics.set_media_kind(PerformanceMediaKind::Video);
+                }
                 self.publish_event();
             }
         }
@@ -1004,6 +1103,9 @@ impl PlaybackController {
                 settings,
                 source_path,
             } => return self.apply_playback_settings(settings, PathBuf::from(source_path)),
+            Command::GetPerformanceMetrics => {
+                return ResponseResult::PerformanceMetrics(self.metrics_registry.snapshot());
+            }
             Command::ApplyEditorSettings {
                 settings,
                 source_path,
@@ -1037,7 +1139,10 @@ impl PlaybackController {
             }
             command => command,
         };
-        let publish_event = !matches!(&command, Command::GetPlaybackState | Command::Ping);
+        let publish_event = !matches!(
+            &command,
+            Command::GetPlaybackState | Command::GetPerformanceMetrics | Command::Ping
+        );
         if matches!(&command, Command::GetPlaybackState) {
             if let Some(code) = self.pending_error.take() {
                 return self.error(code);
@@ -1046,6 +1151,7 @@ impl PlaybackController {
         let now = self.now_100ns();
         let result = match command {
             Command::LoadVideo { .. } => Err(PlaybackCommandErrorCode::PlaybackUnavailable),
+            Command::GetPerformanceMetrics => Ok(()),
             Command::Play => self.request_play(now),
             Command::Pause => self.require_source().and_then(|()| {
                 self.source
@@ -1247,13 +1353,18 @@ impl PlaybackController {
         ResponseResult::PlaybackSettingsApplied
     }
 
-    fn present_video_frame(&self, frame: DecodedVideoFrame) -> Result<(), RendererError> {
+    fn present_video_frame(&mut self, frame: DecodedVideoFrame) -> Result<(), RendererError> {
         let source_path = self
             .source
             .as_ref()
             .map(|source| source.source_path.clone())
             .ok_or(wallpaper_renderer::RendererError::WindowUnavailable)?;
-        self.frame_sender.present_video_frame(frame, source_path)
+        let started = Instant::now();
+        self.frame_sender.present_video_frame(frame, source_path)?;
+        if let Some(metrics) = self.metrics_recorder.as_mut() {
+            metrics.record_present(started.elapsed());
+        }
+        Ok(())
     }
 
     fn handle_video_presentation_error(&mut self, error: RendererError) -> bool {
@@ -1304,6 +1415,9 @@ impl PlaybackController {
                     self.deferred_frame = Some(message);
                     break false;
                 }
+                if let Some(metrics) = self.metrics_recorder.as_mut() {
+                    metrics.record_source_frame(message.frame.pts_100ns(), message.decode_latency);
+                }
                 if self
                     .scheduler
                     .enqueue_frame(message.frame, self.now_100ns())
@@ -1316,6 +1430,9 @@ impl PlaybackController {
                     return;
                 }
             } else {
+                if let Some(metrics) = self.metrics_recorder.as_mut() {
+                    metrics.record_source_frame(message.frame.pts_100ns(), message.decode_latency);
+                }
                 paused_frame = Some(message.frame);
             }
         };
@@ -1451,10 +1568,21 @@ impl PlaybackController {
             }
         }
 
+        self.publish_performance_metrics();
         if self.scheduler.state() == PlaybackState::Playing
             && self.last_event_sent.elapsed() >= Duration::from_millis(250)
         {
             self.publish_event();
+        }
+    }
+
+    fn publish_performance_metrics(&mut self) {
+        let dropped = self.scheduler.dropped_frames();
+        let newly_dropped = dropped.saturating_sub(self.last_metrics_dropped_count);
+        self.last_metrics_dropped_count = dropped;
+        if let Some(metrics) = self.metrics_recorder.as_mut() {
+            metrics.record_dropped_frames(newly_dropped);
+            metrics.publish_if_due(Instant::now());
         }
     }
 

@@ -269,6 +269,10 @@ impl PlaybackScheduler {
         self.queue.len()
     }
 
+    pub fn dropped_frames(&self) -> u64 {
+        self.queue.dropped_frames()
+    }
+
     pub const fn fps_limit(&self) -> VideoFpsLimit {
         self.fps_limit
     }
