@@ -250,6 +250,11 @@ label {
   cursor: move;
 }
 
+.editor-preview-canvas:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-offset);
+}
+
 .editor-preview-canvas img {
   display: block;
   width: 100%;

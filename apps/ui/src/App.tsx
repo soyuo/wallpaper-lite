@@ -362,7 +362,22 @@ function App() {
   const [editorMonitors, setEditorMonitors] = useState<EditorMonitor[]>([]);
   const [editorMonitorId, setEditorMonitorId] = useState("");
   const [page, setPage] = useState<AppPage>("library");
+  const [previewZoom, setPreviewZoom] = useState(1);
   const [theme, setTheme] = useState<"dark" | "light">(() => (localStorage.getItem("wallpaper-lite.theme") === "light" ? "light" : "dark"));
+
+  const zoomPreview = useCallback((delta: number | "reset") => {
+    setPreviewZoom((zoom) => (delta === "reset" ? 1 : Math.min(4, Math.max(0.25, Math.round((zoom + delta) * 100) / 100))));
+  }, []);
+
+  const previewCanvasRef = useCallback((node: HTMLDivElement | null) => {
+    if (!node) return;
+    // Non-passive wheel listener so Ctrl+wheel zooms the preview instead of the whole page.
+    node.addEventListener("wheel", (event) => {
+      if (!event.ctrlKey) return;
+      event.preventDefault();
+      zoomPreview(event.deltaY < 0 ? 0.1 : -0.1);
+    }, { passive: false });
+  }, [zoomPreview]);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -1744,7 +1759,18 @@ function App() {
             <p role="status">{editorError}</p>
           ) : editorPreview ? (
             <div
+              ref={previewCanvasRef}
+              tabIndex={0}
               className="editor-preview-canvas"
+              onKeyDown={(event) => {
+                if (!(event.ctrlKey || event.metaKey)) return;
+                if (event.key === "+" || event.key === "=") zoomPreview(0.1);
+                else if (event.key === "-") zoomPreview(-0.1);
+                else if (event.key === "0") zoomPreview("reset");
+                else return;
+                event.preventDefault();
+                event.stopPropagation();
+              }}
               aria-label={`Preview canvas ${editorPreview.monitorWidth} by ${editorPreview.monitorHeight}`}
               onPointerDown={(event) => beginEditorPointer(event, "move")}
               onPointerMove={moveEditorPointer}
@@ -1752,7 +1778,9 @@ function App() {
               onPointerCancel={() => { editorPointer.current = null; endEditorGesture(); }}
               style={{
                 aspectRatio: `${editorPreview.width} / ${editorPreview.height}`,
-                width: `min(100%, ${Math.min(56, 32 * editorPreview.width / editorPreview.height)}rem)`,
+                width: previewZoom === 1 ? `min(100%, ${Math.min(56, 32 * editorPreview.width / editorPreview.height)}rem)` : `${Math.min(56, 32 * editorPreview.width / editorPreview.height) * previewZoom}rem`,
+                maxWidth: previewZoom === 1 ? undefined : "none",
+                maxHeight: previewZoom === 1 ? undefined : "none",
               }}
             >
               <img draggable={false} src={editorPreview.dataUrl} alt={`Rendered ${editorEntry.displayName}`} style={editorDragTransform(editorPreview, editorSettingsDraft)} />
