@@ -340,6 +340,13 @@ function App() {
   const [editorMonitors, setEditorMonitors] = useState<EditorMonitor[]>([]);
   const [editorMonitorId, setEditorMonitorId] = useState("");
   const [page, setPage] = useState<AppPage>("library");
+  const [theme, setTheme] = useState<"dark" | "light">(() => (localStorage.getItem("wallpaper-lite.theme") === "light" ? "light" : "dark"));
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    localStorage.setItem("wallpaper-lite.theme", theme);
+  }, [theme]);
+
   const [editorEntry, setEditorEntry] = useState<LibraryEntry | null>(null);
   const [editorPreview, setEditorPreview] = useState<EditorPreview | null>(null);
   const [editorSettingsDraft, setEditorSettingsDraft] = useState<WallpaperEditorSettings | null>(null);
@@ -1246,6 +1253,9 @@ function App() {
             </li>
           ))}
         </ul>
+        <button className="app-theme-toggle" onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>
+          {theme === "dark" ? "Light mode" : "Dark mode"}
+        </button>
       </nav>
     <main className="app-shell">
       <header className="app-header">

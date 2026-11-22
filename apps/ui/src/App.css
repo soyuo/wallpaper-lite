@@ -46,9 +46,15 @@
 }
 
 .app-nav-item[aria-current="page"] {
-  border-left: 3px solid var(--color-accent);
+  border-left: 2px solid var(--color-accent);
   color: var(--color-text);
   background: var(--color-surface-muted);
+}
+
+.app-theme-toggle {
+  margin-top: auto;
+  color: var(--color-text-muted);
+  background: transparent;
 }
 
 .app-empty {

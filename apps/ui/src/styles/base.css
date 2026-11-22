@@ -5,12 +5,12 @@
 }
 
 :root {
+  color-scheme: dark;
   color: var(--color-text);
   background: var(--color-bg);
   font-family: var(--font-family);
   font-size: var(--font-size-md);
   line-height: 1.5;
-  color-scheme: dark;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -48,8 +48,9 @@ h3 {
 }
 
 label {
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-regular);
 }
 
 legend {
@@ -73,7 +74,7 @@ fieldset {
   background: var(--color-surface);
   font: inherit;
   font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-semibold);
+  font-weight: var(--font-weight-regular);
   cursor: pointer;
 }
 
