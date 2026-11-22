@@ -1074,8 +1074,8 @@ function App() {
     if (!pointer || !monitor || !editorSettingsDraft) return;
     const bounds = event.currentTarget.getBoundingClientRect();
     if (bounds.width <= 0 || bounds.height <= 0) return;
-    let dx = Math.round((event.clientX - pointer.startX) * monitor.width / bounds.width);
-    let dy = Math.round((event.clientY - pointer.startY) * monitor.height / bounds.height);
+    let dx = Math.round((event.clientX - pointer.startX) * monitor.width / bounds.width / previewZoom);
+    let dy = Math.round((event.clientY - pointer.startY) * monitor.height / bounds.height / previewZoom);
     if (event.shiftKey && pointer.kind === "resize") {
       const ratioDelta = Math.abs(dx) > Math.abs(dy * pointer.aspect) ? dx : dy * pointer.aspect;
       dx = Math.round(ratioDelta);
@@ -1778,12 +1778,12 @@ function App() {
               onPointerCancel={() => { editorPointer.current = null; endEditorGesture(); }}
               style={{
                 aspectRatio: `${editorPreview.width} / ${editorPreview.height}`,
-                width: previewZoom === 1 ? `min(100%, ${Math.min(56, 32 * editorPreview.width / editorPreview.height)}rem)` : `${Math.min(56, 32 * editorPreview.width / editorPreview.height) * previewZoom}rem`,
-                maxWidth: previewZoom === 1 ? undefined : "none",
-                maxHeight: previewZoom === 1 ? undefined : "none",
+                width: `min(100%, ${Math.min(56, 32 * editorPreview.width / editorPreview.height)}rem)`,
               }}
             >
-              <img draggable={false} src={editorPreview.dataUrl} alt={`Rendered ${editorEntry.displayName}`} style={editorDragTransform(editorPreview, editorSettingsDraft)} />
+              <div className="editor-preview-zoom" style={{ transform: `scale(${previewZoom})` }}>
+                <img draggable={false} src={editorPreview.dataUrl} alt={`Rendered ${editorEntry.displayName}`} style={editorDragTransform(editorPreview, editorSettingsDraft)} />
+              </div>
               <button
                 className="editor-resize-handle"
                 aria-label="Resize wallpaper; hold Shift to lock aspect ratio and Alt to resize from center"
