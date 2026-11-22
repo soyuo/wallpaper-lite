@@ -35,7 +35,7 @@ struct RegistryState {
 
 impl PerformanceMetricsRegistry {
     pub(crate) fn register_target(&self, display_id: &str, media_kind: PerformanceMediaKind) {
-        if display_id.is_empty() || display_id.len() > MAX_DISPLAY_ID_BYTES {
+        if !valid_display_id(display_id) {
             return;
         }
         let Ok(mut state) = self.0.lock() else {
@@ -61,6 +61,9 @@ impl PerformanceMetricsRegistry {
     }
 
     pub(crate) fn update_target(&self, metrics: TargetPerformanceMetrics) {
+        if !valid_display_id(&metrics.display_id) {
+            return;
+        }
         let Ok(mut state) = self.0.lock() else {
             return;
         };
@@ -334,7 +337,7 @@ impl PerformanceMetricsRecorder {
 mod tests {
     use super::{
         MAX_DISPLAY_ID_BYTES, MAX_METRIC_TARGETS, PerformanceMetricsRecorder,
-        PerformanceMetricsRegistry, dropped_frames_since,
+        PerformanceMetricsRegistry, TargetPerformanceMetrics, dropped_frames_since,
     };
     use std::time::Duration;
     use wallpaper_ipc::protocol::PerformanceMediaKind;
@@ -396,10 +399,18 @@ mod tests {
     #[test]
     fn registry_bounds_target_count_and_identifier_size() {
         let registry = PerformanceMetricsRegistry::default();
-        registry.register_target(
-            &"x".repeat(MAX_DISPLAY_ID_BYTES + 1),
-            PerformanceMediaKind::Image,
-        );
+        let oversized_id = "x".repeat(MAX_DISPLAY_ID_BYTES + 1);
+        registry.register_target(&oversized_id, PerformanceMediaKind::Image);
+        registry.update_target(TargetPerformanceMetrics {
+            display_id: oversized_id,
+            media_kind: PerformanceMediaKind::Video,
+            source_fps: Some(30.0),
+            rendered_fps: Some(30.0),
+            frame_interval_ms: Some(33.3),
+            dropped_frames_total: 0,
+            decode_latency_ms: Some(1.0),
+            present_latency_ms: Some(1.0),
+        });
         for index in 0..MAX_METRIC_TARGETS + 2 {
             registry.register_target(&format!("DISPLAY-{index:02}"), PerformanceMediaKind::Image);
         }
@@ -446,6 +457,10 @@ mod tests {
 
         assert_eq!(registry.snapshot().targets[0].dropped_frames_total, 5);
     }
+}
+
+fn valid_display_id(display_id: &str) -> bool {
+    !display_id.is_empty() && display_id.len() <= MAX_DISPLAY_ID_BYTES
 }
 
 fn average_ms(total_ms: f64, samples: u64) -> Option<f64> {
