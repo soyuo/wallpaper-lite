@@ -33,10 +33,14 @@ running.
 
 Unit tests cover duplicate-state coalescing, fullscreen/session/battery and
 suspend/resume transitions, bounded watch publication, and detector errors
-preserving the last known state. This machine has no battery, so no physical AC
-to battery transition was tested. Session lock/unlock and system suspend/resume
-were not triggered on the interactive machine. Windows 10 runtime behavior was
-not tested.
+preserving the last known state. A later system probe found the installed
+battery (`B3122MM`); the current reading was `ACLineStatus=1`,
+`BatteryFlag=1`, and 100% charge. The earlier statement that this machine had
+no battery was incorrect. No physical AC-to-battery transition was performed
+during this signal-detection smoke; a separate unplugged battery-policy run is
+documented in [`phase-7-battery-policy-acceptance.md`](phase-7-battery-policy-acceptance.md).
+Session lock/unlock and system suspend/resume were not triggered on the
+interactive machine. Windows 10 runtime behavior was not tested.
 
 ## Limits
 
