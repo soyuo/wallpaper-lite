@@ -8,8 +8,9 @@
   --color-surface-muted: #2a2f3d;
   --color-border: #262b37;
   --color-border-strong: #3d4558;
-  --color-accent: #3d7bf0;
+  --color-accent: #3569d9;
   --color-accent-strong: #5b92f5;
+  --color-accent-hover: #2a5bc6;
   --color-on-accent: #fff;
   --color-danger: #ff7b72;
   --color-warning-text: #f5c26b;
@@ -61,7 +62,7 @@
 :root[data-theme="light"] {
   color-scheme: light;
   --color-text: #1b1f27;
-  --color-text-muted: #667085;
+  --color-text-muted: #5b6472;
   --color-bg: #f5f6f9;
   --color-surface: #fff;
   --color-surface-subtle: #f7f8fa;
@@ -70,6 +71,7 @@
   --color-border-strong: #c9cfdb;
   --color-accent: #2f5fd0;
   --color-accent-strong: #1f4aae;
+  --color-accent-hover: #1f4aae;
   --color-danger: #b42318;
   --color-warning-text: #8b4b10;
   --color-warning-bg: #fff1d6;
@@ -79,4 +81,13 @@
   --color-canvas-bg: #e4e8ef;
   --color-canvas-check: #d3d9e2;
   --color-accent-overlay: rgb(47 95 208 / 12%);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
 }

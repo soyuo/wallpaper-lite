@@ -16,6 +16,8 @@
         "title": "wallpaper-lite",
         "width": 900,
         "height": 600,
+        "minWidth": 360,
+        "minHeight": 480,
         "zoomHotkeysEnabled": true
       }
     ],

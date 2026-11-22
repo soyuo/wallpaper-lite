@@ -128,7 +128,7 @@ fieldset {
 }
 
 .ui-button--primary:hover:not(:disabled) {
-  background: var(--color-accent-strong);
+  background: var(--color-accent-hover);
 }
 
 .visually-hidden {

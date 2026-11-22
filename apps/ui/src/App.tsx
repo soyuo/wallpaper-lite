@@ -15,6 +15,10 @@ import { useEditor } from "./features/editor/useEditor";
 import { LibraryPage } from "./features/library/LibraryPage";
 import { useLibrary } from "./features/library/useLibrary";
 
+type ThemeChoice = "dark" | "light" | "system";
+const THEME_LABELS: Record<ThemeChoice, string> = { dark: "Theme: Dark", light: "Theme: Light", system: "Theme: System" };
+const NEXT_THEME: Record<ThemeChoice, ThemeChoice> = { dark: "light", light: "system", system: "dark" };
+
 type AppPage = "library" | "editor" | "displays" | "playback" | "performance";
 
 const APP_PAGES: { id: AppPage; label: string }[] = [
@@ -36,11 +40,22 @@ function App() {
   const { previews, setPreviews, setRecentIds } = libraryState;
   const editorState = useEditor({ previews, setPreviews, setRecentIds, onOpen: () => setPage("editor") });
   const [page, setPage] = useState<AppPage>("library");
-  const [theme, setTheme] = useState<"dark" | "light">(() => (localStorage.getItem("wallpaper-lite.theme") === "light" ? "light" : "dark"));
+  const [theme, setTheme] = useState<ThemeChoice>(() => {
+    const stored = localStorage.getItem("wallpaper-lite.theme");
+    return stored === "light" || stored === "system" ? stored : "dark";
+  });
 
   useEffect(() => {
-    document.documentElement.dataset.theme = theme;
     localStorage.setItem("wallpaper-lite.theme", theme);
+    if (theme !== "system") {
+      document.documentElement.dataset.theme = theme;
+      return;
+    }
+    const query = window.matchMedia("(prefers-color-scheme: light)");
+    const apply = () => { document.documentElement.dataset.theme = query.matches ? "light" : "dark"; };
+    apply();
+    query.addEventListener("change", apply);
+    return () => query.removeEventListener("change", apply);
   }, [theme]);
 
   const activeWallpaperId = playbackState.playbackPanel?.state.wallpaperId ?? null;
@@ -75,8 +90,8 @@ function App() {
             </li>
           ))}
         </ul>
-        <button className="app-theme-toggle" onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>
-          {theme === "dark" ? "Light mode" : "Dark mode"}
+        <button className="app-theme-toggle" onClick={() => setTheme(NEXT_THEME[theme])}>
+          {THEME_LABELS[theme]}
         </button>
       </nav>
     <main className="app-shell">
