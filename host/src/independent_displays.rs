@@ -23,8 +23,9 @@ use wallpaper_display::{
     virtual_desktop_bounds,
 };
 use wallpaper_ipc::protocol::{
-    Command, DisplayTargetFailure, IpcPlaybackState, PlaybackCommandErrorCode,
-    PlaybackCommandSender, PlaybackStateEvent, ResponseResult, playback_command_channel,
+    Command, DisplayTargetFailure, IpcPlaybackState, PerformanceMediaKind,
+    PlaybackCommandErrorCode, PlaybackCommandSender, PlaybackStateEvent, ResponseResult,
+    playback_command_channel,
 };
 use wallpaper_media::{
     Availability, CatalogStore, DisplayProfileStore, EditorSettingsStore, MediaKind,
@@ -33,8 +34,9 @@ use wallpaper_media::{
 use wallpaper_renderer::D3d11Device;
 
 use crate::{
+    performance_metrics::PerformanceMetricsRegistry,
     performance_signals::{PerformanceSignalSnapshot, policy_signals},
-    playback::PlaybackWorker,
+    playback::{PerformanceMetricsBinding, PlaybackWorker},
     recovery::{ApplySettingsError, DesktopRecoveryWorker, RecoveryFrameSender},
 };
 
@@ -81,6 +83,7 @@ impl From<&ResolvedDisplayAssignment> for PrimaryAssignmentIdentity {
 #[derive(Clone)]
 pub(crate) struct ResolvedDisplayAssignments {
     pub(crate) primary_bounds: Option<DisplayRect>,
+    pub(crate) primary_display_id: Option<String>,
     pub(crate) profiles: Vec<ResolvedDisplayAssignment>,
 }
 
@@ -95,6 +98,7 @@ pub(crate) fn load_display_assignments() -> ResolvedDisplayAssignments {
             );
             ResolvedDisplayAssignments {
                 primary_bounds: None,
+                primary_display_id: None,
                 profiles: Vec::new(),
             }
         }
@@ -112,6 +116,11 @@ pub(crate) fn try_load_display_assignments() -> Result<ResolvedDisplayAssignment
         .iter()
         .find(|display| display.is_primary())
         .map(DisplayInfo::bounds);
+    let primary_display_id = snapshot
+        .displays()
+        .iter()
+        .find(|display| display.is_primary())
+        .map(|display| display.id().as_str().to_owned());
     let profiles = DisplayProfileStore::for_current_user()
         .and_then(|store| store.load())
         .map_err(|error| {
@@ -186,6 +195,7 @@ pub(crate) fn try_load_display_assignments() -> Result<ResolvedDisplayAssignment
     );
     Ok(ResolvedDisplayAssignments {
         primary_bounds,
+        primary_display_id,
         profiles: assignments,
     })
 }
@@ -495,6 +505,7 @@ impl PrimaryAssignmentReconciler {
         command_sender: PlaybackCommandSender,
         playback_events: tokio::sync::watch::Receiver<PlaybackStateEvent>,
         recovery: RecoveryFrameSender,
+        performance_metrics: PerformanceMetricsRegistry,
     ) -> Self {
         let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
         let mut active_identity = initial_assignment.map(PrimaryAssignmentIdentity::from);
@@ -516,8 +527,12 @@ impl PrimaryAssignmentReconciler {
                 }
                 let result = match assignment.wallpaper.media_kind() {
                     MediaKind::Image => {
-                        replace_primary_with_image(&command_sender, recovery.clone(), assignment)
-                            .await
+                        replace_primary_with_image(
+                            &command_sender,
+                            recovery.clone(),
+                            assignment.clone(),
+                        )
+                        .await
                     }
                     MediaKind::Video => {
                         let mut events = playback_events.clone();
@@ -531,7 +546,15 @@ impl PrimaryAssignmentReconciler {
                     }
                 };
                 match result {
-                    Ok(()) => active_identity = Some(candidate_identity),
+                    Ok(()) => {
+                        let media_kind = match assignment.wallpaper.media_kind() {
+                            MediaKind::Image => PerformanceMediaKind::Image,
+                            MediaKind::Video => PerformanceMediaKind::Video,
+                        };
+                        performance_metrics
+                            .set_media_kind(assignment.display.id().as_str(), media_kind);
+                        active_identity = Some(candidate_identity)
+                    }
                     Err(stage) => tracing::warn!(
                         component = "display",
                         event = "primary_assignment_reconcile_failed",
@@ -581,6 +604,7 @@ impl PrimaryAssignmentReconciler {
 struct DisplayTargetSet {
     targets: Vec<DisplayTarget>,
     stopped: bool,
+    metrics_registry: PerformanceMetricsRegistry,
 }
 
 impl DisplayTargetSet {
@@ -590,6 +614,7 @@ impl DisplayTargetSet {
         primary_bounds: Option<DisplayRect>,
         policy_settings: &Arc<RwLock<PerformancePolicySettings>>,
         signal_receiver: Option<&tokio::sync::watch::Receiver<PerformanceSignalSnapshot>>,
+        metrics_registry: PerformanceMetricsRegistry,
     ) -> Self {
         let mut targets = Vec::new();
         for assignment in select_secondary_assignments(assignments, primary_bounds) {
@@ -598,6 +623,7 @@ impl DisplayTargetSet {
                 assignment,
                 policy_settings.clone(),
                 signal_receiver.cloned(),
+                metrics_registry.clone(),
             ) {
                 Ok(target) => targets.push(target),
                 Err((device_name, stage)) => tracing::error!(
@@ -612,6 +638,7 @@ impl DisplayTargetSet {
         Self {
             targets,
             stopped: false,
+            metrics_registry,
         }
     }
 
@@ -706,6 +733,7 @@ impl DisplayTargetSet {
                     assignment.clone(),
                     policy_settings.clone(),
                     signal_receiver.cloned(),
+                    self.metrics_registry.clone(),
                 )
             };
             let result = if let Some(index) = existing_index {
@@ -802,6 +830,7 @@ impl DisplayTargetManager {
         primary_bounds: Option<DisplayRect>,
         policy_settings: Arc<RwLock<PerformancePolicySettings>>,
         signal_receiver: Option<tokio::sync::watch::Receiver<PerformanceSignalSnapshot>>,
+        performance_metrics: PerformanceMetricsRegistry,
     ) -> Self {
         let (commands, receiver) = mpsc::channel();
         let initial_assignments = assignments.to_vec();
@@ -814,6 +843,7 @@ impl DisplayTargetManager {
                     primary_bounds,
                     policy_settings,
                     signal_receiver,
+                    performance_metrics,
                 )
             })
             .map_err(|error| {
@@ -915,6 +945,7 @@ fn run_display_target_worker(
     primary_bounds: Option<DisplayRect>,
     policy_settings: Arc<RwLock<PerformancePolicySettings>>,
     mut signal_receiver: Option<tokio::sync::watch::Receiver<PerformanceSignalSnapshot>>,
+    performance_metrics: PerformanceMetricsRegistry,
 ) {
     let runtime = match tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -933,6 +964,7 @@ fn run_display_target_worker(
         primary_bounds,
         &policy_settings,
         signal_receiver.as_ref(),
+        performance_metrics,
     );
     let mut last_action = evaluate_policy_action(&policy_settings, signal_receiver.as_ref());
     targets.set_rendering_paused(last_action != PolicyAction::Continue);
@@ -1017,6 +1049,8 @@ struct DisplayTarget {
     recovery: Option<DesktopRecoveryWorker>,
     playback: Option<PlaybackWorker>,
     command_sender: Option<PlaybackCommandSender>,
+    metrics_registry: PerformanceMetricsRegistry,
+    metrics_display_id: String,
 }
 
 impl DisplayTarget {
@@ -1025,8 +1059,10 @@ impl DisplayTarget {
         assignment: ResolvedDisplayAssignment,
         policy_settings: Arc<RwLock<PerformancePolicySettings>>,
         signal_receiver: Option<tokio::sync::watch::Receiver<PerformanceSignalSnapshot>>,
+        metrics_registry: PerformanceMetricsRegistry,
     ) -> Result<Self, (String, &'static str)> {
         let device_name = assignment.display.device_name().to_owned();
+        let metrics_display_id = assignment.display.id().as_str().to_owned();
         let signature = DisplayTargetSignature::from_assignment(&assignment);
         let media_kind = assignment.wallpaper.media_kind();
         let desktop_host =
@@ -1057,6 +1093,8 @@ impl DisplayTarget {
             recovery: Some(recovery),
             playback: None,
             command_sender: None,
+            metrics_registry: metrics_registry.clone(),
+            metrics_display_id: metrics_display_id.clone(),
         };
 
         let result = match assignment.wallpaper.media_kind() {
@@ -1081,13 +1119,19 @@ impl DisplayTarget {
             }
             MediaKind::Video => {
                 let (sender, receiver) = playback_command_channel();
-                let (worker, mut events) = PlaybackWorker::start_with_policy_and_display_refresh(
+                let (worker, mut events) = PlaybackWorker::start_with_performance_metrics(
                     receiver,
                     media_device,
                     target.recovery.as_ref().expect("recovery exists"),
                     policy_settings,
                     signal_receiver,
                     None,
+                    Some(PerformanceMetricsBinding {
+                        display_id: metrics_display_id.clone(),
+                        media_kind: PerformanceMediaKind::Video,
+                        registry: metrics_registry.clone(),
+                        sample_memory: false,
+                    }),
                 )
                 .map_err(|_| (device_name.clone(), "playback_worker"))?;
                 target.playback = Some(worker);
@@ -1107,6 +1151,9 @@ impl DisplayTarget {
             }
         };
         result?;
+        if media_kind == MediaKind::Image {
+            metrics_registry.register_target(&metrics_display_id, PerformanceMediaKind::Image);
+        }
         tracing::info!(component = "display", event = "display_target_started", %device_name,
             wallpaper_id = assignment.profile.wallpaper_id(), fps_override = ?assignment.profile.fps_override(),
             presentation_mode = ?assignment.profile.presentation_mode(),
@@ -1224,8 +1271,15 @@ impl DisplayTarget {
             }
         }
         if let Some(mut recovery) = self.recovery.take() {
-            return recovery.stop();
+            let stopped = recovery.stop();
+            if stopped {
+                self.metrics_registry
+                    .remove_target(&self.metrics_display_id);
+            }
+            return stopped;
         }
+        self.metrics_registry
+            .remove_target(&self.metrics_display_id);
         true
     }
 }
@@ -1775,11 +1829,13 @@ mod tests {
             None,
             Arc::new(RwLock::new(PerformancePolicySettings::default())),
             None,
+            PerformanceMetricsRegistry::default(),
         );
         manager.explorer_exited();
         manager.explorer_restarted();
         manager.reconcile(&ResolvedDisplayAssignments {
             primary_bounds: None,
+            primary_display_id: None,
             profiles: Vec::new(),
         });
         assert!(manager.stop());

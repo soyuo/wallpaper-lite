@@ -9,8 +9,8 @@ use crate::{IpcError, error::from_io};
 
 pub const PIPE_NAME: &str = r"\\.\pipe\wallpaper-lite";
 pub const PLAYBACK_EVENTS_PIPE_NAME: &str = r"\\.\pipe\wallpaper-lite-playback-events";
-pub const PROTOCOL_VERSION: u16 = 10;
-pub const MAX_FRAME_BYTES: usize = 4 * 1024;
+pub const PROTOCOL_VERSION: u16 = 11;
+pub const MAX_FRAME_BYTES: usize = 16 * 1024;
 pub(crate) const IO_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
 const COMMAND_QUEUE_CAPACITY: usize = 16;
 
@@ -72,6 +72,7 @@ pub enum Command {
         frames_per_second: u16,
     },
     GetPlaybackState,
+    GetPerformanceMetrics,
     SubscribePlaybackState,
     RefreshDisplayAssignments,
 }
@@ -102,7 +103,7 @@ impl Response {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum ResponseResult {
     Pong,
@@ -113,9 +114,47 @@ pub enum ResponseResult {
         failed_targets: Vec<DisplayTargetFailure>,
     },
     PlaybackState(PlaybackStateEvent),
+    PerformanceMetrics(PerformanceMetricsSnapshot),
     Error {
         code: PlaybackCommandErrorCode,
     },
+}
+
+/// Versioned host metrics snapshot. Every byte value is in bytes and every
+/// latency/interval is in milliseconds. `None` means the counter is unavailable.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PerformanceMetricsSnapshot {
+    pub schema_version: u16,
+    pub sampled_at_unix_ms: u64,
+    pub process_working_set_bytes: Option<u64>,
+    pub process_private_bytes: Option<u64>,
+    pub gpu_local_usage_bytes: Option<u64>,
+    pub gpu_local_budget_bytes: Option<u64>,
+    pub gpu_non_local_usage_bytes: Option<u64>,
+    pub gpu_non_local_budget_bytes: Option<u64>,
+    pub targets: Vec<TargetPerformanceMetrics>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TargetPerformanceMetrics {
+    pub display_id: String,
+    pub media_kind: PerformanceMediaKind,
+    pub source_fps: Option<f64>,
+    pub rendered_fps: Option<f64>,
+    pub frame_interval_ms: Option<f64>,
+    pub dropped_frames_total: u64,
+    pub decode_latency_ms: Option<f64>,
+    pub present_latency_ms: Option<f64>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PerformanceMediaKind {
+    Image,
+    Video,
+    Unknown,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -298,6 +337,58 @@ mod display_refresh_tests {
                     "failed_targets": [{"deviceName": r"\\.\DISPLAY2", "stage": "video_load"}]
                 }
             })
+        );
+    }
+}
+
+#[cfg(test)]
+mod performance_metrics_tests {
+    use super::{
+        Command, PROTOCOL_VERSION, PerformanceMediaKind, PerformanceMetricsSnapshot, Request,
+        ResponseResult, TargetPerformanceMetrics,
+    };
+
+    #[test]
+    fn metrics_command_and_unavailable_counters_round_trip() {
+        let request = Request::new(7, Command::GetPerformanceMetrics);
+        let decoded: Request =
+            serde_json::from_slice(&serde_json::to_vec(&request).unwrap()).unwrap();
+        assert_eq!(decoded.version, PROTOCOL_VERSION);
+        assert_eq!(decoded.command, Command::GetPerformanceMetrics);
+
+        let response = ResponseResult::PerformanceMetrics(PerformanceMetricsSnapshot {
+            schema_version: 1,
+            sampled_at_unix_ms: 123,
+            process_working_set_bytes: None,
+            process_private_bytes: None,
+            gpu_local_usage_bytes: None,
+            gpu_local_budget_bytes: None,
+            gpu_non_local_usage_bytes: None,
+            gpu_non_local_budget_bytes: None,
+            targets: vec![TargetPerformanceMetrics {
+                display_id: "DISPLAY1".to_owned(),
+                media_kind: PerformanceMediaKind::Video,
+                source_fps: None,
+                rendered_fps: None,
+                frame_interval_ms: None,
+                dropped_frames_total: 0,
+                decode_latency_ms: None,
+                present_latency_ms: None,
+            }],
+        });
+        let value = serde_json::to_value(response).unwrap();
+        assert_eq!(value["performance_metrics"]["schemaVersion"], 1);
+        assert_eq!(
+            value["performance_metrics"]["processWorkingSetBytes"],
+            serde_json::Value::Null
+        );
+        assert_eq!(
+            value["performance_metrics"]["targets"][0]["sourceFps"],
+            serde_json::Value::Null
+        );
+        assert_eq!(
+            value["performance_metrics"]["targets"][0]["droppedFramesTotal"],
+            0
         );
     }
 }

@@ -54,6 +54,7 @@ pub enum FrameEnqueueOutcome {
 pub struct VideoFrameQueue {
     frames: VecDeque<DecodedVideoFrame>,
     capacity: usize,
+    dropped_frames: u64,
 }
 
 impl Default for VideoFrameQueue {
@@ -68,6 +69,7 @@ impl VideoFrameQueue {
         Self {
             frames: VecDeque::with_capacity(DEFAULT_CAPACITY),
             capacity: DEFAULT_CAPACITY,
+            dropped_frames: 0,
         }
     }
 
@@ -81,6 +83,7 @@ impl VideoFrameQueue {
         Ok(Self {
             frames: VecDeque::with_capacity(capacity),
             capacity,
+            dropped_frames: 0,
         })
     }
 
@@ -96,6 +99,10 @@ impl VideoFrameQueue {
         self.frames.is_empty()
     }
 
+    pub const fn dropped_frames(&self) -> u64 {
+        self.dropped_frames
+    }
+
     /// Inserts by PTS, first removing frames whose presentation interval ended.
     pub fn enqueue(
         &mut self,
@@ -104,6 +111,7 @@ impl VideoFrameQueue {
     ) -> FrameEnqueueOutcome {
         self.discard_expired(playback_time_100ns);
         if is_expired(&frame, playback_time_100ns) {
+            self.dropped_frames = self.dropped_frames.saturating_add(1);
             return FrameEnqueueOutcome::DroppedLate;
         }
 
@@ -113,6 +121,7 @@ impl VideoFrameQueue {
                 .front()
                 .is_some_and(|oldest| frame.pts_100ns() <= oldest.pts_100ns())
         {
+            self.dropped_frames = self.dropped_frames.saturating_add(1);
             return FrameEnqueueOutcome::DroppedByCapacity;
         }
 
@@ -125,6 +134,7 @@ impl VideoFrameQueue {
 
         if self.frames.len() > self.capacity {
             self.frames.pop_front();
+            self.dropped_frames = self.dropped_frames.saturating_add(1);
             FrameEnqueueOutcome::QueuedAndDroppedOldest
         } else {
             FrameEnqueueOutcome::Queued
@@ -140,6 +150,9 @@ impl VideoFrameQueue {
             .front()
             .is_some_and(|frame| frame.pts_100ns() <= playback_time_100ns)
         {
+            if newest_due.is_some() {
+                self.dropped_frames = self.dropped_frames.saturating_add(1);
+            }
             newest_due = self.frames.pop_front();
         }
         newest_due
@@ -152,7 +165,9 @@ impl VideoFrameQueue {
         let previous_len = self.frames.len();
         self.frames
             .retain(|frame| !is_expired(frame, playback_time_100ns));
-        previous_len - self.frames.len()
+        let dropped = previous_len - self.frames.len();
+        self.dropped_frames = self.dropped_frames.saturating_add(dropped as u64);
+        dropped
     }
 
     /// Clears all queued frames, for example when starting a seek timeline.
@@ -310,5 +325,34 @@ mod tests {
             FrameEnqueueOutcome::Queued
         );
         assert_eq!(queued_pts(&queue), [0]);
+    }
+
+    #[test]
+    fn cumulative_drop_counter_tracks_capacity_late_and_superseded_frames() {
+        let mut queue = VideoFrameQueue::with_capacity(2).unwrap();
+        queue.enqueue(frame(10, 100, 1), 0);
+        queue.enqueue(frame(20, 100, 2), 0);
+        assert_eq!(
+            queue.enqueue(frame(30, 100, 3), 0),
+            FrameEnqueueOutcome::QueuedAndDroppedOldest
+        );
+        assert_eq!(queue.dropped_frames(), 1);
+        assert_eq!(
+            queue.enqueue(frame(20, 100, 4), 0),
+            FrameEnqueueOutcome::DroppedByCapacity
+        );
+        assert_eq!(queue.dropped_frames(), 2);
+        queue.clear();
+
+        queue.enqueue(frame(0, 100, 0), 0);
+        queue.enqueue(frame(20, 100, 1), 0);
+        queue.enqueue(frame(40, 100, 2), 0);
+        assert_eq!(queue.pop_due(50).unwrap().pts_100ns(), 40);
+        assert_eq!(queue.dropped_frames(), 4);
+        assert_eq!(
+            queue.enqueue(frame(0, 10, 0), 50),
+            FrameEnqueueOutcome::DroppedLate
+        );
+        assert_eq!(queue.dropped_frames(), 5);
     }
 }

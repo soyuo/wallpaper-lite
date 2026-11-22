@@ -7,14 +7,16 @@ use tracing_appender::{
 use tracing_subscriber::filter::LevelFilter;
 use wallpaper_core::performance_policy::{PerformancePolicySettings, PolicyAction};
 use wallpaper_desktop::{ShellLifecycleEvent, ShellLifecycleMonitor};
-use wallpaper_ipc::protocol::DisplayTargetFailure;
+use wallpaper_ipc::protocol::{DisplayTargetFailure, PerformanceMediaKind};
 use wallpaper_media::{DecodedImage, MediaError, PerformancePolicyStore, decode_image};
 
 mod independent_displays;
+mod performance_metrics;
 mod performance_signals;
 mod playback;
 mod recovery;
 
+use performance_metrics::PerformanceMetricsRegistry;
 use performance_signals::{PerformanceSignalMonitor, PerformanceSignalSnapshot, policy_signals};
 use playback::PlaybackWorker;
 use recovery::DesktopRecoveryWorker;
@@ -126,6 +128,12 @@ fn main() -> process::ExitCode {
     // Monitor rectangles must be queried after the process enters per-monitor DPI awareness;
     // otherwise Windows can virtualize them for an unaware caller.
     let display_assignments = independent_displays::load_display_assignments();
+    let performance_metrics = PerformanceMetricsRegistry::default();
+    let primary_display_id = display_assignments
+        .primary_display_id
+        .as_deref()
+        .unwrap_or("primary");
+    performance_metrics.register_target(&primary_display_id, PerformanceMediaKind::Unknown);
     let has_secondary_assignment = display_assignments
         .profiles
         .iter()
@@ -313,13 +321,19 @@ fn main() -> process::ExitCode {
     let (display_refresh_sender, mut display_refresh_receiver) =
         tokio::sync::mpsc::unbounded_channel();
     let (mut playback_worker, mut playback_events) =
-        match PlaybackWorker::start_with_policy_and_display_refresh(
+        match PlaybackWorker::start_with_performance_metrics(
             command_receiver,
             media_device,
             &desktop_recovery,
             policy_settings.clone(),
             playback_signal_receiver,
             Some(display_refresh_sender),
+            Some(playback::PerformanceMetricsBinding {
+                display_id: primary_display_id.to_owned(),
+                media_kind: PerformanceMediaKind::Unknown,
+                registry: performance_metrics.clone(),
+                sample_memory: true,
+            }),
         ) {
             Ok(worker) => worker,
             Err(error) => {
@@ -341,11 +355,14 @@ fn main() -> process::ExitCode {
         };
     if let Some((source_path, image)) = initial_image {
         match desktop_recovery.present_image(image, source_path) {
-            Ok(()) => tracing::info!(
-                component = "renderer",
-                event = "wallpaper_image_presented",
-                "Startup image presented in the desktop child"
-            ),
+            Ok(()) => {
+                performance_metrics.set_media_kind(primary_display_id, PerformanceMediaKind::Image);
+                tracing::info!(
+                    component = "renderer",
+                    event = "wallpaper_image_presented",
+                    "Startup image presented in the desktop child"
+                )
+            }
             Err(error) => tracing::error!(
                 component = "renderer",
                 event = "wallpaper_image_presentation_failed",
@@ -414,6 +431,10 @@ fn main() -> process::ExitCode {
                             "Primary display profile could not be started"
                         );
                     } else {
+                        performance_metrics.set_media_kind(
+                            primary.display.id().as_str(),
+                            PerformanceMediaKind::Image,
+                        );
                         initial_primary_assignment = Some(primary.clone());
                     }
                 }
@@ -444,6 +465,7 @@ fn main() -> process::ExitCode {
             command_sender.clone(),
             playback_events.clone(),
             desktop_recovery.frame_sender(),
+            performance_metrics.clone(),
         )
     });
     let mut display_targets = independent_displays::DisplayTargetManager::start(
@@ -455,6 +477,7 @@ fn main() -> process::ExitCode {
         display_assignments.primary_bounds,
         policy_settings.clone(),
         signal_receiver.as_ref().cloned(),
+        performance_metrics.clone(),
     );
 
     let run_result = runtime.block_on(async {
