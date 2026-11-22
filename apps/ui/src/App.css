@@ -267,6 +267,15 @@ label {
   pointer-events: none;
 }
 
+.editor-preview-ghost .editor-preview-zoom {
+  position: relative;
+}
+
+.editor-preview-ghost img {
+  max-width: none;
+  object-fit: fill;
+}
+
 .editor-preview-canvas:focus-visible {
   outline: var(--focus-ring);
   outline-offset: var(--focus-offset);

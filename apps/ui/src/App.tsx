@@ -318,6 +318,49 @@ function editorDragTransform(preview: EditorPreviewLike, draft: WallpaperEditorS
   };
 }
 
+// Approximates crates/renderer placement.rs on the full source so the part outside the display stays visible.
+function editorGhostStyle(source: { width: number; height: number }, draft: WallpaperEditorSettings, mw: number, mh: number): React.CSSProperties | undefined {
+  const r = draft.render;
+  const c = r.crop;
+  const ew = source.width * c.width;
+  const eh = source.height * c.height;
+  if (mw <= 0 || mh <= 0 || ew <= 0 || eh <= 0 || c.width <= 0 || c.height <= 0) return undefined;
+  let scale = Math.max(mw / ew, mh / eh);
+  if (r.placementMode === "fit") scale = Math.min(mw / ew, mh / eh);
+  else if (r.placementMode === "center") scale = 1;
+  let boxW = ew * scale;
+  let boxH = eh * scale;
+  if (r.placementMode === "stretch") { boxW = mw; boxH = mh; }
+  // Destination rectangle before sizePx: Cover and Stretch fill the display, Fit/Center use the box.
+  const fills = r.placementMode === "cover" || r.placementMode === "custom" || r.placementMode === "stretch";
+  const baseW = fills ? mw : boxW;
+  const baseH = fills ? mh : boxH;
+  const rectW = r.sizePx?.width ?? baseW;
+  const rectH = r.sizePx?.height ?? baseH;
+  const kx = rectW / baseW;
+  const ky = rectH / baseH;
+  const boxWs = boxW * kx;
+  const boxHs = boxH * ky;
+  const rectL = (mw - rectW) / 2;
+  const rectT = (mh - rectH) / 2;
+  const left = (mw - boxWs) / 2 - c.x * (boxWs / c.width);
+  const top = (mh - boxHs) / 2 - c.y * (boxHs / c.height);
+  const width = boxWs / c.width;
+  const height = boxHs / c.height;
+  const ax = rectL + rectW * r.anchor.x;
+  const ay = rectT + rectH * r.anchor.y;
+  return {
+    position: "absolute",
+    left: `${(left / mw) * 100}%`,
+    top: `${(top / mh) * 100}%`,
+    width: `${(width / mw) * 100}%`,
+    height: `${(height / mh) * 100}%`,
+    clipPath: `inset(${c.y * 100}% ${(1 - c.x - c.width) * 100}% ${(1 - c.y - c.height) * 100}% ${c.x * 100}%)`,
+    transformOrigin: `${((ax - left) / width) * 100}% ${((ay - top) / height) * 100}%`,
+    transform: `translate(${(r.positionPx.x / width) * 100}%, ${(r.positionPx.y / height) * 100}%) rotate(${r.rotationDegrees}deg) scale(${r.scale.x}, ${r.scale.y})`,
+  };
+}
+
 function App() {
   const [checkingHost, setCheckingHost] = useState(false);
   const [hostStatus, setHostStatus] = useState("Host connection has not been checked.");
@@ -1783,8 +1826,10 @@ function App() {
             >
               <div className="editor-preview-ghost" aria-hidden="true">
                 <div className="editor-preview-zoom" style={{ transform: `scale(${previewZoom})` }}>
-                <img aria-hidden="true" draggable={false} src={editorPreview.dataUrl} alt="" style={editorDragTransform(editorPreview, editorSettingsDraft)} />
-              </div>
+                  {previews[editorEntry.id] && editorSettingsDraft && (
+                    <img draggable={false} src={previews[editorEntry.id].thumbnailDataUrl} alt="" style={editorGhostStyle(previews[editorEntry.id], editorSettingsDraft, editorPreview.monitorWidth, editorPreview.monitorHeight)} />
+                  )}
+                </div>
               </div>
               <div className="editor-preview-clip">
                 <div className="editor-preview-zoom" style={{ transform: `scale(${previewZoom})` }}>
