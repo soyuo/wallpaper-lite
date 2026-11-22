@@ -43,6 +43,11 @@ function App() {
     localStorage.setItem("wallpaper-lite.theme", theme);
   }, [theme]);
 
+  const activeWallpaperId = playbackState.playbackPanel?.state.wallpaperId ?? null;
+  const activeWallpaper = activeWallpaperId === null
+    ? null
+    : libraryState.library.find((entry) => entry.id === activeWallpaperId) ?? null;
+
   async function checkHost() {
     setCheckingHost(true);
     setHostStatus("Checking host connection...");
@@ -78,7 +83,7 @@ function App() {
       <header className="app-header">
         <div>
           <h1>{APP_PAGES.find((item) => item.id === page)?.label}</h1>
-          <p>Desktop wallpaper</p>
+          <p>{activeWallpaper ? `Now playing: ${activeWallpaper.displayName}` : "No video wallpaper is playing"}</p>
         </div>
         <div className="app-header-actions">
           <p aria-live="polite" className="host-status" role="status">{hostStatus}</p>
