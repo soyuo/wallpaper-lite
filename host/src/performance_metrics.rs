@@ -41,7 +41,10 @@ impl PerformanceMetricsRegistry {
         let Ok(mut state) = self.0.lock() else {
             return;
         };
-        if !state.targets.contains_key(display_id) && state.targets.len() >= MAX_METRIC_TARGETS {
+        if state.targets.contains_key(display_id) {
+            return;
+        }
+        if state.targets.len() >= MAX_METRIC_TARGETS {
             return;
         }
         state.targets.insert(
@@ -436,6 +439,25 @@ mod tests {
         assert_eq!(target.source_fps, None);
         assert_eq!(target.rendered_fps, None);
         assert_eq!(target.decode_latency_ms, None);
+    }
+
+    #[test]
+    fn recorder_initialization_preserves_existing_assignment_media_kind() {
+        let registry = PerformanceMetricsRegistry::default();
+        registry.register_target("DISPLAY-primary", PerformanceMediaKind::Unknown);
+        registry.set_media_kind("DISPLAY-primary", PerformanceMediaKind::Image);
+
+        let mut recorder = PerformanceMetricsRecorder::new(
+            "DISPLAY-primary".to_owned(),
+            PerformanceMediaKind::Unknown,
+            registry.clone(),
+        );
+        recorder.publish_due(recorder.window_started + Duration::from_secs(1));
+
+        let target = registry.snapshot().targets.remove(0);
+        assert_eq!(target.media_kind, PerformanceMediaKind::Image);
+        assert_eq!(target.source_fps, None);
+        assert_eq!(target.rendered_fps, None);
     }
 
     #[test]
