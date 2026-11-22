@@ -10,6 +10,7 @@
   font-family: var(--font-family);
   font-size: var(--font-size-md);
   line-height: 1.5;
+  color-scheme: dark;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -113,6 +114,10 @@ fieldset {
 :where(button, select, input, textarea):focus-visible {
   outline: var(--focus-ring);
   outline-offset: var(--focus-offset);
+}
+
+[hidden] {
+  display: none !important;
 }
 
 .ui-button--primary {

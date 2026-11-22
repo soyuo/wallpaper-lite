@@ -1,10 +1,67 @@
 /* Layout: one content column, one width, one rhythm for every panel. */
+.app-layout {
+  display: grid;
+  grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
+  min-height: 100vh;
+}
+
+.app-sidebar {
+  position: sticky;
+  top: 0;
+  display: flex;
+  height: 100vh;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-5) var(--space-3);
+  border-right: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+
+.app-sidebar ul {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.app-brand {
+  padding: 0 var(--space-3);
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
+}
+
+.app-nav-item {
+  width: 100%;
+  padding: var(--space-3);
+  border-color: transparent;
+  background: transparent;
+  color: var(--color-text-muted);
+  text-align: left;
+}
+
+.app-nav-item:hover:not(:disabled) {
+  color: var(--color-text);
+  background: var(--color-surface-muted);
+}
+
+.app-nav-item[aria-current="page"] {
+  border-left: 3px solid var(--color-accent);
+  color: var(--color-text);
+  background: var(--color-surface-muted);
+}
+
+.app-empty {
+  padding: var(--space-6);
+  text-align: center;
+}
+
 .app-shell {
   display: grid;
   width: min(100%, var(--content-width));
+  align-content: start;
   gap: var(--space-4);
-  margin: 0 auto;
-  padding: var(--space-6) var(--space-4);
+  padding: var(--space-5);
 }
 
 .app-header {
@@ -359,9 +416,14 @@ label {
   flex: 1 1 12rem;
 }
 
+.library-panel {
+  order: -1;
+}
+
 .library-list {
   display: grid;
-  max-height: 34rem;
+  grid-template-columns: repeat(auto-fill, minmax(13rem, 1fr));
+  max-height: 44rem;
   gap: var(--space-3);
   overflow: auto;
   margin: 0;
@@ -371,7 +433,8 @@ label {
 
 .library-card {
   display: grid;
-  grid-template-columns: 10rem minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
   gap: var(--space-4);
   padding: var(--space-3);
   border: 1px solid var(--color-border);
@@ -380,7 +443,7 @@ label {
 
 .library-thumbnail {
   display: grid;
-  min-height: 6rem;
+  min-height: 8rem;
   place-items: center;
   overflow: hidden;
   border-radius: var(--radius-sm);
@@ -545,7 +608,19 @@ label {
     padding: var(--space-4) var(--space-3);
   }
 
-  .library-card {
-    grid-template-columns: 6rem minmax(0, 1fr);
+  .app-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .app-sidebar {
+    position: static;
+    height: auto;
+    flex-direction: row;
+    align-items: center;
+    overflow-x: auto;
+  }
+
+  .app-sidebar ul {
+    display: flex;
   }
 }

@@ -129,6 +129,16 @@ function availabilityLabel(value: Availability): string {
   return "Available";
 }
 
+type AppPage = "library" | "editor" | "displays" | "playback" | "performance";
+
+const APP_PAGES: { id: AppPage; label: string }[] = [
+  { id: "library", label: "Library" },
+  { id: "editor", label: "Editor" },
+  { id: "displays", label: "Monitors" },
+  { id: "playback", label: "Playback" },
+  { id: "performance", label: "Performance" },
+];
+
 type EditorPointer = {
   kind: "move" | "resize";
   startX: number;
@@ -329,6 +339,7 @@ function App() {
   const [visibleCount, setVisibleCount] = useState(24);
   const [editorMonitors, setEditorMonitors] = useState<EditorMonitor[]>([]);
   const [editorMonitorId, setEditorMonitorId] = useState("");
+  const [page, setPage] = useState<AppPage>("library");
   const [editorEntry, setEditorEntry] = useState<LibraryEntry | null>(null);
   const [editorPreview, setEditorPreview] = useState<EditorPreview | null>(null);
   const [editorSettingsDraft, setEditorSettingsDraft] = useState<WallpaperEditorSettings | null>(null);
@@ -832,6 +843,7 @@ function App() {
   }
 
   async function openEditorPreview(entry: LibraryEntry) {
+    setPage("editor");
     setEditorEntry(entry);
     setEditorPreview(null);
     setEditorError("");
@@ -1222,11 +1234,24 @@ function App() {
   };
 
   return (
+    <div className="app-layout">
+      <nav className="app-sidebar" aria-label="Main">
+        <p className="app-brand">wallpaper-lite</p>
+        <ul>
+          {APP_PAGES.map((item) => (
+            <li key={item.id}>
+              <button className="app-nav-item" aria-current={page === item.id ? "page" : undefined} onClick={() => setPage(item.id)}>
+                {item.label}
+              </button>
+            </li>
+          ))}
+        </ul>
+      </nav>
     <main className="app-shell">
       <header className="app-header">
         <div>
-          <h1>wallpaper-lite</h1>
-          <p>Desktop application shell</p>
+          <h1>{APP_PAGES.find((item) => item.id === page)?.label}</h1>
+          <p>Desktop wallpaper</p>
         </div>
         <div className="app-header-actions">
           <p aria-live="polite" className="host-status" role="status">{hostStatus}</p>
@@ -1236,7 +1261,7 @@ function App() {
         </div>
       </header>
 
-      <section className="ui-panel performance-dashboard" aria-labelledby="performance-dashboard-title">
+      <section className="ui-panel performance-dashboard" hidden={page !== "performance"} aria-labelledby="performance-dashboard-title">
         <div className="performance-dashboard-heading">
           <div>
             <h2 id="performance-dashboard-title">Live performance</h2>
@@ -1309,7 +1334,7 @@ function App() {
         )}
       </section>
 
-      <section className="ui-panel performance-policy" aria-labelledby="performance-policy-title">
+      <section className="ui-panel performance-policy" hidden={page !== "performance"} aria-labelledby="performance-policy-title">
         <div className="performance-policy-heading">
           <div>
             <h2 id="performance-policy-title">Power-saving policies</h2>
@@ -1378,7 +1403,7 @@ function App() {
         {performancePolicyMessage && <p aria-live="polite" className="performance-policy-status" role="status">{performancePolicyMessage}</p>}
       </section>
 
-      <section className="ui-panel display-manager" aria-labelledby="display-manager-title">
+      <section className="ui-panel display-manager" hidden={page !== "displays"} aria-labelledby="display-manager-title">
         <div className="display-manager-heading">
           <div>
             <h2 id="display-manager-title">Displays</h2>
@@ -1507,7 +1532,7 @@ function App() {
         <p className="display-manager-status" aria-live="polite" role="status">{displayStatus}</p>
       </section>
 
-      <section className="ui-panel playback-panel" aria-labelledby="playback-title">
+      <section className="ui-panel playback-panel" hidden={page !== "playback"} aria-labelledby="playback-title">
         <h2 id="playback-title">Video playback</h2>
         {playbackState?.wallpaperId == null ? (
           <p>No video is active. Start a video from its library card.</p>
@@ -1640,7 +1665,7 @@ function App() {
         <p className="playback-message" aria-live="polite" role="status">{playbackMessage}</p>
       </section>
 
-      <section className="ui-panel import-panel" aria-labelledby="import-title">
+      <section className="ui-panel import-panel" hidden={page !== "library"} aria-labelledby="import-title">
         <h2 id="import-title">Import media</h2>
         <div className="import-actions">
           <button disabled={importing} onClick={() => void importSelection(false)}>Choose files</button>
@@ -1661,8 +1686,9 @@ function App() {
         )}
       </section>
 
+      {page === "editor" && !editorEntry && (<p className="app-empty">Choose a wallpaper in the Library and press Edit.</p>)}
       {editorEntry && (
-        <section className="ui-panel editor-preview-panel" aria-labelledby="editor-preview-title">
+        <section className="ui-panel editor-preview-panel" hidden={page !== "editor"} aria-labelledby="editor-preview-title">
           <div className="editor-preview-heading">
             <div>
               <h2 id="editor-preview-title">Preview: {editorEntry.displayName}</h2>
@@ -1857,7 +1883,7 @@ function App() {
         </section>
       )}
 
-      <section className="ui-panel library-panel" aria-labelledby="library-title">
+      <section className="ui-panel library-panel" hidden={page !== "library"} aria-labelledby="library-title">
         <div className="library-heading">
           <div>
             <h2 id="library-title">Wallpaper library</h2>
@@ -1947,6 +1973,7 @@ function App() {
         )}
       </section>
     </main>
+    </div>
   );
 }
 

@@ -1,28 +1,28 @@
 :root {
   /* Color */
-  --color-text: #1b1f27;
-  --color-text-muted: #55606f;
-  --color-bg: #f3f4f7;
-  --color-surface: #fff;
-  --color-surface-subtle: #f7f8fa;
-  --color-surface-muted: #eceff4;
-  --color-border: #dcdfe6;
-  --color-border-strong: #c4cad6;
-  --color-accent: #2f5fd0;
-  --color-accent-strong: #1f4aae;
+  --color-text: #e8eaf0;
+  --color-text-muted: #98a2b3;
+  --color-bg: #12141a;
+  --color-surface: #1b1e27;
+  --color-surface-subtle: #20242f;
+  --color-surface-muted: #2a2f3d;
+  --color-border: #2d3340;
+  --color-border-strong: #3d4558;
+  --color-accent: #3d7bf0;
+  --color-accent-strong: #5b92f5;
   --color-on-accent: #fff;
-  --color-danger: #b42318;
-  --color-warning-text: #8b4b10;
-  --color-warning-bg: #fff1d6;
-  --color-success-text: #17663a;
-  --color-success-bg: #e6f5eb;
+  --color-danger: #ff7b72;
+  --color-warning-text: #f5c26b;
+  --color-warning-bg: #3a2d12;
+  --color-success-text: #6fd39a;
+  --color-success-bg: #12301f;
 
   /* Editor canvas */
-  --color-canvas-border: #8994a5;
-  --color-canvas-bg: #e4e8ef;
-  --color-canvas-check: #d3d9e2;
+  --color-canvas-border: #4a5366;
+  --color-canvas-bg: #242936;
+  --color-canvas-check: #2d3342;
   --color-handle: #fff;
-  --color-accent-overlay: rgb(47 95 208 / 12%);
+  --color-accent-overlay: rgb(61 123 240 / 18%);
 
   /* Typography */
   --font-family: "Segoe UI", system-ui, sans-serif;
@@ -47,10 +47,11 @@
   --radius-md: 0.5rem;
   --radius-lg: 0.75rem;
   --radius-pill: 999px;
-  --shadow-panel: 0 1px 2px rgb(16 24 40 / 6%);
+  --shadow-panel: 0 1px 2px rgb(0 0 0 / 40%);
 
   /* Layout */
-  --content-width: 64rem;
+  --content-width: 72rem;
+  --sidebar-width: 13rem;
 
   /* Focus */
   --focus-ring: 3px solid var(--color-accent);
