@@ -1781,8 +1781,15 @@ function App() {
                 width: `min(100%, ${Math.min(56, 32 * editorPreview.width / editorPreview.height)}rem)`,
               }}
             >
-              <div className="editor-preview-zoom" style={{ transform: `scale(${previewZoom})` }}>
+              <div className="editor-preview-ghost" aria-hidden="true">
+                <div className="editor-preview-zoom" style={{ transform: `scale(${previewZoom})` }}>
+                <img aria-hidden="true" draggable={false} src={editorPreview.dataUrl} alt="" style={editorDragTransform(editorPreview, editorSettingsDraft)} />
+              </div>
+              </div>
+              <div className="editor-preview-clip">
+                <div className="editor-preview-zoom" style={{ transform: `scale(${previewZoom})` }}>
                 <img draggable={false} src={editorPreview.dataUrl} alt={`Rendered ${editorEntry.displayName}`} style={editorDragTransform(editorPreview, editorSettingsDraft)} />
+              </div>
               </div>
               <button
                 className="editor-resize-handle"
