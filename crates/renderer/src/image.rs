@@ -134,8 +134,8 @@ float4 ps_main(float4 position : SV_POSITION, float2 uv : TEXCOORD0) : SV_TARGET
 /// The caller retains HWND ownership and must drop this presenter before destroying the window.
 /// No render loop is started; frames are presented only on construction, image replacement, or
 /// an observed window resize.
-pub struct D3d11ImagePresenter<'a> {
-    device: &'a D3d11Device,
+pub struct D3d11ImagePresenter {
+    device: D3d11Device,
     hwnd: HWND,
     swap_chain: IDXGISwapChain1,
     render_target: Option<ID3D11RenderTargetView>,
@@ -163,9 +163,9 @@ struct Rgba8PixelBuffer<'pixels> {
     pixels: &'pixels [u8],
 }
 
-impl<'a> D3d11ImagePresenter<'a> {
+impl D3d11ImagePresenter {
     pub fn new(
-        device: &'a D3d11Device,
+        device: &D3d11Device,
         window_handle: isize,
         image: &DecodedImage,
     ) -> Result<Self, RendererError> {
@@ -174,7 +174,7 @@ impl<'a> D3d11ImagePresenter<'a> {
 
     /// Create the presenter with a specific scale and crop mode.
     pub fn new_with_placement(
-        device: &'a D3d11Device,
+        device: &D3d11Device,
         window_handle: isize,
         image: &DecodedImage,
         placement_mode: PlacementMode,
@@ -190,7 +190,7 @@ impl<'a> D3d11ImagePresenter<'a> {
 
     /// Create the presenter with placement and runtime transform parameters.
     pub fn new_with_transform(
-        device: &'a D3d11Device,
+        device: &D3d11Device,
         window_handle: isize,
         image: &DecodedImage,
         placement_mode: PlacementMode,
@@ -208,7 +208,7 @@ impl<'a> D3d11ImagePresenter<'a> {
 
     /// Create a presenter with runtime color adjustments and neutral transform settings.
     pub fn new_with_color_adjustments(
-        device: &'a D3d11Device,
+        device: &D3d11Device,
         window_handle: isize,
         image: &DecodedImage,
         color_adjustments: ColorAdjustments,
@@ -224,7 +224,7 @@ impl<'a> D3d11ImagePresenter<'a> {
     }
 
     fn new_with_settings(
-        device: &'a D3d11Device,
+        device: &D3d11Device,
         window_handle: isize,
         image: &DecodedImage,
         placement_mode: PlacementMode,
@@ -248,7 +248,7 @@ impl<'a> D3d11ImagePresenter<'a> {
 
     /// Create a presenter from the first decoded video frame.
     pub fn new_with_video_frame(
-        device: &'a D3d11Device,
+        device: &D3d11Device,
         window_handle: isize,
         frame: &DecodedVideoFrame,
     ) -> Result<Self, RendererError> {
@@ -271,7 +271,7 @@ impl<'a> D3d11ImagePresenter<'a> {
     }
 
     fn new_with_pixels(
-        device: &'a D3d11Device,
+        device: &D3d11Device,
         window_handle: isize,
         pixels: Rgba8PixelBuffer<'_>,
         placement_mode: PlacementMode,
@@ -359,7 +359,7 @@ impl<'a> D3d11ImagePresenter<'a> {
         let rasterizer = create_rasterizer(device)?;
 
         let mut presenter = Self {
-            device,
+            device: device.clone(),
             hwnd,
             swap_chain,
             render_target: None,
@@ -426,14 +426,14 @@ impl<'a> D3d11ImagePresenter<'a> {
             }
         } else {
             let (texture, view) = create_rgba_texture(
-                self.device,
+                &self.device,
                 frame_width,
                 frame_height,
                 frame_stride,
                 frame_pixels,
             )?;
             let placement_buffer = create_placement_buffer(
-                self.device,
+                &self.device,
                 new_dimensions,
                 PlacementDimensions::new(self.width, self.height)?,
                 self.placement_mode,
@@ -459,7 +459,7 @@ impl<'a> D3d11ImagePresenter<'a> {
             return Ok(());
         }
         let placement_buffer = create_placement_buffer(
-            self.device,
+            &self.device,
             self.source_dimensions,
             PlacementDimensions::new(self.width, self.height)?,
             placement_mode,
@@ -479,7 +479,7 @@ impl<'a> D3d11ImagePresenter<'a> {
             return Ok(());
         }
         let placement_buffer = create_placement_buffer(
-            self.device,
+            &self.device,
             self.source_dimensions,
             PlacementDimensions::new(self.width, self.height)?,
             self.placement_mode,
@@ -510,7 +510,7 @@ impl<'a> D3d11ImagePresenter<'a> {
             return Ok(());
         }
         let placement_buffer = create_placement_buffer(
-            self.device,
+            &self.device,
             self.source_dimensions,
             PlacementDimensions::new(self.width, self.height)?,
             self.placement_mode,
@@ -538,7 +538,7 @@ impl<'a> D3d11ImagePresenter<'a> {
             return Ok(());
         }
         let placement_buffer = create_placement_buffer(
-            self.device,
+            &self.device,
             self.source_dimensions,
             PlacementDimensions::new(self.width, self.height)?,
             self.placement_mode,
@@ -586,7 +586,7 @@ impl<'a> D3d11ImagePresenter<'a> {
         .with_size_px(size_px)?;
         let color_adjustments = ColorAdjustments::from_editor_settings(settings.color())?;
         let placement_buffer = create_placement_buffer(
-            self.device,
+            &self.device,
             self.source_dimensions,
             PlacementDimensions::new(self.width, self.height)?,
             placement_mode,
@@ -617,7 +617,7 @@ impl<'a> D3d11ImagePresenter<'a> {
             return Ok(false);
         }
         let placement_buffer = create_placement_buffer(
-            self.device,
+            &self.device,
             self.source_dimensions,
             PlacementDimensions::new(width, height)?,
             self.placement_mode,
@@ -767,7 +767,7 @@ impl<'a> D3d11ImagePresenter<'a> {
     }
 }
 
-impl Drop for D3d11ImagePresenter<'_> {
+impl Drop for D3d11ImagePresenter {
     fn drop(&mut self) {
         self.unbind_resources();
     }
@@ -1099,7 +1099,7 @@ mod tests {
     };
     use windows::Win32::UI::WindowsAndMessaging::SWP_NOACTIVATE;
 
-    fn read_render_target_pixel(presenter: &D3d11ImagePresenter<'_>, x: u32, y: u32) -> [u8; 4] {
+    fn read_render_target_pixel(presenter: &D3d11ImagePresenter, x: u32, y: u32) -> [u8; 4] {
         presenter
             .draw_current_frame_for_readback()
             .expect("current image should be drawn for readback");
@@ -1144,7 +1144,7 @@ mod tests {
         result
     }
 
-    fn read_render_target_rgba8(presenter: &D3d11ImagePresenter<'_>) -> Vec<u8> {
+    fn read_render_target_rgba8(presenter: &D3d11ImagePresenter) -> Vec<u8> {
         presenter
             .draw_current_frame_for_readback()
             .expect("current image should be drawn for readback");

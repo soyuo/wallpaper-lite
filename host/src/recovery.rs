@@ -14,6 +14,21 @@ use wallpaper_renderer::{D3d11Device, D3d11ImagePresenter, RendererError};
 const INITIAL_RETRY_DELAY: Duration = Duration::from_millis(100);
 const MAX_RETRY_DELAY: Duration = Duration::from_secs(1);
 const RESIZE_POLL_INTERVAL: Duration = Duration::from_millis(100);
+const MAX_DEVICE_RECOVERY_ATTEMPTS: u8 = 8;
+
+#[cfg(test)]
+#[derive(Debug)]
+pub(crate) struct RecoveryTestState {
+    presenter_ready: bool,
+    rendering_paused: bool,
+    device_recovery_pending: bool,
+    window_handle: Option<isize>,
+    image_cached: bool,
+    video_frame_cached: bool,
+    active_source_path: Option<PathBuf>,
+    settings_source_path: Option<PathBuf>,
+    settings_brightness: Option<f32>,
+}
 
 pub(crate) enum RecoveryCommand {
     ExplorerExited,
@@ -39,6 +54,10 @@ pub(crate) enum RecoveryCommand {
         span_bounds: Option<SpanBounds>,
         response: Sender<Result<(), RendererError>>,
     },
+    #[cfg(test)]
+    SimulateDeviceLoss(Sender<()>),
+    #[cfg(test)]
+    InspectState(Sender<RecoveryTestState>),
     Shutdown,
 }
 
@@ -121,6 +140,24 @@ impl RecoveryFrameSender {
 impl DesktopRecoveryWorker {
     pub(crate) fn frame_sender(&self) -> RecoveryFrameSender {
         RecoveryFrameSender(self.commands.clone())
+    }
+
+    #[cfg(test)]
+    fn simulate_device_loss(&self) -> bool {
+        let (response, result) = mpsc::channel();
+        self.commands
+            .send(RecoveryCommand::SimulateDeviceLoss(response))
+            .is_ok()
+            && result.recv_timeout(Duration::from_secs(1)).is_ok()
+    }
+
+    #[cfg(test)]
+    fn inspect_state(&self) -> Option<RecoveryTestState> {
+        let (response, result) = mpsc::channel();
+        self.commands
+            .send(RecoveryCommand::InspectState(response))
+            .ok()?;
+        result.recv_timeout(Duration::from_secs(1)).ok()
     }
 
     pub(crate) fn request_display_geometry(
@@ -219,19 +256,21 @@ impl Drop for DesktopRecoveryWorker {
 
 fn recovery_loop(
     initial_window: AttachedDesktopWindow,
-    device: D3d11Device,
+    mut device: D3d11Device,
     commands: Receiver<RecoveryCommand>,
     mut display_bounds: Option<DisplayRect>,
     mut span_bounds: Option<SpanBounds>,
 ) {
     let mut window = Some(initial_window);
-    let mut presenter: Option<D3d11ImagePresenter<'_>> = None;
+    let mut presenter: Option<D3d11ImagePresenter> = None;
     let mut current_image: Option<DecodedImage> = None;
     let mut current_video_frame: Option<DecodedVideoFrame> = None;
     let mut active_source_path: Option<PathBuf> = None;
     let mut active_editor_settings: Option<(PathBuf, WallpaperEditorSettings)> = None;
     let mut rendering_paused = false;
     let mut recovery_pending = false;
+    let mut device_recovery_pending = false;
+    let mut device_recovery_attempts = 0_u8;
     let mut retry_delay = INITIAL_RETRY_DELAY;
     let mut next_retry: Option<Instant> = None;
 
@@ -250,11 +289,31 @@ fn recovery_loop(
             Err(RecvTimeoutError::Disconnected) => break,
         };
 
+        if device_recovery_pending && next_retry.is_some_and(|deadline| deadline <= Instant::now())
+        {
+            attempt_device_recovery(
+                &mut device,
+                window.as_ref(),
+                current_video_frame.as_ref(),
+                current_image.as_ref(),
+                rendering_paused,
+                span_bounds,
+                active_editor_settings.as_ref(),
+                active_source_path.as_deref(),
+                &mut presenter,
+                &mut device_recovery_pending,
+                &mut recovery_pending,
+                &mut device_recovery_attempts,
+                &mut retry_delay,
+                &mut next_retry,
+            );
+        }
+
         match command {
             Some(RecoveryCommand::SetRenderingPaused(paused)) => {
                 if rendering_paused != paused {
                     rendering_paused = paused;
-                    if !paused {
+                    if !paused && !device_recovery_pending {
                         let redraw_result = (|| {
                             if let (Some(attached_window), Some(bounds)) =
                                 (window.as_ref(), display_bounds)
@@ -327,11 +386,22 @@ fn recovery_loop(
                             }
                         })();
                         if let Err(error) = redraw_result {
-                            drop(presenter.take());
-                            drop(window.take());
-                            recovery_pending = true;
-                            next_retry = Some(Instant::now() + retry_delay);
-                            retry_delay = next_retry_delay(retry_delay);
+                            let device_lost = begin_device_recovery(
+                                error,
+                                &mut presenter,
+                                &mut device_recovery_pending,
+                                &mut recovery_pending,
+                                &mut device_recovery_attempts,
+                                &mut retry_delay,
+                                &mut next_retry,
+                            );
+                            if !device_lost {
+                                drop(presenter.take());
+                                drop(window.take());
+                                recovery_pending = true;
+                                next_retry = Some(Instant::now() + retry_delay);
+                                retry_delay = next_retry_delay(retry_delay);
+                            }
                             tracing::warn!(
                                 component = "renderer",
                                 event = "wallpaper_render_resume_failed",
@@ -345,6 +415,8 @@ fn recovery_loop(
             }
             Some(RecoveryCommand::ExplorerExited) => {
                 drop(presenter.take());
+                device_recovery_pending = false;
+                device_recovery_attempts = 0;
                 if window.take().is_some() {
                     tracing::info!(
                         component = "desktop",
@@ -358,6 +430,8 @@ fn recovery_loop(
             }
             Some(RecoveryCommand::ExplorerRestarted) => {
                 if window.is_none() {
+                    device_recovery_pending = false;
+                    device_recovery_attempts = 0;
                     recovery_pending = true;
                     retry_delay = INITIAL_RETRY_DELAY;
                     next_retry = Some(Instant::now());
@@ -372,6 +446,9 @@ fn recovery_loop(
                     .as_deref()
                     .is_some_and(|active| same_source_path(active, &source_path));
                 let result = if rendering_paused {
+                    Ok(())
+                } else if device_recovery_pending {
+                    // Keep the newest requested content while the old device is being replaced.
                     Ok(())
                 } else if let Some(attached_window) = window.as_ref() {
                     match D3d11ImagePresenter::new(&device, attached_window.raw_handle(), &image)
@@ -400,6 +477,25 @@ fn recovery_loop(
                     if source_changed {
                         active_editor_settings = None;
                     }
+                } else if let Err(error) = result {
+                    if begin_device_recovery(
+                        error,
+                        &mut presenter,
+                        &mut device_recovery_pending,
+                        &mut recovery_pending,
+                        &mut device_recovery_attempts,
+                        &mut retry_delay,
+                        &mut next_retry,
+                    ) {
+                        tracing::error!(
+                            component = "renderer",
+                            event = "wallpaper_device_lost",
+                            error_code = error.to_app_error().code.as_str(),
+                            diagnostic = %error.diagnostic_summary(),
+                            target_local = true,
+                            "D3D device loss detected; recreating this wallpaper target"
+                        );
+                    }
                 }
                 let _ = response.send(result);
             }
@@ -413,6 +509,9 @@ fn recovery_loop(
                     .is_some_and(|active| same_source_path(active, &source_path));
                 let had_presenter = presenter.is_some();
                 let result = if rendering_paused {
+                    Ok(())
+                } else if device_recovery_pending {
+                    // Decode may continue during recovery; present only after the device returns.
                     Ok(())
                 } else if let Some(active_presenter) = presenter.as_mut() {
                     let previous_settings = if source_changed {
@@ -459,12 +558,23 @@ fn recovery_loop(
                         active_editor_settings = None;
                     }
                     active_source_path = Some(source_path);
-                } else if had_presenter {
-                    presenter = None;
-                    window = None;
-                    recovery_pending = true;
-                    next_retry = Some(Instant::now());
-                    retry_delay = INITIAL_RETRY_DELAY;
+                } else if let Err(error) = result {
+                    if !begin_device_recovery(
+                        error,
+                        &mut presenter,
+                        &mut device_recovery_pending,
+                        &mut recovery_pending,
+                        &mut device_recovery_attempts,
+                        &mut retry_delay,
+                        &mut next_retry,
+                    ) && had_presenter
+                    {
+                        presenter = None;
+                        window = None;
+                        recovery_pending = true;
+                        next_retry = Some(Instant::now());
+                        retry_delay = INITIAL_RETRY_DELAY;
+                    }
                 }
                 let _ = response.send(result);
             }
@@ -483,7 +593,7 @@ fn recovery_loop(
                         active_presenter
                             .set_editor_settings(&settings)
                             .map_err(ApplySettingsError::Renderer)
-                    } else if window.is_none()
+                    } else if (window.is_none() || device_recovery_pending)
                         && (current_image.is_some() || current_video_frame.is_some())
                     {
                         Ok(())
@@ -495,6 +605,26 @@ fn recovery_loop(
                 } else {
                     Err(ApplySettingsError::WallpaperNotActive)
                 };
+                if let Err(ApplySettingsError::Renderer(error)) = &result {
+                    if begin_device_recovery(
+                        *error,
+                        &mut presenter,
+                        &mut device_recovery_pending,
+                        &mut recovery_pending,
+                        &mut device_recovery_attempts,
+                        &mut retry_delay,
+                        &mut next_retry,
+                    ) {
+                        tracing::error!(
+                            component = "renderer",
+                            event = "wallpaper_device_lost",
+                            error_code = error.to_app_error().code.as_str(),
+                            diagnostic = %error.diagnostic_summary(),
+                            target_local = true,
+                            "D3D device loss detected while applying settings; recreating this wallpaper target"
+                        );
+                    }
+                }
                 if result.is_ok() {
                     active_editor_settings = Some((source_path, settings));
                     tracing::info!(
@@ -542,7 +672,18 @@ fn recovery_loop(
                     }
                     Ok(())
                 })();
-                if result.is_err() {
+                let device_lost = result.as_ref().is_err_and(|error| {
+                    begin_device_recovery(
+                        *error,
+                        &mut presenter,
+                        &mut device_recovery_pending,
+                        &mut recovery_pending,
+                        &mut device_recovery_attempts,
+                        &mut retry_delay,
+                        &mut next_retry,
+                    )
+                });
+                if result.is_err() && !device_lost {
                     drop(presenter.take());
                     drop(window.take());
                     recovery_pending = true;
@@ -554,12 +695,69 @@ fn recovery_loop(
                         component = "display",
                         event = "display_geometry_update_failed",
                         error_code = error.to_app_error().code.as_str(),
-                        "The desktop wallpaper will retry attachment with the requested geometry"
+                        "The desktop wallpaper will retry applying the requested geometry"
                     );
                 }
                 let _ = response.send(result);
             }
+            #[cfg(test)]
+            Some(RecoveryCommand::SimulateDeviceLoss(response)) => {
+                let _ = begin_device_recovery(
+                    RendererError::Present {
+                        hresult: 0x887A0005_u32 as i32,
+                    },
+                    &mut presenter,
+                    &mut device_recovery_pending,
+                    &mut recovery_pending,
+                    &mut device_recovery_attempts,
+                    &mut retry_delay,
+                    &mut next_retry,
+                );
+                let _ = response.send(());
+            }
+            #[cfg(test)]
+            Some(RecoveryCommand::InspectState(response)) => {
+                let (settings_source_path, settings_brightness) = active_editor_settings
+                    .as_ref()
+                    .map(|(path, settings)| {
+                        (Some(path.clone()), Some(settings.color().brightness()))
+                    })
+                    .unwrap_or((None, None));
+                let _ = response.send(RecoveryTestState {
+                    presenter_ready: presenter.is_some()
+                        && !device_recovery_pending
+                        && !recovery_pending,
+                    rendering_paused,
+                    device_recovery_pending,
+                    window_handle: window.as_ref().map(AttachedDesktopWindow::raw_handle),
+                    image_cached: current_image.is_some(),
+                    video_frame_cached: current_video_frame.is_some(),
+                    active_source_path: active_source_path.clone(),
+                    settings_source_path,
+                    settings_brightness,
+                });
+            }
             Some(RecoveryCommand::Shutdown) => break,
+            None if device_recovery_pending
+                && next_retry.is_some_and(|deadline| deadline <= Instant::now()) =>
+            {
+                attempt_device_recovery(
+                    &mut device,
+                    window.as_ref(),
+                    current_video_frame.as_ref(),
+                    current_image.as_ref(),
+                    rendering_paused,
+                    span_bounds,
+                    active_editor_settings.as_ref(),
+                    active_source_path.as_deref(),
+                    &mut presenter,
+                    &mut device_recovery_pending,
+                    &mut recovery_pending,
+                    &mut device_recovery_attempts,
+                    &mut retry_delay,
+                    &mut next_retry,
+                );
+            }
             None if recovery_pending
                 && next_retry.is_some_and(|deadline| deadline <= Instant::now()) =>
             {
@@ -631,13 +829,34 @@ fn recovery_loop(
                                         "Wallpaper image presented after shell restart"
                                     );
                                 }
-                                Err(error) => tracing::error!(
-                                    component = "renderer",
-                                    event = "wallpaper_image_restore_failed",
-                                    error_code = error.to_app_error().code.as_str(),
-                                    diagnostic = %error.diagnostic_summary(),
-                                    "Wallpaper image could not be restored after shell restart"
-                                ),
+                                Err(error) => {
+                                    if begin_device_recovery(
+                                        error,
+                                        &mut presenter,
+                                        &mut device_recovery_pending,
+                                        &mut recovery_pending,
+                                        &mut device_recovery_attempts,
+                                        &mut retry_delay,
+                                        &mut next_retry,
+                                    ) {
+                                        tracing::error!(
+                                            component = "renderer",
+                                            event = "wallpaper_device_lost",
+                                            error_code = error.to_app_error().code.as_str(),
+                                            diagnostic = %error.diagnostic_summary(),
+                                            target_local = true,
+                                            "D3D device loss detected while restoring the wallpaper; recreating this target"
+                                        );
+                                    } else {
+                                        tracing::error!(
+                                            component = "renderer",
+                                            event = "wallpaper_image_restore_failed",
+                                            error_code = error.to_app_error().code.as_str(),
+                                            diagnostic = %error.diagnostic_summary(),
+                                            "Wallpaper image could not be restored after shell restart"
+                                        );
+                                    }
+                                }
                             }
                         }
                     }
@@ -665,14 +884,27 @@ fn recovery_loop(
                         ),
                         Ok(false) => {}
                         Err(error) => {
-                            tracing::error!(
-                                component = "renderer",
-                                event = "wallpaper_image_resize_failed",
-                                error_code = error.to_app_error().code.as_str(),
-                                diagnostic = %error.diagnostic_summary(),
-                                "Wallpaper image could not be presented after resize"
-                            );
-                            drop(presenter.take());
+                            if !begin_device_recovery(
+                                error,
+                                &mut presenter,
+                                &mut device_recovery_pending,
+                                &mut recovery_pending,
+                                &mut device_recovery_attempts,
+                                &mut retry_delay,
+                                &mut next_retry,
+                            ) {
+                                tracing::error!(
+                                    component = "renderer",
+                                    event = "wallpaper_image_resize_failed",
+                                    error_code = error.to_app_error().code.as_str(),
+                                    diagnostic = %error.diagnostic_summary(),
+                                    "Wallpaper image could not be presented after resize"
+                                );
+                                drop(presenter.take());
+                                recovery_pending = true;
+                                next_retry = Some(Instant::now() + retry_delay);
+                                retry_delay = next_retry_delay(retry_delay);
+                            }
                         }
                     }
                 }
@@ -684,8 +916,186 @@ fn recovery_loop(
     drop(window);
 }
 
+fn begin_device_recovery(
+    error: RendererError,
+    presenter: &mut Option<D3d11ImagePresenter>,
+    device_recovery_pending: &mut bool,
+    recovery_pending: &mut bool,
+    attempts: &mut u8,
+    retry_delay: &mut Duration,
+    next_retry: &mut Option<Instant>,
+) -> bool {
+    if !error.is_device_lost() {
+        return false;
+    }
+
+    drop(presenter.take());
+    *device_recovery_pending = true;
+    *recovery_pending = false;
+    *attempts = 0;
+    *retry_delay = INITIAL_RETRY_DELAY;
+    *next_retry = Some(Instant::now() + *retry_delay);
+    *retry_delay = next_retry_delay(*retry_delay);
+    true
+}
+
+fn schedule_device_retry(
+    attempts: u8,
+    retry_delay: &mut Duration,
+    next_retry: &mut Option<Instant>,
+) -> bool {
+    if attempts >= MAX_DEVICE_RECOVERY_ATTEMPTS {
+        *next_retry = None;
+        return false;
+    }
+
+    *next_retry = Some(Instant::now() + *retry_delay);
+    *retry_delay = next_retry_delay(*retry_delay);
+    true
+}
+
+fn finish_device_recovery_as_terminal(
+    device_recovery_pending: &mut bool,
+    recovery_pending: &mut bool,
+    next_retry: &mut Option<Instant>,
+) {
+    // Keep the target in its failed state after the bounded retry budget is
+    // exhausted so later video frames cannot restart recovery indefinitely.
+    *device_recovery_pending = true;
+    *recovery_pending = false;
+    *next_retry = None;
+}
+
+#[allow(clippy::too_many_arguments)]
+fn attempt_device_recovery(
+    device: &mut D3d11Device,
+    window: Option<&AttachedDesktopWindow>,
+    current_video_frame: Option<&DecodedVideoFrame>,
+    current_image: Option<&DecodedImage>,
+    rendering_paused: bool,
+    span_bounds: Option<SpanBounds>,
+    active_editor_settings: Option<&(PathBuf, WallpaperEditorSettings)>,
+    active_source_path: Option<&Path>,
+    presenter: &mut Option<D3d11ImagePresenter>,
+    device_recovery_pending: &mut bool,
+    recovery_pending: &mut bool,
+    attempts: &mut u8,
+    retry_delay: &mut Duration,
+    next_retry: &mut Option<Instant>,
+) {
+    *attempts = attempts.saturating_add(1);
+    drop(presenter.take());
+
+    let (result, device_creation_failed) = match D3d11Device::create_hardware() {
+        Ok(replacement) => {
+            *device = replacement;
+            let result = if rendering_paused {
+                Ok(None)
+            } else {
+                window
+                    .ok_or(RendererError::WindowUnavailable)
+                    .and_then(|attached_window| {
+                        create_presenter_for_current(
+                            device,
+                            attached_window,
+                            current_video_frame,
+                            current_image,
+                            span_bounds,
+                            active_editor_settings,
+                            active_source_path,
+                        )
+                    })
+            };
+            (result, false)
+        }
+        Err(error) => (Err(error), true),
+    };
+
+    match result {
+        Ok(restored_presenter) => {
+            *presenter = restored_presenter;
+            *device_recovery_pending = false;
+            *recovery_pending = false;
+            *attempts = 0;
+            *next_retry = None;
+            *retry_delay = INITIAL_RETRY_DELAY;
+            tracing::info!(
+                component = "renderer",
+                event = "wallpaper_device_recovered",
+                target_local = true,
+                "Recreated the D3D device and restored the last committed wallpaper"
+            );
+        }
+        Err(error) => {
+            let retryable = device_creation_failed || error.is_device_lost();
+            let retry = retryable && schedule_device_retry(*attempts, retry_delay, next_retry);
+            if !retry {
+                finish_device_recovery_as_terminal(
+                    device_recovery_pending,
+                    recovery_pending,
+                    next_retry,
+                );
+                tracing::error!(
+                    component = "renderer",
+                    event = "wallpaper_device_recovery_exhausted",
+                    error_code = error.to_app_error().code.as_str(),
+                    diagnostic = %error.diagnostic_summary(),
+                    attempts = *attempts,
+                    target_local = true,
+                    "D3D device recovery stopped after a bounded number of attempts"
+                );
+            } else {
+                tracing::warn!(
+                    component = "renderer",
+                    event = "wallpaper_device_recovery_retry",
+                    error_code = error.to_app_error().code.as_str(),
+                    diagnostic = %error.diagnostic_summary(),
+                    attempts = *attempts,
+                    retry_delay_ms = next_retry
+                        .map(|deadline| deadline.saturating_duration_since(Instant::now()).as_millis() as u64)
+                        .unwrap_or_default(),
+                    target_local = true,
+                    "D3D device recovery will retry for this wallpaper target"
+                );
+            }
+        }
+    }
+}
+
+fn create_presenter_for_current(
+    device: &D3d11Device,
+    window: &AttachedDesktopWindow,
+    current_video_frame: Option<&DecodedVideoFrame>,
+    current_image: Option<&DecodedImage>,
+    span_bounds: Option<SpanBounds>,
+    active_editor_settings: Option<&(PathBuf, WallpaperEditorSettings)>,
+    active_source_path: Option<&Path>,
+) -> Result<Option<D3d11ImagePresenter>, RendererError> {
+    let mut presenter = if let Some(frame) = current_video_frame {
+        Some(D3d11ImagePresenter::new_with_video_frame(
+            device,
+            window.raw_handle(),
+            frame,
+        )?)
+    } else if let Some(image) = current_image {
+        Some(D3d11ImagePresenter::new(
+            device,
+            window.raw_handle(),
+            image,
+        )?)
+    } else {
+        None
+    };
+
+    if let Some(presenter) = presenter.as_mut() {
+        presenter.set_span_bounds(span_bounds)?;
+        apply_active_settings(presenter, active_editor_settings, active_source_path)?;
+    }
+    Ok(presenter)
+}
+
 fn apply_active_settings(
-    presenter: &mut D3d11ImagePresenter<'_>,
+    presenter: &mut D3d11ImagePresenter,
     settings: Option<&(PathBuf, WallpaperEditorSettings)>,
     source_path: Option<&Path>,
 ) -> Result<(), RendererError> {
@@ -706,7 +1116,7 @@ fn settings_for_source<'a>(
 }
 
 fn reset_presenter_settings_for_source_change(
-    presenter: &mut D3d11ImagePresenter<'_>,
+    presenter: &mut D3d11ImagePresenter,
     previous_settings: &WallpaperEditorSettings,
 ) -> Result<(), RendererError> {
     let defaults = WallpaperEditorSettings::default_for(previous_settings.wallpaper_id())
@@ -739,10 +1149,11 @@ mod tests {
     use std::time::Duration;
 
     use super::{
-        ApplySettingsError, DesktopRecoveryWorker, INITIAL_RETRY_DELAY, MAX_RETRY_DELAY,
-        next_retry_delay, settings_for_source,
+        ApplySettingsError, DesktopRecoveryWorker, INITIAL_RETRY_DELAY,
+        MAX_DEVICE_RECOVERY_ATTEMPTS, MAX_RETRY_DELAY, finish_device_recovery_as_terminal,
+        next_retry_delay, schedule_device_retry, settings_for_source,
     };
-    use wallpaper_core::editor_settings::WallpaperEditorSettings;
+    use wallpaper_core::editor_settings::{EditorColorSettings, WallpaperEditorSettings};
     use wallpaper_desktop::discover_desktop_host;
     use wallpaper_media::{VideoReadEvent, VideoSource, decode_image};
     use wallpaper_renderer::D3d11Device;
@@ -767,6 +1178,30 @@ mod tests {
                 MAX_RETRY_DELAY,
             ]
         );
+    }
+
+    #[test]
+    fn device_recovery_retry_count_and_terminal_state_are_bounded() {
+        let mut delay = INITIAL_RETRY_DELAY;
+        let mut next_retry = None;
+        let mut device_recovery_pending = false;
+        let mut recovery_pending = true;
+        for attempt in 1..=MAX_DEVICE_RECOVERY_ATTEMPTS {
+            assert_eq!(
+                schedule_device_retry(attempt, &mut delay, &mut next_retry),
+                attempt < MAX_DEVICE_RECOVERY_ATTEMPTS
+            );
+        }
+        assert!(next_retry.is_none());
+
+        finish_device_recovery_as_terminal(
+            &mut device_recovery_pending,
+            &mut recovery_pending,
+            &mut next_retry,
+        );
+        assert!(device_recovery_pending);
+        assert!(!recovery_pending);
+        assert!(next_retry.is_none());
     }
 
     #[test]
@@ -852,6 +1287,212 @@ mod tests {
             sender.apply_editor_settings(video_settings, fixture),
             Err(ApplySettingsError::WallpaperNotActive)
         ));
+        assert!(recovery.stop());
+    }
+
+    #[test]
+    fn device_recreation_restores_last_image_settings_and_same_child_window() {
+        let host = discover_desktop_host().expect("an interactive Windows shell is required");
+        let window = host
+            .attach_wallpaper_window()
+            .expect("the wallpaper child should attach to the desktop host");
+        let original_window_handle = window.raw_handle();
+        let device = D3d11Device::create_hardware().expect("hardware D3D11 is required");
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("crates")
+            .join("media")
+            .join("tests")
+            .join("fixtures")
+            .join("pixels.png");
+        let image = decode_image(&fixture).expect("fixture should decode");
+        let mut recovery =
+            DesktopRecoveryWorker::start(window, device).expect("the recovery worker should start");
+        let sender = recovery.frame_sender();
+        sender
+            .present_image(image, fixture.clone())
+            .expect("the recovery worker should present the image");
+
+        let settings = WallpaperEditorSettings::default_for(1)
+            .expect("default editor settings should be valid")
+            .with_color(
+                EditorColorSettings::new(1.5, 1.0, 1.0, 1.0, 1.0, 0.0, 1.0, 1.0, 1.0)
+                    .expect("non-default brightness should be valid"),
+            )
+            .expect("non-default editor settings should be valid");
+        sender
+            .apply_editor_settings(settings, fixture.clone())
+            .expect("settings for the active source should apply");
+        assert!(recovery.simulate_device_loss());
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let restored = loop {
+            let state = recovery
+                .inspect_state()
+                .expect("the recovery worker should answer state probes");
+            if state.presenter_ready {
+                break state;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the target-local D3D recovery should complete within five seconds"
+            );
+            std::thread::sleep(Duration::from_millis(25));
+        };
+
+        assert_eq!(restored.window_handle, Some(original_window_handle));
+        assert!(restored.image_cached);
+        assert!(!restored.video_frame_cached);
+        assert_eq!(restored.active_source_path, Some(fixture.clone()));
+        assert_eq!(restored.settings_source_path, Some(fixture));
+        assert_eq!(restored.settings_brightness, Some(1.5));
+        assert!(recovery.stop());
+    }
+
+    #[test]
+    fn device_recreation_restores_last_video_frame_and_same_child_window() {
+        let host = discover_desktop_host().expect("an interactive Windows shell is required");
+        let window = host
+            .attach_wallpaper_window()
+            .expect("the wallpaper child should attach to the desktop host");
+        let original_window_handle = window.raw_handle();
+        let device = D3d11Device::create_hardware().expect("hardware D3D11 is required");
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("crates")
+            .join("media")
+            .join("tests")
+            .join("fixtures")
+            .join("short-h264.mp4");
+        let mut video = VideoSource::open(&fixture).expect("video fixture should open");
+        let frame = loop {
+            match video.read_next().expect("video frame should decode") {
+                VideoReadEvent::Frame(frame) => break frame,
+                VideoReadEvent::StreamTick { .. } => continue,
+                VideoReadEvent::EndOfStream => panic!("video fixture should contain a frame"),
+            }
+        };
+        let mut recovery =
+            DesktopRecoveryWorker::start(window, device).expect("the recovery worker should start");
+        let sender = recovery.frame_sender();
+        sender
+            .present_video_frame(frame, fixture.clone())
+            .expect("the recovery worker should present the video frame");
+
+        let settings = WallpaperEditorSettings::default_for(2)
+            .expect("default editor settings should be valid")
+            .with_color(
+                EditorColorSettings::new(1.5, 1.0, 1.0, 1.0, 1.0, 0.0, 1.0, 1.0, 1.0)
+                    .expect("non-default brightness should be valid"),
+            )
+            .expect("non-default editor settings should be valid");
+        sender
+            .apply_editor_settings(settings, fixture.clone())
+            .expect("settings for the active video should apply");
+        assert!(recovery.simulate_device_loss());
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let restored = loop {
+            let state = recovery
+                .inspect_state()
+                .expect("the recovery worker should answer state probes");
+            if state.presenter_ready {
+                break state;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the target-local D3D recovery should complete within five seconds"
+            );
+            std::thread::sleep(Duration::from_millis(25));
+        };
+
+        assert_eq!(restored.window_handle, Some(original_window_handle));
+        assert!(!restored.image_cached);
+        assert!(restored.video_frame_cached);
+        assert_eq!(restored.active_source_path, Some(fixture.clone()));
+        assert_eq!(restored.settings_source_path, Some(fixture));
+        assert_eq!(restored.settings_brightness, Some(1.5));
+        assert!(recovery.stop());
+    }
+
+    #[test]
+    fn device_recovery_defers_presenter_recreation_while_rendering_is_paused() {
+        let host = discover_desktop_host().expect("an interactive Windows shell is required");
+        let window = host
+            .attach_wallpaper_window()
+            .expect("the wallpaper child should attach to the desktop host");
+        let original_window_handle = window.raw_handle();
+        let device = D3d11Device::create_hardware().expect("hardware D3D11 is required");
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("crates")
+            .join("media")
+            .join("tests")
+            .join("fixtures")
+            .join("pixels.png");
+        let image = decode_image(&fixture).expect("fixture should decode");
+        let mut recovery =
+            DesktopRecoveryWorker::start(window, device).expect("the recovery worker should start");
+        let sender = recovery.frame_sender();
+        sender
+            .present_image(image, fixture.clone())
+            .expect("the recovery worker should present the image");
+        assert!(sender.set_rendering_paused(true));
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        loop {
+            let state = recovery
+                .inspect_state()
+                .expect("the recovery worker should answer state probes");
+            if state.rendering_paused {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the rendering pause command should be processed"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        assert!(recovery.simulate_device_loss());
+        let recovered_while_paused = loop {
+            let state = recovery
+                .inspect_state()
+                .expect("the recovery worker should answer state probes");
+            if !state.device_recovery_pending {
+                break state;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the replacement device should be created within two seconds"
+            );
+            std::thread::sleep(Duration::from_millis(25));
+        };
+        assert!(recovered_while_paused.rendering_paused);
+        assert!(!recovered_while_paused.presenter_ready);
+        assert!(recovered_while_paused.image_cached);
+        assert_eq!(
+            recovered_while_paused.window_handle,
+            Some(original_window_handle)
+        );
+
+        assert!(sender.set_rendering_paused(false));
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        loop {
+            let state = recovery
+                .inspect_state()
+                .expect("the recovery worker should answer state probes");
+            if state.presenter_ready {
+                assert!(!state.rendering_paused);
+                assert_eq!(state.window_handle, Some(original_window_handle));
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the cached image should be presented after rendering resumes"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
         assert!(recovery.stop());
     }
 }

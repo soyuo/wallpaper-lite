@@ -19,6 +19,7 @@ use wallpaper_media::{
     DecodedVideoFrame, MediaError, PlaybackScheduler, PlaybackState, VideoFpsLimit, VideoMetadata,
     VideoPlaybackSpeed, VideoReadEvent, VideoSource,
 };
+use wallpaper_renderer::RendererError;
 use windows::Win32::Graphics::Direct3D11::ID3D11Device;
 
 use crate::independent_displays::DisplayRefreshRequest;
@@ -1246,16 +1247,32 @@ impl PlaybackController {
         ResponseResult::PlaybackSettingsApplied
     }
 
-    fn present_video_frame(
-        &self,
-        frame: DecodedVideoFrame,
-    ) -> Result<(), wallpaper_renderer::RendererError> {
+    fn present_video_frame(&self, frame: DecodedVideoFrame) -> Result<(), RendererError> {
         let source_path = self
             .source
             .as_ref()
             .map(|source| source.source_path.clone())
             .ok_or(wallpaper_renderer::RendererError::WindowUnavailable)?;
         self.frame_sender.present_video_frame(frame, source_path)
+    }
+
+    fn handle_video_presentation_error(&mut self, error: RendererError) -> bool {
+        if error.is_device_lost() {
+            tracing::warn!(
+                component = "renderer",
+                event = "video_frame_waiting_for_device_recovery",
+                error_code = error.to_app_error().code.as_str(),
+                diagnostic = %error.diagnostic_summary(),
+                "Video playback is retained while the target graphics device recovers"
+            );
+            false
+        } else {
+            self.fail_playback(
+                "video_frame_presentation_failed",
+                PlaybackCommandErrorCode::PlaybackFailed,
+            );
+            true
+        }
     }
 
     fn tick(&mut self) {
@@ -1302,14 +1319,12 @@ impl PlaybackController {
                 paused_frame = Some(message.frame);
             }
         };
-        if let Some(frame) = paused_frame
-            && self.present_video_frame(frame).is_err()
-        {
-            self.fail_playback(
-                "video_frame_presentation_failed",
-                PlaybackCommandErrorCode::PlaybackFailed,
-            );
-            return;
+        if let Some(frame) = paused_frame {
+            if let Err(error) = self.present_video_frame(frame)
+                && self.handle_video_presentation_error(error)
+            {
+                return;
+            }
         }
 
         let mut decode_error = None;
@@ -1400,11 +1415,9 @@ impl PlaybackController {
         if self.scheduler.state() == PlaybackState::Playing {
             match self.scheduler.next_due_frame(self.now_100ns()) {
                 Ok(Some(frame)) => {
-                    if self.present_video_frame(frame).is_err() {
-                        self.fail_playback(
-                            "video_frame_presentation_failed",
-                            PlaybackCommandErrorCode::PlaybackFailed,
-                        );
+                    if let Err(error) = self.present_video_frame(frame)
+                        && self.handle_video_presentation_error(error)
+                    {
                         return;
                     }
                 }
@@ -1616,7 +1629,7 @@ mod tests {
         playback_command_channel,
     };
     use wallpaper_media::PlaybackState;
-    use wallpaper_renderer::D3d11Device;
+    use wallpaper_renderer::{D3d11Device, RendererError};
 
     #[test]
     fn overlapping_automatic_causes_resume_only_after_the_last_cause_clears() {
@@ -1763,6 +1776,75 @@ mod tests {
             recovery.stop(),
             "recovery resources should stop after playback"
         );
+    }
+
+    #[test]
+    fn transient_device_loss_does_not_discard_video_playback_state() {
+        let host = discover_desktop_host().expect("an interactive Windows shell is required");
+        let window = host
+            .attach_wallpaper_window()
+            .expect("the wallpaper child should attach to the desktop host");
+        let device = D3d11Device::create_hardware().expect("hardware D3D11 is required");
+        let media_device = device.device().clone();
+        let mut recovery =
+            DesktopRecoveryWorker::start(window, device).expect("the recovery worker should start");
+        let (event_sender, _event_receiver) = tokio::sync::watch::channel(PlaybackStateEvent {
+            sequence: 0,
+            wallpaper_id: None,
+            state: IpcPlaybackState::Stopped,
+            media_time_100ns: 0,
+            duration_100ns: None,
+            frame_rate_numerator: None,
+            frame_rate_denominator: None,
+            audio_available: false,
+            audio_effective_muted: false,
+            speed_percent: 100,
+            fps_limit: 60,
+            loading_video: false,
+            last_error: None,
+        });
+        let mut controller =
+            PlaybackController::new(media_device.clone(), recovery.frame_sender(), event_sender);
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../crates/media/tests/fixtures/short-h264.mp4");
+        let mut source = VideoSourceWorker::start(path, Some(media_device))
+            .expect("the test video source should start");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            if source
+                .poll_open()
+                .expect("test video source should open")
+                .is_some()
+            {
+                break;
+            }
+            assert!(Instant::now() < deadline, "video source open timed out");
+            thread::sleep(Duration::from_millis(10));
+        }
+        source.play().expect("test video source should play");
+        controller.source = Some(source);
+        controller
+            .scheduler
+            .play(controller.now_100ns())
+            .expect("playback clock should start");
+
+        assert!(
+            !controller.handle_video_presentation_error(RendererError::Present {
+                hresult: 0x887A0005_u32 as i32,
+            })
+        );
+        assert!(controller.source.is_some());
+        assert_eq!(controller.scheduler.state(), PlaybackState::Playing);
+        assert_eq!(controller.last_error, None);
+
+        assert!(controller.handle_video_presentation_error(RendererError::Present { hresult: -1 }));
+        assert!(controller.source.is_none());
+        assert_eq!(controller.scheduler.state(), PlaybackState::Stopped);
+        assert_eq!(
+            controller.last_error,
+            Some(PlaybackCommandErrorCode::PlaybackFailed)
+        );
+        assert!(recovery.stop());
     }
 
     #[test]
