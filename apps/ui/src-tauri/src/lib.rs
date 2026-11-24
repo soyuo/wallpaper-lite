@@ -200,7 +200,7 @@ pub fn run() -> process::ExitCode {
                 // The plugin only writes its file when the app exits, and this app usually
                 // ends by being killed or by a tray Quit. Save now, while the size is current.
                 let _ = tauri_plugin_window_state::AppHandleExt::save_window_state(
-                    window.app_handle(),
+                    tauri::Manager::app_handle(window),
                     tauri_plugin_window_state::StateFlags::all(),
                 );
                 let _ = window.hide();
