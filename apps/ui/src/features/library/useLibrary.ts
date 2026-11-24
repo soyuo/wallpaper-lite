@@ -1,3 +1,4 @@
+import { uniqueDisplayName } from "./labels";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 
@@ -163,7 +164,7 @@ export function useLibrary() {
       await hostAdapter.renameLibraryEntry(entry.id, renameDraft);
       setRenamingId(null);
       setRenameDraft("");
-      setLibraryMessage(`Renamed to "${renameDraft.trim()}".`);
+      setLibraryMessage(`Renamed to "${uniqueDisplayName(library, entry.id, renameDraft)}".`);
       await refreshLibrary();
     } catch {
       setLibraryMessage("Could not rename this entry. Use a name of 1 to 256 characters.");

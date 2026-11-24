@@ -30,3 +30,14 @@ export function availabilityLabel(value: Availability): string {
   return "Available";
 }
 
+/** Mirrors the host rule: another entry with the same name (any case) gets " 2", " 3", ... appended. */
+export function uniqueDisplayName(entries: { id: number; displayName: string }[], id: number, draft: string): string {
+  const name = draft.trim();
+  const taken = (candidate: string) =>
+    entries.some((entry) => entry.id !== id && entry.displayName.toLowerCase() === candidate.toLowerCase());
+  if (!taken(name)) return name;
+  for (let number = 2; ; number += 1) {
+    const candidate = `${name} ${number}`;
+    if (!taken(candidate)) return candidate;
+  }
+}

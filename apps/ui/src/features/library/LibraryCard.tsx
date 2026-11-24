@@ -13,7 +13,7 @@ export interface LibraryCardProps {
   actionBusy: boolean;
   renaming: boolean;
   renameDraft: string;
-  nameTaken: boolean;
+  savedName: string;
   onRequestPreview(id: number): void;
   onLocate(entry: LibraryEntry): void;
   onRemove(entry: LibraryEntry): void;
@@ -36,7 +36,7 @@ export function LibraryCard({
   actionBusy,
   renaming,
   renameDraft,
-  nameTaken,
+  savedName,
   onRequestPreview,
   onLocate,
   onRemove,
@@ -116,8 +116,8 @@ export function LibraryCard({
             <span className="tile-cap-hint" role="status">
               {!renameDraft.trim() ? (
                 <><i aria-hidden="true">!</i>A name is required to save</>
-              ) : nameTaken ? (
-                <><i aria-hidden="true">!</i>Another item has this name. It will still be saved</>
+              ) : savedName !== renameDraft.trim() ? (
+                <><i aria-hidden="true">!</i>Will be saved as “{savedName}”</>
               ) : (
                 "Enter to save · Esc to cancel"
               )}

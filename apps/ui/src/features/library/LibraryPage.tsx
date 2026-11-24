@@ -1,4 +1,4 @@
-import { failureLabels, resultLabel } from "./labels";
+import { failureLabels, resultLabel, uniqueDisplayName } from "./labels";
 import { LibraryCard } from "./LibraryCard";
 import type { LibraryEntry } from "../../host-adapter";
 import type { LibraryState } from "./useLibrary";
@@ -144,7 +144,7 @@ export function LibraryPage({ hidden, state, onOpenEditor, onStartPlayback }: {
                 actionBusy={busyEntryId === entry.id}
                 renaming={renamingId === entry.id}
                 renameDraft={renameDraft}
-                nameTaken={renamingId === entry.id && library.some((other) => other.id !== entry.id && other.displayName.trim().toLowerCase() === renameDraft.trim().toLowerCase())}
+                savedName={renamingId === entry.id ? uniqueDisplayName(library, entry.id, renameDraft) : ""}
                 onRequestPreview={(id) => void loadPreview(id)}
                 onLocate={(item) => void locateEntry(item)}
                 onRemove={(item) => void removeEntry(item)}
