@@ -15,8 +15,8 @@
   gap: var(--space-4);
   padding: var(--space-1) var(--space-5);
   border-bottom: 1px solid var(--glass-border);
-  background: var(--glass-bg);
-  backdrop-filter: var(--glass-blur);
+  background: var(--topbar-bg);
+  backdrop-filter: blur(28px);
 }
 
 .app-brand {

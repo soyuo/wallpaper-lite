@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 
+import { Backdrop } from "./components/Backdrop";
 import "./styles/tokens.css";
 import "./styles/base.css";
 import "./styles/shell.css";
@@ -144,6 +145,7 @@ function App() {
 
   return (
     <div className="app-shell">
+      <Backdrop />
       <AppTopBar hostState={hostState} hostStatus={hostStatus} checking={checkingHost} onCheck={checkHost} />
     <main className="app-main">
       <header className="app-header">
