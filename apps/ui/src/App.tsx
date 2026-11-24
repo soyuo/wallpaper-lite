@@ -14,12 +14,11 @@ import { EditorPanel } from "./features/editor/EditorPanel";
 import { useEditor } from "./features/editor/useEditor";
 import { LibraryPage } from "./features/library/LibraryPage";
 import { useLibrary } from "./features/library/useLibrary";
+import { SettingsPage } from "./features/settings/SettingsPage";
+import type { ThemeChoice } from "./features/settings/SettingsPage";
+import { useSettings } from "./features/settings/useSettings";
 
-type ThemeChoice = "dark" | "light" | "system";
-const THEME_LABELS: Record<ThemeChoice, string> = { dark: "Theme: Dark", light: "Theme: Light", system: "Theme: System" };
-const NEXT_THEME: Record<ThemeChoice, ThemeChoice> = { dark: "light", light: "system", system: "dark" };
-
-type AppPage = "library" | "editor" | "displays" | "playback" | "performance";
+type AppPage = "library" | "editor" | "displays" | "playback" | "performance" | "settings";
 
 const APP_PAGES: { id: AppPage; label: string }[] = [
   { id: "library", label: "Library" },
@@ -27,19 +26,18 @@ const APP_PAGES: { id: AppPage; label: string }[] = [
   { id: "displays", label: "Monitors" },
   { id: "playback", label: "Playback" },
   { id: "performance", label: "Performance" },
+  { id: "settings", label: "Settings" },
 ];
 
 function App() {
   const [checkingHost, setCheckingHost] = useState(false);
-  const [autostart, setAutostart] = useState<boolean | null>(null);
-  const [autostartBusy, setAutostartBusy] = useState(false);
-  const [autostartError, setAutostartError] = useState<string | null>(null);
   const [hostStatus, setHostStatus] = useState("Host connection has not been checked.");
   const displaysState = useDisplays();
   const { displaySnapshot } = displaysState;
   const performanceState = usePerformance(displaySnapshot);
   const playbackState = usePlayback();
   const libraryState = useLibrary();
+  const settingsState = useSettings();
   const { previews, setPreviews, setRecentIds } = libraryState;
   const editorState = useEditor({ previews, setPreviews, setRecentIds, onOpen: () => setPage("editor") });
   const [page, setPage] = useState<AppPage>("library");
@@ -78,34 +76,6 @@ function App() {
     return () => { cancelled = true; };
   }, []);
 
-  useEffect(() => {
-    let cancelled = false;
-    hostAdapter.getAutostart().then(
-      (enabled) => { if (!cancelled) setAutostart(enabled); },
-      (error: unknown) => {
-        if (cancelled) return;
-        // Leave the checkbox usable so the user can still try to set it.
-        setAutostart(false);
-        setAutostartError(error instanceof Error ? error.message : "Could not read the launch-at-login setting.");
-      },
-    );
-    return () => { cancelled = true; };
-  }, []);
-
-  async function changeAutostart(enabled: boolean) {
-    setAutostartBusy(true);
-    setAutostartError(null);
-    try {
-      await hostAdapter.setAutostart(enabled);
-      setAutostart(enabled);
-    } catch (error) {
-      // Keep the checkbox at the real registry state when the change is refused.
-      setAutostartError(error instanceof Error ? error.message : "Could not change the launch-at-login setting.");
-    } finally {
-      setAutostartBusy(false);
-    }
-  }
-
   async function checkHost() {
     setCheckingHost(true);
     setHostStatus("Checking host connection...");
@@ -133,21 +103,6 @@ function App() {
             </li>
           ))}
         </ul>
-        <div className="app-sidebar-footer">
-          <label className="app-autostart">
-            <input
-              type="checkbox"
-              checked={autostart ?? false}
-              disabled={autostart === null || autostartBusy}
-              onChange={(event) => void changeAutostart(event.target.checked)}
-            />
-            Launch at login
-          </label>
-          {autostartError && <p className="app-autostart-error" role="alert">{autostartError}</p>}
-          <button className="app-theme-toggle" onClick={() => setTheme(NEXT_THEME[theme])}>
-            {THEME_LABELS[theme]}
-          </button>
-        </div>
       </nav>
     <main className="app-shell">
       <header className="app-header">
@@ -164,6 +119,8 @@ function App() {
       </header>
 
       <PerformancePanels hidden={page !== "performance"} state={performanceState} />
+
+      <SettingsPage hidden={page !== "settings"} state={settingsState} theme={theme} onThemeChange={setTheme} />
 
       <DisplayPanel hidden={page !== "displays"} state={displaysState} />
 
