@@ -147,7 +147,7 @@ function App() {
   return (
     <div className="app-layout">
       <nav className="app-sidebar" aria-label="Main">
-        <p className="app-brand">wallpaper-lite</p>
+        <p className="app-brand">wallpaper Lite</p>
         <ul>
           {APP_PAGES.map((item) => (
             <li key={item.id}>

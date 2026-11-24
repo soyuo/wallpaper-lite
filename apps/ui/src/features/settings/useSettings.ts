@@ -110,7 +110,7 @@ export function useSettings(active: boolean): SettingsState {
     setBackupNotice(null);
     setBackupBusy(true);
     try {
-      const source = await open({ directory: true, multiple: false, title: "Choose a wallpaper-lite backup folder" });
+      const source = await open({ directory: true, multiple: false, title: "Choose a wallpaper Lite backup folder" });
       if (typeof source !== "string") { setBackupBusy(false); return; }
       if (!window.confirm("Restore settings from this backup? Your current settings are kept in the restore-previous folder, and the wallpaper host restarts.")) { setBackupBusy(false); return; }
       const summary = await hostAdapter.restoreSettingsBackup(source);

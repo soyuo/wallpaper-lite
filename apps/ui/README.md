@@ -1,4 +1,4 @@
-# wallpaper-lite UI
+# wallpaper Lite UI
 
 The desktop UI uses Tauri 2, React, TypeScript, and Vite. The React app lives in
 `src`; the Rust/Tauri backend lives in `src-tauri` and is a member of the root

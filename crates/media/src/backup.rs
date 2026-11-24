@@ -104,15 +104,15 @@ impl BackupError {
             }
             Self::InvalidBackup => AppError::new(
                 ErrorCode::InvalidBackup,
-                "The selected folder is not a valid wallpaper-lite backup.",
+                "The selected folder is not a valid wallpaper Lite backup.",
             ),
             Self::UnsupportedVersion => AppError::new(
                 ErrorCode::InvalidBackup,
-                "This backup was made by an incompatible version of wallpaper-lite.",
+                "This backup was made by an incompatible version of wallpaper Lite.",
             ),
             Self::InvalidSettings => AppError::new(
                 ErrorCode::InvalidBackup,
-                "The backup contains settings that wallpaper-lite cannot read.",
+                "The backup contains settings that wallpaper Lite cannot read.",
             ),
             Self::ApplyFailed => AppError::new(
                 ErrorCode::RestoreFailed,

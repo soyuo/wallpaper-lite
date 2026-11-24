@@ -7,7 +7,7 @@
 const STORAGE = "Check that the settings folder can be written to and the disk is not full, then try again.";
 const INVALID = "Review the values you entered, or reset them to the defaults, then try again.";
 const OUT_OF_STEP =
-  "The app and the wallpaper host are out of step. Quit from the tray and start wallpaper-lite again. If it keeps happening, reinstall the latest version.";
+  "The app and the wallpaper host are out of step. Quit from the tray and start wallpaper Lite again. If it keeps happening, reinstall the latest version.";
 
 export const ERROR_GUIDANCE = {
   host_unavailable: { next: "Make sure the wallpaper host is running, then try again.", retry: true },
@@ -18,19 +18,19 @@ export const ERROR_GUIDANCE = {
   malformed_response: { next: OUT_OF_STEP, retry: false },
   message_too_large: { next: OUT_OF_STEP, retry: false },
   protocol_version_mismatch: {
-    next: "The app and the wallpaper host are different versions. Quit from the tray and start wallpaper-lite again. If it keeps happening, reinstall the latest version.",
+    next: "The app and the wallpaper host are different versions. Quit from the tray and start wallpaper Lite again. If it keeps happening, reinstall the latest version.",
     retry: false,
   },
-  unsupported_platform: { next: "wallpaper-lite runs on Windows 10 and Windows 11 only.", retry: false },
-  transport_error: { next: "Try again. If it keeps failing, quit from the tray and start wallpaper-lite again.", retry: true },
+  unsupported_platform: { next: "wallpaper Lite runs on Windows 10 and Windows 11 only.", retry: false },
+  transport_error: { next: "Try again. If it keeps failing, quit from the tray and start wallpaper Lite again.", retry: true },
   host_launch_failed: {
-    next: "If wallpaper-host.exe is missing, reinstall wallpaper-lite. Otherwise open the log folder in Settings to see why it did not start.",
+    next: "If wallpaper-host.exe is missing, reinstall wallpaper Lite. Otherwise open the log folder in Settings to see why it did not start.",
     retry: true,
   },
   autostart_failed: { next: "Try again, or manage startup apps in Windows Settings.", retry: true },
   backup_failed: { next: "Choose a folder you can write to with enough free space, then try again.", retry: true },
   invalid_backup: {
-    next: "Choose a folder made by Create backup in a compatible version of wallpaper-lite.",
+    next: "Choose a folder made by Create backup in a compatible version of wallpaper Lite.",
     retry: false,
   },
   restore_failed: {
@@ -82,15 +82,15 @@ export const ERROR_GUIDANCE = {
     retry: false,
   },
   windows_initialization_failed: {
-    next: "Quit from the tray and start wallpaper-lite again. If it keeps failing, restart Windows.",
+    next: "Quit from the tray and start wallpaper Lite again. If it keeps failing, restart Windows.",
     retry: false,
   },
   graphics_initialization_failed: {
-    next: "Update your graphics driver, then start wallpaper-lite again.",
+    next: "Update your graphics driver, then start wallpaper Lite again.",
     retry: false,
   },
   graphics_device_lost: {
-    next: "Your graphics driver was reset. The wallpaper normally recovers by itself; if it stays blank, quit from the tray and start wallpaper-lite again.",
+    next: "Your graphics driver was reset. The wallpaper normally recovers by itself; if it stays blank, quit from the tray and start wallpaper Lite again.",
     retry: false,
   },
   image_decode_failed: {
@@ -106,7 +106,7 @@ export const ERROR_GUIDANCE = {
     retry: false,
   },
   desktop_host_unavailable: {
-    next: "Windows Explorer may have restarted. Wait a few seconds; if the wallpaper does not come back, quit from the tray and start wallpaper-lite again.",
+    next: "Windows Explorer may have restarted. Wait a few seconds; if the wallpaper does not come back, quit from the tray and start wallpaper Lite again.",
     retry: true,
   },
   internal: { next: "Try again. If it keeps happening, open the log folder in Settings.", retry: true },

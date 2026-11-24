@@ -1,4 +1,4 @@
-; Custom steps for the wallpaper-lite NSIS installer and uninstaller.
+; Custom steps for the wallpaper Lite NSIS installer and uninstaller.
 ; The wallpaper host runs apart from the app window, so it has to be stopped
 ; before files are replaced or removed.
 
