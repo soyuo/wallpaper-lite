@@ -6,7 +6,7 @@
 .DESCRIPTION
   Builds wallpaper-host.exe in release mode, stages it as the Tauri sidecar
   (installed next to the app as wallpaper-host.exe), then builds the UI and the
-  installer. The installer is written to target\release\bundle\nsis.
+  installer. The installer is written to target\x86_64-pc-windows-msvc\release\bundle\nsis.
 #>
 [CmdletBinding()]
 param()
@@ -40,8 +40,10 @@ try {
         Pop-Location
     }
 
-    $installer = Get-ChildItem (Join-Path $root "target\$triple\release\bundle\nsis") -Filter '*.exe' |
-        Sort-Object LastWriteTime -Descending | Select-Object -First 1
+    $version = (Get-Content (Join-Path $root 'apps\ui\src-tauri\tauri.conf.json') -Raw | ConvertFrom-Json).version
+    $installerPath = Join-Path $root "target\$triple\release\bundle\nsis\wallpaper-lite_${version}_x64-setup.exe"
+    if (-not (Test-Path $installerPath)) { throw "Expected installer was not produced: $installerPath" }
+    $installer = Get-Item $installerPath
     Write-Host "Installer: $($installer.FullName)"
     Write-Host ("SHA-256:   " + (Get-FileHash $installer.FullName -Algorithm SHA256).Hash)
 } finally {

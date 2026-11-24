@@ -3,9 +3,10 @@
 ; before files are replaced or removed.
 
 !macro WALLPAPER_STOP_PROCESSES
-  nsExec::Exec 'taskkill /F /IM wallpaper-host.exe'
-  Pop $0
+  ; Stop the app first so it cannot start the host again, then the host.
   nsExec::Exec 'taskkill /F /IM wallpaper-ui.exe'
+  Pop $0
+  nsExec::Exec 'taskkill /F /IM wallpaper-host.exe'
   Pop $0
   Sleep 500
 !macroend
@@ -18,8 +19,11 @@
   !insertmacro WALLPAPER_STOP_PROCESSES
   ; Launch at login belongs to the app, so it goes with the app. Windows keeps
   ; the Task Manager on/off choice separately.
-  DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "wallpaper-lite"
-  DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run" "wallpaper-lite"
+  ; An upgrade runs the old uninstaller too and must keep launch at login.
+  ${If} $UpdateMode <> 1
+    DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "wallpaper-lite"
+    DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run" "wallpaper-lite"
+  ${EndIf}
 !macroend
 
 !macro NSIS_HOOK_POSTUNINSTALL

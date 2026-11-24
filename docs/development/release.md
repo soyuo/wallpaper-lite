@@ -49,11 +49,14 @@ release. Development builds are unchanged.
 
 `apps/ui/src-tauri/installer-hooks.nsh` adds these steps to Tauri's installer:
 
-- **Install and upgrade:** stops a running `wallpaper-host.exe` and
-  `wallpaper-ui.exe` so their files can be replaced.
+- **Install and upgrade:** stops a running `wallpaper-ui.exe` and then
+  `wallpaper-host.exe` so their files can be replaced. Both are stopped with
+  `taskkill /F` by image name, so a development build of either that is running
+  at the same time is stopped too, and the host gets no chance to run its own
+  shutdown path. Stopping it removes its wallpaper window.
 - **Uninstall:** stops both processes, removes the launch-at-login value
   (`HKCU\...\Run\wallpaper-lite`) and its Task Manager approval value, then
-  removes the app files. Stopping the host removes its wallpaper window, so
+  removes the app files. An upgrade keeps launch at login and user data. Stopping the host removes its wallpaper window, so
   Windows shows the normal desktop background again.
 - **Uninstall data choice:** the uninstaller's "Delete the application data"
   option removes `%APPDATA%\com.soyuo.wallpaper-lite` (Tauri's default) and, by
@@ -73,7 +76,7 @@ release. Development builds are unchanged.
 ## Verification status
 
 Only checks that were actually run are listed. Environment: Windows 11 Education
-10.0.26300, x64, release build from `scriptsuild-release.ps1`.
+10.0.26300, x64, release build from `scripts\build-release.ps1`.
 
 ### Run
 
@@ -87,6 +90,9 @@ Only checks that were actually run are listed. Environment: Windows 11 Education
   behind: no install folder, no uninstall entry, no `Run` value, no
   `StartupApproved` value, no Start menu shortcut. The existing
   `%APPDATA%\WallpaperLite` data was kept.
+- Installing the same installer over an existing install (the upgrade path, silent)
+  exited with code 0, kept a launch-at-login value that was present, and kept the
+  user data; the following uninstall then removed the value.
 - The generated NSIS script contains the sidecar installed as `wallpaper-host.exe`,
   its removal on uninstall, and the custom hooks.
 
@@ -97,7 +103,8 @@ Only checks that were actually run are listed. Environment: Windows 11 Education
 - Install and uninstall while `wallpaper-host.exe` and `wallpaper-ui.exe` are
   running, including that the desktop background returns after the host is stopped.
 - The interactive uninstaller's "Delete the application data" option removing
-  `%APPDATA%\WallpaperLite`, and an upgrade over an older installation keeping it.
+  `%APPDATA%\WallpaperLite`, and an upgrade over an older version (only a
+  same-version reinstall was run).
 - Launching the installed app, reboot with launch at login enabled, and the tray
   on the installed build.
 - The Korean installer language and the WebView2 bootstrapper download.
