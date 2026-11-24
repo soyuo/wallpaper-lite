@@ -217,6 +217,26 @@ the unchecked items are in comments on the issues for each feature (#134 to #137
 #145, #148, #153 and #155). Those issues are closed because their code is merged, so
 their comments are the record, not an open task.
 
+## Publishing a release with GitHub Actions
+
+`.github/workflows/release.yml` publishes `wallpaper-setup.exe` and `wallpaper-setup.exe.sha256`
+as a GitHub release.
+
+- **Trigger:** push a tag `vMAJOR.MINOR.PATCH` (a `-suffix` makes it a pre-release) on a commit that
+  is on `main`, or run the workflow by hand from `main` with the tag to create and a pre-release flag.
+- **Before building:** the tag must be of that form, the commit must be on `main`, and the tag's
+  version must equal `apps/ui/src-tauri/tauri.conf.json` and the workspace `Cargo.toml`.
+- **Checks:** Rust tests for the workspace without `wallpaper-renderer`, `wallpaper-host`,
+  `wallpaper-ui` and `wallpaper-setup`, and the UI `test:*` scripts. A failure stops the run and no
+  release is created. `cargo fmt --check` is not run because it currently fails on `main`.
+- **Build:** `scripts/build-setup.ps1` on `windows-latest` (`--locked`, `npm ci`). Only the
+  `release` job has `contents: write`; it publishes what the build job uploaded.
+- Actions are pinned to a version tag, not a commit SHA.
+
+What CI does not verify: that the installer installs, upgrades or uninstalls, anything drawn on
+screen, the renderer and host crates' tests (they need a GPU or desktop session), Windows 10 and
+several monitors. The exe is unsigned. The first run is recorded in issue #170.
+
 ## Custom setup program (`apps/installer`)
 
 `scripts/build-setup.ps1` builds `wallpaper-setup.exe`, a Tauri program with a glass-style
