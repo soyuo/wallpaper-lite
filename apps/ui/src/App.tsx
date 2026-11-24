@@ -9,6 +9,7 @@ import { APP_PAGES } from "./components/app-pages";
 import type { AppPage } from "./components/app-pages";
 import { AppDock } from "./components/AppDock";
 import { AppTopBar } from "./components/AppTopBar";
+import { FirstRun } from "./components/FirstRun";
 import type { HostState } from "./dashboard-view.mjs";
 import { hostAdapter } from "./host-adapter";
 import type { LibraryEntry } from "./host-adapter";
@@ -40,7 +41,8 @@ function App() {
   const playbackState = usePlayback();
   const libraryState = useLibrary();
   const [page, setPage] = useState<AppPage>("dashboard");
-  const settingsState = useSettings(page === "settings");
+  const [firstRunOpen, setFirstRunOpen] = useState(() => localStorage.getItem("wallpaper-lite.first-run-done") === null);
+  const settingsState = useSettings(page === "settings" || firstRunOpen);
   const { previews, setPreviews, setRecentIds } = libraryState;
   const editorState = useEditor({ previews, setPreviews, setRecentIds, onOpen: () => setPage("editor") });
   const [theme, setTheme] = useState<ThemeChoice>(() => {
@@ -175,6 +177,15 @@ function App() {
       />
       <LibraryPage hidden={page !== "library"} state={libraryState} onOpenEditor={openInEditor} onStartPlayback={(entry) => void playbackState.startPlayback(entry)} />
     </main>
+      {firstRunOpen && (
+        <FirstRun
+          library={libraryState}
+          settings={settingsState}
+          theme={theme}
+          onThemeChange={setTheme}
+          onFinish={() => { localStorage.setItem("wallpaper-lite.first-run-done", "1"); setFirstRunOpen(false); }}
+        />
+      )}
       <AppDock page={page} editorDirty={editorState.editorDirty} onNavigate={setPage} />
     </div>
   );
