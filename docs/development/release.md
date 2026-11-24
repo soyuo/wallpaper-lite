@@ -166,6 +166,27 @@ Only checks that were actually run are listed. Environment: Windows 11 Education
   had installed, the shortcut, the uninstall entry and the launch-at-login value. Not
   tested: an old install whose app or host was running at the time, and an old install
   made to a custom folder.
+- Installed app run (Windows 11 Education 10.0.26300, silent install to the default
+  folder, then `wallpaper-ui.exe` started from it; the screen was not captured, only
+  processes, window lists, logs and the control pipe were read):
+  - Starting the app started `wallpaper-host.exe` by itself; the control pipe
+    `\\.\pipe\wallpaper-lite` appeared and the main window title was `wallpaper Lite`.
+  - The host log recorded, in order, `startup`, `windows_initialized`,
+    `desktop_host_discovered` (`host_kind="progman"`), `d3d11_device_initialized`,
+    `wallpaper_window_attached`, `shell_lifecycle_monitor_started`,
+    `desktop_recovery_started` and `signal_monitor_started`.
+  - A second `wallpaper-host.exe` exited at once with code 3 and logged
+    `already_running`. A second `wallpaper-ui.exe` exited with code 0 and one
+    `wallpaper-ui.exe` stayed running.
+  - A `shutdown` request sent over the pipe was answered `shutting_down`; the host then
+    exited, the pipe disappeared and the log recorded `shutdown_requested`. Explorer kept
+    running.
+  - Stopping only the UI left the host running, as designed.
+  - Starting with `--autostart` left the main window hidden (`IsWindowVisible` false), created
+    the tray window (`tray_icon_app`) and started the host.
+  - Logs were written to `%LOCALAPPDATA%\kr.soyuo.wallpaper\logs` (`host.<date>.log`, `ui.log`).
+  - Afterwards the app was stopped, the silent uninstall exited with code 0 and left no
+    process, folder or launch-at-login value, and `%APPDATA%\WallpaperLite` was unchanged.
 - The generated NSIS script contains the sidecar installed as `wallpaper-host.exe`,
   its removal on uninstall, and the custom hooks.
 
@@ -173,14 +194,20 @@ Only checks that were actually run are listed. Environment: Windows 11 Education
 
 - A clean Windows 10 machine, and a clean Windows 11 machine without the
   development toolchain or WebView2 already present.
-- Install and uninstall while `wallpaper-host.exe` and `wallpaper-ui.exe` are
-  running, including that the desktop background returns after the host is stopped.
-- The interactive uninstaller's "Delete the application data" option removing
-  `%APPDATA%\WallpaperLite`, and an upgrade over an older version (only a
-  same-version reinstall was run).
-- Launching the installed app, reboot with launch at login enabled, and the tray
-  on the installed build.
+- What is seen on screen: the wallpaper behind the desktop icons, icon and taskbar input,
+  the tray icon and its menu, closing the window while the wallpaper keeps playing,
+  quitting from the tray, the Dashboard and Settings pages, and that the desktop
+  background looks restored after the host stops. Only the host's log and process state
+  were read.
+- Explorer being restarted while the host runs.
+- Reboot or sign-in with launch at login enabled.
+- Install and uninstall while `wallpaper-host.exe` and `wallpaper-ui.exe` are running.
+- The interactive uninstaller's "Delete the application data" option, and an upgrade over
+  an older version (only a same-version reinstall and a move from the old product name were
+  run).
 - The Korean installer language and the WebView2 bootstrapper download.
+- Several monitors, and video playback with real media on the installed build.
 
-These are tracked as unchecked items on issue #137 and must be run on real
-machines before a release.
+These are tracked as unchecked items on the issues listed in the pull requests (#6, #98,
+#134 to #137, #142 to #145, #148, #153 and #155) and must be run on real machines before a
+release.
