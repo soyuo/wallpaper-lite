@@ -58,7 +58,9 @@ entry of an existing install are still found: the app identifier
 the `wallpaper-lite` launch-at-login value, the pipe names, the executable names
 `wallpaper-ui.exe` and `wallpaper-host.exe`, and the repository and crate names.
 A copy installed under the earlier name `wallpaper-lite` is a different product to the
-installer, so it is not upgraded in place; remove it first.
+Tauri installer, so the installer hook removes it first (silently, keeping the user's
+data) and carries its launch-at-login choice over to the new install. See
+`installer-hooks.nsh`.
 
 ## What install, uninstall and upgrade do
 
@@ -122,12 +124,25 @@ Only checks that were actually run are listed. Environment: Windows 11 Education
   the installed `wallpaper-ui.exe` does too. `uninstall.exe` still shows the default
   NSIS icon. The install and uninstall ran silently with exit code 0 and removed the
   Start menu shortcut and the install folder.
-- Name check after the rename to wallpaper Lite: a silent install without `/D`
-  went to `%LOCALAPPDATA%\wallpaper Lite`, created the Start menu shortcut
+- Name check after the rename to wallpaper Lite. Commands, from the repository root:
+  `powershell -File scripts\build-release.ps1`, then
+  `& "wallpaper Lite_0.1.0_x64-setup.exe" /S` (no `/D`) and
+  `& "%LOCALAPPDATA%\wallpaper Lite\uninstall.exe" /S`. The install went to
+  `%LOCALAPPDATA%\wallpaper Lite`, created the Start menu shortcut
   `wallpaper Lite.lnk` and an uninstall entry whose display name is `wallpaper Lite`.
   A `wallpaper-lite` launch-at-login value set beforehand was removed by the silent
   uninstall, which also removed the folder, shortcut and uninstall entry and left the
   existing `%APPDATA%\WallpaperLite` data in place.
+- Moving from the old name. A build made before the rename was installed with its own
+  installer (`wallpaper-lite_0.1.0_x64-setup.exe /S`, which created the uninstall entry
+  `wallpaper-lite`), and a `wallpaper-lite` launch-at-login value was set. Running the
+  new installer with `/S` exited with code 0, removed the old uninstall entry, installed
+  `wallpaper Lite` with its shortcut, rewrote the launch-at-login value to
+  `"%LOCALAPPDATA%\wallpaper Lite\wallpaper-ui.exe" --autostart`, and kept the user
+  data (file count unchanged). Uninstalling the new build then removed everything it
+  had installed, the shortcut, the uninstall entry and the launch-at-login value. Not
+  tested: an old install whose app or host was running at the time, and an old install
+  made to a custom folder.
 - The generated NSIS script contains the sidecar installed as `wallpaper-host.exe`,
   its removal on uninstall, and the custom hooks.
 
