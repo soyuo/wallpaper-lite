@@ -469,3 +469,10 @@
 .display-dirty { grid-column: auto; margin-top: var(--space-3); }
 .display-tile { position: relative; }
 .display-tile-badge { position: absolute; top: var(--space-2); right: var(--space-2); min-height: 1.5rem; font-size: var(--font-size-sm); }
+
+/* Performance: per-monitor table */
+.performance-table-wrap { overflow-x: auto; }
+.performance-table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.performance-table th, .performance-table td { padding: var(--space-2) var(--space-3); text-align: left; white-space: nowrap; border-bottom: 1px solid var(--color-border); }
+.performance-table thead th { font-size: var(--font-size-sm); font-weight: 600; opacity: 0.75; }
+.performance-table tbody th small { display: block; font-weight: 400; opacity: 0.7; }

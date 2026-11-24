@@ -98,31 +98,36 @@ export function PerformancePage({ hidden, state }: { hidden: boolean; state: Per
               ) : <p>Active policy status is unavailable.</p>}
             </div>
             <div className="performance-target-list" aria-label="Per-display playback metrics">
+              {performanceRows.length > 0 ? (
+                <div className="performance-table-wrap">
+                  <table className="performance-table">
+                    <thead>
+                      <tr><th scope="col">Target</th><th scope="col">Source FPS</th><th scope="col">Rendered FPS</th><th scope="col">Frame interval</th><th scope="col">Dropped</th><th scope="col">Decode</th><th scope="col">Present</th><th scope="col">Status</th></tr>
+                    </thead>
+                    <tbody>
+                      {performanceRows.map((row) => (
+                        <tr key={row.id}>
+                          <th scope="row">{row.label}{row.metrics ? <small>{row.metrics.mediaKind}</small> : null}</th>
+                          <td>{row.metrics ? formatPerformanceValue(row.metrics.sourceFps, "FPS") : "—"}</td>
+                          <td>{row.metrics ? formatPerformanceValue(row.metrics.renderedFps, "FPS") : "—"}</td>
+                          <td>{row.metrics ? formatPerformanceValue(row.metrics.frameIntervalMs, "ms") : "—"}</td>
+                          <td>{row.metrics ? row.metrics.droppedFramesTotal.toLocaleString() : "—"}</td>
+                          <td>{row.metrics ? formatPerformanceValue(row.metrics.decodeLatencyMs, "ms") : "—"}</td>
+                          <td>{row.metrics ? formatPerformanceValue(row.metrics.presentLatencyMs, "ms") : "—"}</td>
+                          <td><span className="chip" data-state={row.status === "available" ? "connected" : "disconnected"}><span className="dot" />{row.status === "available" ? "Connected" : row.status === "failed" ? "Target error" : row.status === "disconnected" ? "Disconnected" : row.status === "metrics_unavailable" ? "Metrics unavailable" : "Unmapped target"}</span></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : <p>No display targets are currently registered.</p>}
               {performanceRows.map((row) => (
-                <article className="performance-target-card" key={row.id}>
-                  <div className="performance-target-heading">
-                    <h3>{row.label}</h3>
-                    <span>{row.status === "available" ? "Connected" : row.status === "failed" ? "Target error" : row.status === "disconnected" ? "Disconnected" : row.status === "metrics_unavailable" ? "Metrics unavailable" : "Unmapped target"}</span>
-                  </div>
-                  {row.status === "failed" && <p className="performance-dashboard-warning" role="alert">This target reported an error{row.failureStage ? ` during ${row.failureStage}` : ""}. Other display metrics remain available.</p>}
-                  {row.status === "disconnected" && <p>Saved assignment is waiting for this display to reconnect. Any shown counters are the last host sample for this target.</p>}
-                  {row.status === "metrics_unavailable" && <p>No host metrics are currently registered for this connected display.</p>}
-                  {row.metrics ? (
-                    <>
-                      <p>Media: <strong>{row.metrics.mediaKind}</strong></p>
-                      <dl>
-                        <div><dt>Source FPS</dt><dd>{formatPerformanceValue(row.metrics.sourceFps, "FPS")}</dd></div>
-                        <div><dt>Rendered FPS</dt><dd>{formatPerformanceValue(row.metrics.renderedFps, "FPS")}</dd></div>
-                        <div><dt>Frame interval</dt><dd>{formatPerformanceValue(row.metrics.frameIntervalMs, "ms")}</dd></div>
-                        <div><dt>Dropped frames</dt><dd>{row.metrics.droppedFramesTotal.toLocaleString()}</dd></div>
-                        <div><dt>Decode latency</dt><dd>{formatPerformanceValue(row.metrics.decodeLatencyMs, "ms")}</dd></div>
-                        <div><dt>Present latency</dt><dd>{formatPerformanceValue(row.metrics.presentLatencyMs, "ms")}</dd></div>
-                      </dl>
-                    </>
-                  ) : row.status !== "disconnected" && row.status !== "metrics_unavailable" && <p>No metric sample is available for this target.</p>}
-                </article>
+                <div key={row.id}>
+                  {row.status === "failed" && <p className="performance-dashboard-warning" role="alert">{row.label} reported an error{row.failureStage ? ` during ${row.failureStage}` : ""}. Other display metrics remain available.</p>}
+                  {row.status === "disconnected" && <p>{row.label}: the saved assignment is waiting for this display to reconnect. Any shown counters are the last host sample for this target.</p>}
+                  {row.status === "metrics_unavailable" && <p>{row.label}: no host metrics are currently registered for this connected display.</p>}
+                </div>
               ))}
-              {performanceRows.length === 0 && <p>No display targets are currently registered.</p>}
             </div>
             <p className="performance-sample-time">Host sample: {new Date(performanceMetrics.sampledAtUnixMs).toLocaleTimeString()}</p>
           </>
