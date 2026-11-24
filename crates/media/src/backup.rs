@@ -26,6 +26,8 @@ pub const PREVIOUS_SETTINGS_DIRECTORY: &str = "restore-previous";
 
 const MANIFEST_FILE: &str = "backup.json";
 const STAGING_DIRECTORY: &str = "restore-staging";
+const NEXT_PREVIOUS_DIRECTORY: &str = "restore-previous-new";
+const UNRESTORED_DIRECTORY: &str = "restore-previous-unrestored";
 const BACKUP_FOLDER_PREFIX: &str = "wallpaper-lite-backup-";
 const TOP_LEVEL_FILES: [&str; 4] = [
     "library.json",
@@ -71,6 +73,8 @@ pub struct RestoreOutcome {
 pub enum BackupError {
     InvalidDestination,
     NothingToBackUp,
+    /// A settings file is larger than restore accepts, so the backup could never be restored.
+    FileTooLarge,
     WriteFailed,
     InvalidBackup,
     UnsupportedVersion,
@@ -90,6 +94,10 @@ impl BackupError {
             Self::NothingToBackUp => AppError::new(
                 ErrorCode::BackupFailed,
                 "There are no saved settings to back up yet.",
+            ),
+            Self::FileTooLarge => AppError::new(
+                ErrorCode::BackupFailed,
+                "A settings file is too large to back up.",
             ),
             Self::WriteFailed => {
                 AppError::new(ErrorCode::BackupFailed, "The backup could not be written.")
@@ -112,7 +120,7 @@ impl BackupError {
             ),
             Self::RollbackFailed => AppError::new(
                 ErrorCode::RestoreFailed,
-                "The restore failed and some previous settings could not be put back. They are kept in the restore-previous folder.",
+                "The restore failed and some previous settings could not be put back. They are kept in the restore-previous-unrestored folder.",
             ),
         }
     }
@@ -133,10 +141,30 @@ fn is_allowed_path(relative: &str) -> bool {
     match parts.as_slice() {
         [file] => TOP_LEVEL_FILES.contains(file),
         [directory, file] => {
-            SETTINGS_DIRECTORIES.contains(directory) && file.ends_with(".json") && file.len() > 5
+            SETTINGS_DIRECTORIES.contains(directory) && is_settings_file_name(file)
         }
         _ => false,
     }
+}
+
+/// `<name>.json` where the name is plain ASCII and not a Windows device name, so a
+/// backup cannot make restore open `nul` or `con` instead of a file.
+fn is_settings_file_name(file: &str) -> bool {
+    let Some(stem) = file.strip_suffix(".json") else {
+        return false;
+    };
+    let plain = !stem.is_empty()
+        && stem
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-');
+    let upper = stem.to_ascii_uppercase();
+    let device = matches!(upper.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || ["COM", "LPT"].iter().any(|prefix| {
+            upper
+                .strip_prefix(prefix)
+                .is_some_and(|number| matches!(number.as_bytes(), [b'1'..=b'9']))
+        });
+    plain && !device
 }
 
 fn native_path(root: &Path, relative: &str) -> PathBuf {
@@ -175,6 +203,19 @@ fn current_settings(data_directory: &Path) -> Result<Vec<String>, BackupError> {
         return Err(BackupError::WriteFailed);
     }
     Ok(files)
+}
+
+/// Refuse to make a backup that `validate_backup` would reject.
+fn check_sizes(data_directory: &Path, files: &[String]) -> Result<(), BackupError> {
+    for relative in files {
+        let length = fs::metadata(native_path(data_directory, relative))
+            .map_err(|_| BackupError::WriteFailed)?
+            .len();
+        if length > MAX_FILE_BYTES {
+            return Err(BackupError::FileTooLarge);
+        }
+    }
+    Ok(())
 }
 
 fn copy_file(from: &Path, to: &Path) -> io::Result<u64> {
@@ -225,6 +266,7 @@ pub fn create_backup(
     if files.is_empty() {
         return Err(BackupError::NothingToBackUp);
     }
+    check_sizes(data_directory, &files)?;
 
     let label = format!("{BACKUP_FOLDER_PREFIX}{}", timestamp_label(now_unix_secs));
     let mut folder = destination.join(&label);
@@ -297,6 +339,14 @@ pub fn validate_backup(source: &Path) -> Result<BackupManifest, BackupError> {
             return Err(BackupError::InvalidBackup);
         }
         let path = native_path(source, &entry.path);
+        // A linked folder would let a backup read files from outside itself.
+        if let Some(parent) = path.parent().filter(|parent| *parent != source) {
+            let parent_metadata =
+                fs::symlink_metadata(parent).map_err(|_| BackupError::InvalidBackup)?;
+            if !parent_metadata.is_dir() || parent_metadata.file_type().is_symlink() {
+                return Err(BackupError::InvalidBackup);
+            }
+        }
         let metadata = fs::symlink_metadata(&path).map_err(|_| BackupError::InvalidBackup)?;
         if !metadata.is_file() || metadata.len() != entry.bytes || entry.bytes > MAX_FILE_BYTES {
             return Err(BackupError::InvalidBackup);
@@ -313,11 +363,29 @@ pub fn restore_backup(data_directory: &Path, source: &Path) -> Result<RestoreOut
     let manifest = validate_backup(source)?;
     let staging = data_directory.join(STAGING_DIRECTORY);
     let previous = data_directory.join(PREVIOUS_SETTINGS_DIRECTORY);
+    let next_previous = data_directory.join(NEXT_PREVIOUS_DIRECTORY);
     let _ = fs::remove_dir_all(&staging);
+    let _ = fs::remove_dir_all(&next_previous);
 
-    let outcome = restore_from(&manifest, data_directory, source, &staging, &previous);
+    let outcome = restore_from(&manifest, data_directory, source, &staging, &next_previous);
     let _ = fs::remove_dir_all(&staging);
-    outcome
+    match outcome {
+        Ok(outcome) => {
+            // The new safety copy replaces the old one only now that the restore worked.
+            let _ = fs::remove_dir_all(&previous);
+            fs::rename(&next_previous, &previous).map_err(|_| BackupError::ApplyFailed)?;
+            Ok(outcome)
+        }
+        Err(BackupError::RollbackFailed) => {
+            // Keep the older generation and leave the new copy where the error says.
+            let _ = fs::rename(&next_previous, data_directory.join(UNRESTORED_DIRECTORY));
+            Err(BackupError::RollbackFailed)
+        }
+        Err(error) => {
+            let _ = fs::remove_dir_all(&next_previous);
+            Err(error)
+        }
+    }
 }
 
 fn restore_from(
@@ -336,7 +404,6 @@ fn restore_from(
     }
     validate_typed_settings(staging)?;
 
-    let _ = fs::remove_dir_all(previous);
     fs::create_dir_all(previous).map_err(|_| BackupError::ApplyFailed)?;
     let existing = current_settings(data_directory).map_err(|_| BackupError::ApplyFailed)?;
     let mut moved_away: Vec<&str> = Vec::new();
@@ -494,6 +561,12 @@ mod tests {
             "editor-presets/a.txt",
             "editor-presets/.json",
             "editor-presets/sub/a.json",
+            "editor-presets/nul.json",
+            "editor-presets/CON.json",
+            "playback-settings/com1.json",
+            "playback-settings/a b.json",
+            "playback-settings/a.json ",
+            "playback-settings/\u{00e9}.json",
             "editor-presets\\a.json",
             "restore-previous/library.json",
         ] {
@@ -554,6 +627,47 @@ mod tests {
         );
         assert!(!data.join("restore-staging").exists());
         assert_eq!(read(&data, "notes.txt").as_deref(), Some("not a setting"));
+    }
+
+    #[test]
+    fn a_settings_file_too_large_to_restore_is_refused_at_backup_time() {
+        let scratch = Scratch::new();
+        let data = scratch.dir("data");
+        let destination = scratch.dir("backups");
+        write(&data, "library.json", "{}");
+        let padding = "x".repeat(super::MAX_FILE_BYTES as usize + 1);
+        write(&data, "recent-wallpapers.json", &padding);
+        assert_eq!(
+            create_backup(&data, &destination, "1", 1).unwrap_err(),
+            BackupError::FileTooLarge
+        );
+        assert_eq!(fs::read_dir(&destination).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn each_restore_replaces_the_previous_copy_with_the_settings_it_displaced() {
+        let scratch = Scratch::new();
+        let (data, folder) = made_backup(&scratch);
+        write(&data, "library.json", r#"{"generation":"first"}"#);
+        restore_backup(&data, &folder).unwrap();
+        assert!(
+            read(&data, "restore-previous/library.json")
+                .unwrap()
+                .contains("first")
+        );
+
+        write(&data, "library.json", &valid_library());
+        write(
+            &data,
+            "playback-settings/3.json",
+            r#"{"generation":"second"}"#,
+        );
+        restore_backup(&data, &folder).unwrap();
+        assert_eq!(
+            read(&data, "restore-previous/playback-settings/3.json").as_deref(),
+            Some(r#"{"generation":"second"}"#)
+        );
+        assert!(!data.join("restore-previous-new").exists());
     }
 
     #[test]

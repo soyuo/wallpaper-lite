@@ -30,31 +30,43 @@ Before anything is replaced, restore checks that:
 
 1. `backup.json` parses and its schema version is supported.
 2. Every listed path is on the allow-list above. Paths with `..`, drive letters,
-   backslashes, absolute paths and unknown names are rejected.
+   backslashes, absolute paths and unknown names are rejected, and so are file
+   names that are not plain ASCII letters, digits, `_` or `-`, or that are Windows
+   device names such as `nul` and `con`. A folder inside the backup that is a link
+   is rejected.
 3. Each file exists as a regular file, is at most 8 MiB, matches its recorded size
-   and is valid JSON.
+   and is valid JSON. Backup applies the same size limit, so it refuses to create a
+   backup that restore would reject.
 4. The staged `library.json`, `display-profiles.json` and `performance-policy.json`
    load through their real stores. The other files are checked only as JSON.
 
 ## What restore does, and does not guarantee
 
+The UI backend first asks the wallpaper host to shut down, so the host cannot write
+its old in-memory settings over the restored files. If the host cannot be stopped,
+nothing is changed. Then:
+
 1. Copies the backup to `restore-staging` inside the settings folder.
-2. Replaces `restore-previous` with the current settings files, moved there.
+2. Moves the current settings files into `restore-previous-new`.
 3. Moves the staged files into place.
-4. Removes `restore-staging`.
+4. On success, replaces `restore-previous` with `restore-previous-new` and removes
+   `restore-staging`.
+
+The host is started again afterwards, whether or not the restore worked, so it reads
+the restored display profiles and performance policy from disk.
 
 Settings that are not in the backup are removed from the active folder but remain in
-`restore-previous` until the next restore replaces it.
+`restore-previous` until the next restore replaces it. The older `restore-previous`
+is kept until a restore has succeeded.
 
-If step 2 or 3 fails, restore moves the previous files back and reports
-`restore_failed`; if that also fails, the error says the previous settings are kept
-in `restore-previous`.
+If step 2 or 3 fails, restore moves the files back and reports `restore_failed`. If
+that also fails, the displaced settings stay in `restore-previous-unrestored` and the
+error says so.
 
 Restore is **not atomic** and keeps no history: a crash or power loss between steps 2
-and 3 can leave the active folder incomplete, with the previous settings in
-`restore-previous`. Only one previous generation is kept. Writers other than the
-library (for example editor or playback settings saved at the same moment) are not
-blocked during a restore.
+and 3 can leave the active folder incomplete, with the displaced settings in
+`restore-previous-new`. Only one previous generation is kept. Settings written by the
+UI itself at the same moment (for example editor or playback settings) are not
+blocked during a restore; only the library catalog is locked.
 
-After a successful restore the UI restarts the wallpaper host so it reads the
-restored display profiles and performance policy, then reloads its views.
+After a successful restore the UI reloads its views.

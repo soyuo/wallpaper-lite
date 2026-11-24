@@ -36,12 +36,17 @@ export function useSettings(active: boolean): SettingsState {
   const [error, setError] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [backupBusy, setBackupBusy] = useState(false);
-  const [backupNotice, setBackupNotice] = useState<string | null>(() => {
+  const [backupNotice, setBackupNotice] = useState<string | null>(null);
+
+  useEffect(() => {
     // A restore reloads the page so every view reads the restored files; show its result afterwards.
+    // Read it in an effect, and only overwrite with a real value, so a repeated effect run
+    // (React StrictMode) cannot discard it.
     const notice = sessionStorage.getItem(RESTORE_NOTICE_KEY);
+    if (notice === null) return;
     sessionStorage.removeItem(RESTORE_NOTICE_KEY);
-    return notice;
-  });
+    setBackupNotice(notice);
+  }, []);
 
   useEffect(() => {
     if (!active) return;
@@ -89,10 +94,10 @@ export function useSettings(active: boolean): SettingsState {
   const createBackup = useCallback(async () => {
     setError(null);
     setBackupNotice(null);
-    const destination = await open({ directory: true, multiple: false, title: "Choose where to save the backup" });
-    if (typeof destination !== "string") return;
     setBackupBusy(true);
     try {
+      const destination = await open({ directory: true, multiple: false, title: "Choose where to save the backup" });
+      if (typeof destination !== "string") return;
       const summary = await hostAdapter.createSettingsBackup(destination);
       setBackupNotice(`Backed up ${summary.fileCount} settings files to ${summary.folder}.`);
     } catch (reason) {
@@ -105,11 +110,11 @@ export function useSettings(active: boolean): SettingsState {
   const restoreBackup = useCallback(async () => {
     setError(null);
     setBackupNotice(null);
-    const source = await open({ directory: true, multiple: false, title: "Choose a wallpaper-lite backup folder" });
-    if (typeof source !== "string") return;
-    if (!window.confirm("Restore settings from this backup? Your current settings are kept in the restore-previous folder, and the wallpaper host restarts.")) return;
     setBackupBusy(true);
     try {
+      const source = await open({ directory: true, multiple: false, title: "Choose a wallpaper-lite backup folder" });
+      if (typeof source !== "string") { setBackupBusy(false); return; }
+      if (!window.confirm("Restore settings from this backup? Your current settings are kept in the restore-previous folder, and the wallpaper host restarts.")) { setBackupBusy(false); return; }
       const summary = await hostAdapter.restoreSettingsBackup(source);
       sessionStorage.setItem(RESTORE_NOTICE_KEY, summary.hostRestarted
         ? `Restored ${summary.fileCount} settings files.`

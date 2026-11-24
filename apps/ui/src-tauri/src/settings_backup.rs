@@ -84,19 +84,23 @@ pub async fn create_settings_backup(destination: String) -> Result<BackupSummary
 #[tauri::command]
 pub async fn restore_settings_backup(source: String) -> Result<RestoreSummary, AppError> {
     let data = data_directory()?;
-    let outcome = tauri::async_runtime::spawn_blocking(move || {
+
+    // Stop the host first so it cannot write its old in-memory settings over the
+    // restored files. If it cannot be stopped, change nothing.
+    host_process::shutdown_host().await?;
+
+    let restored = tauri::async_runtime::spawn_blocking(move || {
         let _catalog_lock = library::lock_catalog_mutation()?;
         restore_backup(&data, &PathBuf::from(source)).map_err(backup_error)
     })
     .await
-    .map_err(|_| busy())??;
+    .map_err(|_| busy())
+    .and_then(|result| result);
 
-    // The host reads display profiles and the performance policy when it starts, so
-    // restart it to pick up the restored files.
-    let host_restarted = match host_process::shutdown_host().await {
-        Ok(()) => host_process::ensure_host_running().await.is_ok(),
-        Err(_) => false,
-    };
+    // Start the host again whether or not the restore worked, so the wallpaper keeps
+    // playing and a successful restore is read from disk.
+    let host_restarted = host_process::ensure_host_running().await.is_ok();
+    let outcome = restored?;
     Ok(RestoreSummary {
         file_count: outcome.file_count,
         host_restarted,
