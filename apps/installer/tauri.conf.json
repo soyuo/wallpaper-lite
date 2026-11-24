@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "wallpaper Lite Setup",
+  "productName": "wallpaper Lite",
   "version": "0.1.0",
   "identifier": "kr.soyuo.wallpaper.setup",
   "build": { "frontendDist": "ui" },
@@ -9,7 +9,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "wallpaper Lite Setup",
+        "title": "wallpaper Lite",
         "decorations": false,
         "resizable": false,
         "center": true,

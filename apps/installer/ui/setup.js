@@ -45,7 +45,7 @@ function show(...nodes) { body.replaceChildren(...nodes); }
 function welcome() {
   show(
     progress(1),
-    el("div", { className: "hero" }, logo(), el("h1", {}, state.info.existingInstall ? "Update wallpaper Lite" : "wallpaper Lite Setup"),
+    el("div", { className: "hero" }, logo(), el("h1", {}, state.info.existingInstall ? "Update wallpaper Lite" : "wallpaper Lite"),
       el("p", {}, `Version ${state.info.version}`)),
     state.info.payloadReady ? "" : el("div", { className: "error", role: "alert" }, "This setup program was built without the app files, so it cannot install."),
     actions(button("Cancel", () => appWindow.close()), button("Next", path, true, !state.info.payloadReady)),
@@ -135,7 +135,7 @@ function finish() {
 }
 
 function confirmUninstall() {
-  document.getElementById("title").textContent = "wallpaper Lite Uninstall";
+  document.getElementById("title").textContent = "wallpaper Lite";
   show(
     el("h1", {}, "Remove wallpaper Lite?"),
     el("p", {}, `This removes the app from ${state.installDir}, its shortcuts and launch at sign-in.`),
