@@ -49,7 +49,7 @@ export function LibraryPage({ hidden, state, onOpenEditor, onStartPlayback }: {
       <section className="ui-panel import-panel" hidden={hidden} aria-labelledby="import-title">
         <h2 id="import-title">Import media</h2>
         <div className="import-actions">
-          <button disabled={importing} onClick={() => void importSelection(false)}>Choose files</button>
+          <button className="ui-button--primary" disabled={importing} onClick={() => void importSelection(false)}>Choose files</button>
           <button disabled={importing} onClick={() => void importSelection(true)}>Choose folder</button>
         </div>
         <p aria-live="polite" className="import-status" role="status">
@@ -102,20 +102,35 @@ export function LibraryPage({ hidden, state, onOpenEditor, onStartPlayback }: {
             placeholder="Search wallpapers"
           />
         </label>
-        <label className="library-favorites-filter">
-          <input
-            type="checkbox"
-            checked={favoritesOnly}
-            onChange={(event) => {
-              setFavoritesOnly(event.currentTarget.checked);
-              setVisibleCount(24);
-            }}
-          />
-          <span>Favorites only</span>
-        </label>
+        <div className="seg library-filter" role="group" aria-label="Library filter">
+          {([[false, "All"], [true, "Favorites"]] as const).map(([value, label]) => (
+            <button
+              key={label}
+              type="button"
+              aria-pressed={favoritesOnly === value}
+              className={favoritesOnly === value ? "on" : undefined}
+              onClick={() => { setFavoritesOnly(value); setVisibleCount(24); }}
+            >{label}</button>
+          ))}
+        </div>
         <p aria-live="polite" className="library-message" role="status">{libraryMessage}</p>
         {filteredLibrary.length === 0 ? (
-          <p className="library-empty">{libraryBusy ? "Loading library..." : "No matching wallpaper entries."}</p>
+          libraryBusy ? <p className="library-empty">Loading library...</p> : library.length === 0 ? (
+            <div className="state-card library-empty">
+              <p className="state-title">Your library is empty</p>
+              <p className="dashboard-detail">Add images or videos to start building your wallpaper collection. Your original files are never changed.</p>
+              <div className="import-actions">
+                <button className="ui-button--primary" disabled={importing} onClick={() => void importSelection(false)}>Choose files</button>
+                <button disabled={importing} onClick={() => void importSelection(true)}>Choose folder</button>
+              </div>
+            </div>
+          ) : (
+            <div className="state-card library-empty">
+              <p className="state-title">No matching wallpaper entries.</p>
+              <p className="dashboard-detail">Try a different name or clear the search and filter.</p>
+              <button onClick={() => { setLibrarySearch(""); setFavoritesOnly(false); }}>Clear filters</button>
+            </div>
+          )
         ) : (
           <ul className="library-list" aria-label="Wallpaper library entries">
             {visibleLibrary.map((entry) => (

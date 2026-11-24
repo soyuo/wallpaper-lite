@@ -224,3 +224,7 @@
 }
 
 .chip[data-state="paused"] { color: var(--color-warning-text); background: var(--color-warning-bg); }
+
+/* Library: filter and empty states */
+.library-filter { justify-self: start; }
+.state-card.library-empty { padding: var(--space-6) var(--space-5); border: 1px dashed var(--color-border-strong); border-radius: var(--radius-lg); background: var(--color-surface-subtle); }
