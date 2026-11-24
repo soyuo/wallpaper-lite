@@ -498,10 +498,6 @@ label {
   gap: var(--space-2);
 }
 
-.playback-mute input {
-  width: auto;
-}
-
 /* Performance */
 .performance-dashboard-warning {
   color: var(--color-warning-text);
