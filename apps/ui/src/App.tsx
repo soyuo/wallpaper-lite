@@ -3,7 +3,9 @@ import { useEffect, useState } from "react";
 import "./styles/tokens.css";
 import "./styles/base.css";
 import "./App.css";
+import type { HostState } from "./dashboard-view.mjs";
 import { hostAdapter } from "./host-adapter";
+import type { LibraryEntry } from "./host-adapter";
 import { PerformancePanels } from "./features/performance/PerformancePanels";
 import { usePerformance } from "./features/performance/usePerformance";
 import { DisplayPanel } from "./features/displays/DisplayPanel";
@@ -12,6 +14,7 @@ import { PlaybackPanelView } from "./features/playback/PlaybackPanelView";
 import { usePlayback } from "./features/playback/usePlayback";
 import { EditorPanel } from "./features/editor/EditorPanel";
 import { useEditor } from "./features/editor/useEditor";
+import { DashboardPage } from "./features/dashboard/DashboardPage";
 import { LibraryPage } from "./features/library/LibraryPage";
 import { useLibrary } from "./features/library/useLibrary";
 import { SettingsPage } from "./features/settings/SettingsPage";
@@ -20,9 +23,10 @@ import { useSettings } from "./features/settings/useSettings";
 import { describeError, isRetryable } from "./features/errors/error-message";
 import { ErrorNotice } from "./features/errors/ErrorNotice";
 
-type AppPage = "library" | "editor" | "displays" | "playback" | "performance" | "settings";
+type AppPage = "dashboard" | "library" | "editor" | "displays" | "playback" | "performance" | "settings";
 
 const APP_PAGES: { id: AppPage; label: string }[] = [
+  { id: "dashboard", label: "Dashboard" },
   { id: "library", label: "Library" },
   { id: "editor", label: "Editor" },
   { id: "displays", label: "Monitors" },
@@ -34,13 +38,14 @@ const APP_PAGES: { id: AppPage; label: string }[] = [
 function App() {
   const [checkingHost, setCheckingHost] = useState(false);
   const [hostStatus, setHostStatus] = useState("Host connection has not been checked.");
+  const [hostState, setHostState] = useState<HostState>("checking");
   const [hostProblem, setHostProblem] = useState<{ message: string; retryable: boolean } | null>(null);
   const displaysState = useDisplays();
   const { displaySnapshot } = displaysState;
   const performanceState = usePerformance(displaySnapshot);
   const playbackState = usePlayback();
   const libraryState = useLibrary();
-  const [page, setPage] = useState<AppPage>("library");
+  const [page, setPage] = useState<AppPage>("dashboard");
   const settingsState = useSettings(page === "settings");
   const { previews, setPreviews, setRecentIds } = libraryState;
   const editorState = useEditor({ previews, setPreviews, setRecentIds, onOpen: () => setPage("editor") });
@@ -68,11 +73,13 @@ function App() {
     : libraryState.library.find((entry) => entry.id === activeWallpaperId) ?? null;
 
   function hostConnected() {
+    setHostState("connected");
     setHostStatus("Wallpaper host connected.");
     setHostProblem(null);
   }
 
   function hostFailed(error: unknown, fallback: string) {
+    setHostState("disconnected");
     setHostStatus("Wallpaper host is not connected.");
     setHostProblem({ message: describeError(error, fallback), retryable: isRetryable(error) });
   }
@@ -89,6 +96,7 @@ function App() {
 
   async function checkHost() {
     setCheckingHost(true);
+    setHostState("checking");
     setHostStatus("Checking host connection...");
     try {
       await hostAdapter.ping();
@@ -100,8 +108,16 @@ function App() {
     }
   }
 
+  function openInEditor(entry: LibraryEntry) {
+    const { editorDirty, editorEntry } = editorState;
+    if (editorDirty && editorEntry && editorEntry.id !== entry.id
+      && !window.confirm(`Discard unapplied changes to ${editorEntry.displayName} and open ${entry.displayName}?`)) return;
+    void editorState.openEditorPreview(entry);
+  }
+
   async function retryHost() {
     setCheckingHost(true);
+    setHostState("checking");
     setHostStatus("Starting wallpaper host...");
     try {
       await hostAdapter.startHost();
@@ -157,12 +173,18 @@ function App() {
       <PlaybackPanelView hidden={page !== "playback"} state={playbackState} />
       {page === "editor" && !editorState.editorEntry && (<p className="app-empty">Choose a wallpaper in the Library and press Edit.</p>)}
       <EditorPanel hidden={page !== "editor"} state={editorState} previews={previews} />
-      <LibraryPage hidden={page !== "library"} state={libraryState} onOpenEditor={(entry) => {
-        const { editorDirty, editorEntry } = editorState;
-        if (editorDirty && editorEntry && editorEntry.id !== entry.id
-          && !window.confirm(`Discard unapplied changes to ${editorEntry.displayName} and open ${entry.displayName}?`)) return;
-        void editorState.openEditorPreview(entry);
-      }} onStartPlayback={(entry) => void playbackState.startPlayback(entry)} />
+      <DashboardPage
+        hidden={page !== "dashboard"}
+        hostState={hostState}
+        hostBusy={checkingHost}
+        onStartHost={() => void retryHost()}
+        playback={playbackState}
+        library={libraryState}
+        onStartPlayback={(entry) => void playbackState.startPlayback(entry)}
+        onOpenEditor={openInEditor}
+        onOpenLibrary={() => setPage("library")}
+      />
+      <LibraryPage hidden={page !== "library"} state={libraryState} onOpenEditor={openInEditor} onStartPlayback={(entry) => void playbackState.startPlayback(entry)} />
     </main>
     </div>
   );
