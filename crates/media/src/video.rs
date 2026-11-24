@@ -120,11 +120,29 @@ pub(super) struct VideoSourceHandle {
     ended: bool,
 }
 
+/// Media Foundation does not accept the `\\?\` verbatim prefix that `canonicalize` adds:
+/// it reads `\\?\C:\...` as a network path and fails with ERROR_BAD_NETPATH (0x80070035).
+/// Hand it the plain Win32 form instead.
+fn media_foundation_path(path: &Path) -> Vec<u16> {
+    let wide: Vec<u16> = path.as_os_str().encode_wide().collect();
+    let verbatim: Vec<u16> = r"\\?\".encode_utf16().collect();
+    let verbatim_unc: Vec<u16> = r"\\?\UNC\".encode_utf16().collect();
+    if wide.starts_with(&verbatim_unc) {
+        let mut plain: Vec<u16> = r"\\".encode_utf16().collect();
+        plain.extend_from_slice(&wide[verbatim_unc.len()..]);
+        plain
+    } else if wide.starts_with(&verbatim) {
+        wide[verbatim.len()..].to_vec()
+    } else {
+        wide
+    }
+}
+
 pub(super) fn open(
     path: &Path,
     d3d11_device: Option<&ID3D11Device>,
 ) -> Result<(VideoSourceHandle, VideoMetadata, VideoDecoderMode), MediaError> {
-    let mut filename: Vec<u16> = path.as_os_str().encode_wide().collect();
+    let mut filename = media_foundation_path(path);
     if filename.contains(&0) {
         return Err(MediaError::InvalidVideoPath);
     }
@@ -809,8 +827,20 @@ fn validate_video_metadata(
 
 #[cfg(test)]
 mod tests {
-    use super::{validate_output_format, validate_video_metadata};
+    use super::{media_foundation_path, validate_output_format, validate_video_metadata};
     use crate::MediaError;
+    use std::path::Path;
+
+    fn plain(path: &str) -> String {
+        String::from_utf16(&media_foundation_path(Path::new(path))).unwrap()
+    }
+
+    #[test]
+    fn strips_the_verbatim_prefix_media_foundation_cannot_open() {
+        assert_eq!(plain(r"\\?\C:\Users\me\wish.mp4"), r"C:\Users\me\wish.mp4");
+        assert_eq!(plain(r"\\?\UNC\server\share\a.mp4"), r"\\server\share\a.mp4");
+        assert_eq!(plain(r"C:\Users\me\wish.mp4"), r"C:\Users\me\wish.mp4");
+    }
     use windows::Win32::Media::MediaFoundation::{MFVideoFormat_H264, MFVideoFormat_RGB32};
 
     #[test]
