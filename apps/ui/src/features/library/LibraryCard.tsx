@@ -14,6 +14,8 @@ export interface LibraryCardProps {
   renaming: boolean;
   renameDraft: string;
   savedName: string;
+  selected: boolean;
+  onSelect(): void;
   onRequestPreview(id: number): void;
   onLocate(entry: LibraryEntry): void;
   onRemove(entry: LibraryEntry): void;
@@ -37,6 +39,8 @@ export function LibraryCard({
   renaming,
   renameDraft,
   savedName,
+  selected,
+  onSelect,
   onRequestPreview,
   onLocate,
   onRemove,
@@ -77,8 +81,8 @@ export function LibraryCard({
   const unavailable = entry.availability !== "available";
 
   return (
-    <li className="library-card" ref={cardRef}>
-      <div className="library-thumbnail" aria-label={`${entry.displayName} thumbnail`}>
+    <li className={`library-card${selected ? " is-selected" : ""}`} ref={cardRef}>
+      <div className="library-thumbnail" aria-label={`${entry.displayName} thumbnail`} onClick={onSelect}>
         {preview ? (
           <img src={preview.thumbnailDataUrl} alt={`${entry.displayName} preview`} />
         ) : unavailable ? (

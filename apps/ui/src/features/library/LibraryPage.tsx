@@ -1,4 +1,7 @@
-import { failureLabels, resultLabel, uniqueDisplayName } from "./labels";
+import { useState } from "react";
+
+import { formatBytes } from "../../format";
+import { failureLabels, formatDuration, resultLabel, uniqueDisplayName } from "./labels";
 import { LibraryCard } from "./LibraryCard";
 import type { LibraryEntry } from "../../host-adapter";
 import type { LibraryState } from "./useLibrary";
@@ -45,6 +48,9 @@ export function LibraryPage({ hidden, state, onOpenEditor, onStartPlayback }: {
     renameEntry,
     toggleFavorite,
   } = state;
+  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const selected = library.find((entry) => entry.id === selectedId) ?? null;
+  const selectedPreview = selected ? previews[selected.id] : undefined;
 
   return (
     <>
@@ -153,6 +159,7 @@ export function LibraryPage({ hidden, state, onOpenEditor, onStartPlayback }: {
             </div>
           )
         ) : (
+          <div className={`library-split${selected ? " has-detail" : ""}`}>
           <ul className="library-list" aria-label="Wallpaper library entries">
             {visibleLibrary.map((entry) => (
               <LibraryCard
@@ -166,6 +173,8 @@ export function LibraryPage({ hidden, state, onOpenEditor, onStartPlayback }: {
                 renaming={renamingId === entry.id}
                 renameDraft={renameDraft}
                 savedName={renamingId === entry.id ? uniqueDisplayName(library, entry.id, renameDraft) : ""}
+                selected={selectedId === entry.id}
+                onSelect={() => setSelectedId(entry.id)}
                 onRequestPreview={(id) => void loadPreview(id)}
                 onLocate={(item) => void locateEntry(item)}
                 onRemove={(item) => void removeEntry(item)}
@@ -186,6 +195,32 @@ export function LibraryPage({ hidden, state, onOpenEditor, onStartPlayback }: {
               />
             ))}
           </ul>
+          {selected && (
+            <aside className="library-detail" aria-label={`Details for ${selected.displayName}`}>
+              <div className="library-detail-head">
+                <h3>{selected.displayName}</h3>
+                <button aria-label="Close details" onClick={() => setSelectedId(null)}>✕</button>
+              </div>
+              <dl className="settings-facts">
+                <dt>Type</dt><dd>{selected.mediaKind === "video" ? "Video" : "Image"}</dd>
+                <dt>Size</dt><dd>{selected.sizeBytes === null ? "—" : formatBytes(selectedPreview?.sizeBytes ?? selected.sizeBytes)}</dd>
+                <dt>Resolution</dt><dd>{selectedPreview ? `${selectedPreview.width}×${selectedPreview.height}` : "—"}</dd>
+                {selectedPreview?.duration100ns != null && (<><dt>Length</dt><dd>{formatDuration(selectedPreview.duration100ns)}</dd></>)}
+                <dt>Source path</dt><dd className="library-detail-path">{selected.sourcePath}</dd>
+              </dl>
+              <div className="library-detail-actions">
+                {selected.mediaKind === "video" && selected.availability === "available" && (
+                  <button className="ui-button--primary" disabled={busyEntryId === selected.id} onClick={() => onStartPlayback(selected)}>Play as wallpaper</button>
+                )}
+                {selected.availability === "available" && <button onClick={() => onOpenEditor(selected)}>Open in editor</button>}
+                {selected.availability !== "available" && <button className="ui-button--primary" onClick={() => void locateEntry(selected)}>Reconnect to a file elsewhere</button>}
+                <button onClick={() => { setRenamingId(selected.id); setRenameDraft(selected.displayName); }}>Rename</button>
+                <button onClick={() => void toggleFavorite(selected)}>{selected.isFavorite ? "★ Remove favorite" : "☆ Favorite"}</button>
+                <button onClick={() => { void removeEntry(selected); setSelectedId(null); }}>Remove from library</button>
+              </div>
+            </aside>
+          )}
+          </div>
         )}
         {visibleCount < filteredLibrary.length && (
           <button className="library-more" onClick={() => setVisibleCount((count) => count + 24)}>
