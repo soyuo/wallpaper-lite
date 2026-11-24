@@ -464,3 +464,8 @@
 .library-chip span { opacity: 0.7; margin-left: 0.25em; }
 .library-chip.on { background: var(--color-surface-strong, #fff); color: var(--color-text); font-weight: 700; }
 .import-summary { margin: 0; font-weight: 700; }
+
+/* Displays: unsaved-change banner and tile badge */
+.display-dirty { grid-column: auto; margin-top: var(--space-3); }
+.display-tile { position: relative; }
+.display-tile-badge { position: absolute; top: var(--space-2); right: var(--space-2); min-height: 1.5rem; font-size: var(--font-size-sm); }

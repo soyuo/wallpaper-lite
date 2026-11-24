@@ -1,5 +1,6 @@
 import { useState } from "react";
 
+import { makeDisplayEdits } from "../../display-manager.mjs";
 import type { DisplaysState } from "./useDisplays";
 import type { DisplayPresentationMode } from "../../host-adapter";
 
@@ -8,6 +9,8 @@ export function DisplaysPage({ hidden, state }: { hidden: boolean; state: Displa
     displaySnapshot, displayMode, displayEdits, displayStatus, displayLoading, displaySaving,
     setDisplayMode, setDisplayEdits, refreshDisplayManager, saveDisplayAssignments,
   } = state;
+  const saved = displaySnapshot ? makeDisplayEdits(displaySnapshot) : null;
+  const dirty = saved !== null && (saved.mode !== displayMode || JSON.stringify(saved.edits) !== JSON.stringify(displayEdits));
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const MODES: { value: DisplayPresentationMode; label: string }[] = [
     { value: "independent", label: "Independent" },
@@ -45,6 +48,7 @@ export function DisplaysPage({ hidden, state }: { hidden: boolean; state: Displa
                   onClick={() => setSelectedId(display.id)}
                 >
                   <span className="display-tile-index">{index + 1}</span>
+                  {saved && JSON.stringify(saved.edits[display.id]) !== JSON.stringify(displayEdits[display.id]) && <span className="chip display-tile-badge">Changed</span>}
                   <span className="display-tile-caption"><span>{display.name}</span><span>{display.width}×{display.height}</span></span>
                 </button>
               ))}
@@ -135,6 +139,13 @@ export function DisplaysPage({ hidden, state }: { hidden: boolean; state: Displa
                   ))}
                 </ul>
               </div>
+            )}
+            {dirty && (
+              <p className="home-banner display-dirty" role="status">
+                <span>You have unsaved changes.</span>
+                <button disabled={displaySaving || displayLoading} onClick={() => void refreshDisplayManager()}>Revert</button>
+                <button className="ui-button--primary" disabled={displaySaving || displayLoading} onClick={() => void saveDisplayAssignments()}>Save and apply</button>
+              </p>
             )}
             <div className="display-manager-actions">
               <button className="ui-button--primary" disabled={displaySaving || displayLoading} onClick={() => void saveDisplayAssignments()}>
