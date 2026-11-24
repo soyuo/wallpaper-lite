@@ -1,6 +1,5 @@
 .settings-page {
   display: grid;
-  max-width: 40rem;
   gap: var(--space-4);
 }
 
