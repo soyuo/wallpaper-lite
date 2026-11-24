@@ -7,7 +7,7 @@ mod shortcut;
 use std::{env, path::PathBuf};
 
 use serde::{Deserialize, Serialize};
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 use tauri_plugin_dialog::DialogExt;
 
 #[derive(Serialize)]
@@ -24,7 +24,9 @@ struct SetupInfo {
 #[serde(rename_all = "camelCase")]
 pub struct InstallOptions {
     pub install_dir: String,
+    #[serde(default)]
     pub launch_at_login: bool,
+    #[serde(default)]
     pub desktop_shortcut: bool,
 }
 
@@ -61,8 +63,12 @@ async fn browse_folder(app: tauri::AppHandle) -> Option<String> {
 }
 
 #[tauri::command]
-async fn run_install(options: InstallOptions) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || install::install(&options))
+async fn run_install(app: tauri::AppHandle, options: InstallOptions) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        install::install(&options, &|step, status| {
+            let _ = app.emit("install-progress", serde_json::json!({ "step": step, "status": status }));
+        })
+    })
         .await
         .map_err(|error| error.to_string())?
 }
@@ -72,6 +78,16 @@ async fn run_uninstall(options: UninstallOptions) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || install::uninstall(&options))
         .await
         .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+fn running_apps() -> Vec<String> {
+    install::running_apps()
+}
+
+#[tauri::command]
+fn set_launch_at_login(install_dir: String, enabled: bool) -> Result<(), String> {
+    install::set_launch_at_login(&PathBuf::from(install_dir), enabled)
 }
 
 #[tauri::command]
@@ -91,14 +107,14 @@ fn main() {
                     .to_string(),
                 launch_at_login: env::args().any(|arg| arg == "--launch-at-login"),
                 desktop_shortcut: false,
-            })
+            }, &|_, _| {})
         };
         std::process::exit(if result.is_ok() { 0 } else { 1 });
     }
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![setup_info, browse_folder, run_install, run_uninstall, launch_app])
+        .invoke_handler(tauri::generate_handler![setup_info, browse_folder, run_install, run_uninstall, running_apps, set_launch_at_login, launch_app])
         .setup(|app| {
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.show();

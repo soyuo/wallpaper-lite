@@ -79,7 +79,40 @@ fn write_file(path: &Path, bytes: &[u8]) -> Result<(), String> {
     fs::write(path, bytes).map_err(|error| format!("Could not write {}: {error}", path.display()))
 }
 
-pub fn install(options: &InstallOptions) -> Result<(), String> {
+/// Names of the app processes that are running and must be closed before files are replaced.
+pub fn running_apps() -> Vec<String> {
+    ["wallpaper-ui.exe", "wallpaper-host.exe"]
+        .into_iter()
+        .filter(|image| {
+            Command::new("tasklist")
+                .args(["/FI", &format!("IMAGENAME eq {image}"), "/NH"])
+                .creation_flags(CREATE_NO_WINDOW)
+                .output()
+                .map(|out| String::from_utf8_lossy(&out.stdout).to_lowercase().contains(image))
+                .unwrap_or(false)
+        })
+        .map(str::to_string)
+        .collect()
+}
+
+/// Adds or removes the sign-in launch entry for the installed app.
+pub fn set_launch_at_login(install_dir: &Path, enabled: bool) -> Result<(), String> {
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    if enabled {
+        let app = install_dir.join("wallpaper-ui.exe");
+        let (run, _) = hkcu.create_subkey(RUN_KEY).map_err(|error| error.to_string())?;
+        run.set_value(RUN_VALUE, &format!("\"{}\" --autostart", app.display())).map_err(|error| error.to_string())
+    } else {
+        if let Ok(run) = hkcu.open_subkey_with_flags(RUN_KEY, KEY_SET_VALUE) {
+            let _ = run.delete_value(RUN_VALUE);
+        }
+        Ok(())
+    }
+}
+
+/// Copies the app files and registers the install. `progress(step, status)` reports each step
+/// with status `"working"` or `"done"`.
+pub fn install(options: &InstallOptions, progress: &dyn Fn(&str, &str)) -> Result<(), String> {
     if !payload::is_complete() {
         return Err("This setup program was built without the app files.".into());
     }
@@ -92,13 +125,20 @@ pub fn install(options: &InstallOptions) -> Result<(), String> {
     fs::create_dir_all(&dir).map_err(|error| format!("Could not create {}: {error}", dir.display()))?;
 
     let app = dir.join("wallpaper-ui.exe");
+    progress("wallpaper-ui.exe", "working");
     write_file(&app, payload::APP_EXE)?;
+    progress("wallpaper-ui.exe", "done");
+    progress("wallpaper-host.exe", "working");
     write_file(&dir.join("wallpaper-host.exe"), payload::HOST_EXE)?;
+    progress("wallpaper-host.exe", "done");
     let uninstaller = dir.join("uninstall.exe");
+    progress("uninstall.exe", "working");
     let current = env::current_exe().map_err(|error| error.to_string())?;
     if current != uninstaller {
         fs::copy(&current, &uninstaller).map_err(|error| format!("Could not write uninstall.exe: {error}"))?;
     }
+    progress("uninstall.exe", "done");
+    progress("Shortcuts and registration", "working");
 
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
     let (key, _) = hkcu.create_subkey(UNINSTALL_KEY).map_err(|error| error.to_string())?;
@@ -128,9 +168,9 @@ pub fn install(options: &InstallOptions) -> Result<(), String> {
         shortcut::create(&desktop_link(), &app, &dir)?;
     }
     if options.launch_at_login || had_autostart {
-        let (run, _) = hkcu.create_subkey(RUN_KEY).map_err(|error| error.to_string())?;
-        run.set_value(RUN_VALUE, &format!("\"{}\" --autostart", app.display())).map_err(|error| error.to_string())?;
+        set_launch_at_login(&dir, true)?;
     }
+    progress("Shortcuts and registration", "done");
     Ok(())
 }
 

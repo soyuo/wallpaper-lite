@@ -13,8 +13,8 @@
         "decorations": false,
         "resizable": false,
         "center": true,
-        "width": 760,
-        "height": 500
+        "width": 800,
+        "height": 560
       }
     ],
     "security": { "csp": null }
