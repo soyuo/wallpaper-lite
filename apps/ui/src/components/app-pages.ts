@@ -1,11 +1,11 @@
 export type AppPage = "dashboard" | "library" | "editor" | "displays" | "playback" | "performance" | "settings";
 
-export const APP_PAGES: { id: AppPage; label: string; icon: string }[] = [
-  { id: "dashboard", label: "Dashboard", icon: "⌂" },
-  { id: "library", label: "Library", icon: "▦" },
-  { id: "editor", label: "Editor", icon: "✎" },
-  { id: "displays", label: "Monitors", icon: "▭" },
-  { id: "playback", label: "Playback", icon: "▶" },
-  { id: "performance", label: "Performance", icon: "◔" },
-  { id: "settings", label: "Settings", icon: "⚙" },
+export const APP_PAGES: { id: AppPage; label: string }[] = [
+  { id: "dashboard", label: "Dashboard" },
+  { id: "library", label: "Library" },
+  { id: "editor", label: "Editor" },
+  { id: "displays", label: "Monitors" },
+  { id: "playback", label: "Playback" },
+  { id: "performance", label: "Performance" },
+  { id: "settings", label: "Settings" },
 ];
