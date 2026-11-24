@@ -16,9 +16,17 @@ export function AppTopBar({ hostState, hostStatus, checking, onCheck }: {
     <div className="app-topbar" data-tauri-drag-region={inTauri ? true : undefined}>
       <p className="app-brand" data-tauri-drag-region={inTauri ? true : undefined}><Logo size={26} />wallpaper Lite</p>
       <div className="app-topbar-status" data-tauri-drag-region={inTauri ? true : undefined}>
-        <p aria-live="polite" className="host-status" data-state={hostState} role="status"><span>{hostStatus}</span></p>
-        <button className="ui-button--primary" disabled={checking} onClick={onCheck}>
-          {checking ? "Checking..." : "Check wallpaper host"}
+        <button
+          type="button"
+          className="host-status"
+          data-state={hostState}
+          data-checking={checking ? "true" : undefined}
+          disabled={checking}
+          title="Check the wallpaper host again"
+          onClick={onCheck}
+        >
+          <span aria-live="polite" role="status">{checking ? "Checking..." : hostStatus}</span>
+          <Icon name="refresh" size={14} />
         </button>
       </div>
       {inTauri && (

@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 
 import type { AppPage } from "./app-pages";
 
-const PATHS: Record<AppPage | "minimize" | "maximize" | "close", ReactNode> = {
+const PATHS: Record<AppPage | "refresh" | "minimize" | "maximize" | "close", ReactNode> = {
   dashboard: <path d="M4 11 12 4l8 7v8a1 1 0 0 1-1 1h-4v-6H9v6H5a1 1 0 0 1-1-1z" />,
   library: <><rect x="4" y="4" width="7" height="7" rx="1.5" /><rect x="13" y="4" width="7" height="7" rx="1.5" /><rect x="4" y="13" width="7" height="7" rx="1.5" /><rect x="13" y="13" width="7" height="7" rx="1.5" /></>,
   editor: <path d="M4 20h4L19 9l-4-4L4 16zM14 6l4 4" />,
@@ -10,6 +10,7 @@ const PATHS: Record<AppPage | "minimize" | "maximize" | "close", ReactNode> = {
   playback: <path d="M8 5v14l11-7z" />,
   performance: <path d="M4 18a8 8 0 1 1 16 0M12 18l4-6" />,
   settings: <><circle cx="12" cy="12" r="3" /><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1" /></>,
+  refresh: <path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v4h-4" />,
   minimize: <path d="M6 12h12" />,
   maximize: <rect x="6" y="6" width="12" height="12" rx="1.5" />,
   close: <path d="M6 6l12 12M18 6 6 18" />,
