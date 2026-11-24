@@ -176,6 +176,15 @@ export function PerformancePage({ hidden, state }: { hidden: boolean; state: Per
                 }}
               />
             </label>
+            <label className="playback-mute">
+              <input
+                type="checkbox"
+                checked={performancePolicy.sharpUpscaling}
+                disabled={performancePolicySaving}
+                onChange={(event) => updatePerformancePolicy({ sharpUpscaling: event.currentTarget.checked })}
+              />
+              <span>Sharper upscaling (smooths small images and videos shown on larger screens)</span>
+            </label>
           </div>
         ) : <p role="status">Loading power-saving policies…</p>}
         {performancePolicyMessage && <p aria-live="polite" className="performance-policy-status" role="status">{performancePolicyMessage}</p>}
