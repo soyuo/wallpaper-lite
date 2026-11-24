@@ -4,9 +4,9 @@ import type { SettingsState } from "./useSettings";
 export type ThemeChoice = "dark" | "light" | "system";
 
 const THEME_OPTIONS: { value: ThemeChoice; label: string }[] = [
-  { value: "dark", label: "Dark" },
   { value: "light", label: "Light" },
-  { value: "system", label: "Follow system" },
+  { value: "dark", label: "Dark" },
+  { value: "system", label: "System" },
 ];
 
 export function SettingsPage({ hidden, state, theme, onThemeChange }: {
@@ -18,50 +18,72 @@ export function SettingsPage({ hidden, state, theme, onThemeChange }: {
   const { appInfo, autostart, autostartBusy, loadError, error, backupBusy, backupNotice, changeAutostart, createBackup, chooseRestore, cancelRestore, restoreBackup, pendingRestore, openFolder } = state;
 
   return (
-    <section className="settings-page" hidden={hidden} aria-labelledby="settings-startup-heading">
+    <section className="settings-page" hidden={hidden} aria-label="Settings">
       <ErrorNotice message={loadError} />
       <ErrorNotice message={error} />
 
-      <div className="settings-group">
-        <h2 id="settings-startup-heading">Startup</h2>
-        <label className="settings-row">
+      <div className="glass-card settings-card">
+        <label className="settings-line">
+          <span className="settings-name">
+            Launch at login
+            <small>Starts hidden in the tray and restores your wallpaper.</small>
+          </span>
           <input
             type="checkbox"
+            role="switch"
             checked={autostart ?? false}
             disabled={autostart === null || autostartBusy}
             onChange={(event) => void changeAutostart(event.target.checked)}
           />
-          <span>
-            Launch at login
-            <small>Starts hidden in the tray and restores your wallpaper.</small>
-          </span>
         </label>
-      </div>
-
-      <div className="settings-group" role="group" aria-labelledby="appearance-title">
-        <h2 id="appearance-title">Appearance</h2>
-        <div className="seg" role="group" aria-label="Theme">
-          {THEME_OPTIONS.map((option) => (
-            <button
-              key={option.value}
-              type="button"
-              aria-pressed={theme === option.value}
-              className={theme === option.value ? "on" : undefined}
-              onClick={() => onThemeChange(option.value)}
-            >{option.label}</button>
-          ))}
+        <hr className="settings-hr" />
+        <div className="settings-line" role="group" aria-labelledby="appearance-title">
+          <span className="settings-name" id="appearance-title">Theme</span>
+          <div className="seg" role="group" aria-label="Theme">
+            {THEME_OPTIONS.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                aria-pressed={theme === option.value}
+                className={theme === option.value ? "on" : undefined}
+                onClick={() => onThemeChange(option.value)}
+              >{option.label}</button>
+            ))}
+          </div>
+        </div>
+        <hr className="settings-hr" />
+        <div className="settings-line">
+          <span className="settings-name">App version</span>
+          <span className="settings-mono">{appInfo?.version ?? "…"}</span>
         </div>
       </div>
 
-      <div className="settings-group">
-        <h2>Backup</h2>
-        <p className="settings-help">
-          Saves your library, editor, monitor and performance settings to a folder you choose.
-          Your original images and videos are not copied or changed.
-        </p>
+      <div className="glass-card settings-card">
+        <div className="settings-line">
+          <span className="settings-name">
+            Settings folder
+            <small className="settings-mono">{appInfo?.dataDirectory ?? "Unavailable"}</small>
+          </span>
+          <button disabled={!appInfo?.dataDirectory} onClick={() => void openFolder("data")}>Open</button>
+        </div>
+        <hr className="settings-hr" />
+        <div className="settings-line">
+          <span className="settings-name">
+            Log folder
+            <small className="settings-mono">{appInfo?.logDirectory ?? "Unavailable"}</small>
+          </span>
+          <button disabled={!appInfo?.logDirectory} onClick={() => void openFolder("logs")}>Open</button>
+        </div>
+      </div>
+
+      <div className="glass-card settings-card settings-backup">
+        <span className="settings-name">
+          Backup
+          <small>Saves your library, editor, monitor and performance settings. Original images and videos are not copied or changed.</small>
+        </span>
         <div className="settings-actions">
-          <button className="ui-button--primary" disabled={backupBusy} onClick={() => void createBackup()}>Create backup…</button>
           <button disabled={backupBusy} onClick={() => void chooseRestore()}>Restore from backup…</button>
+          <button className="ui-button--primary" disabled={backupBusy} onClick={() => void createBackup()}>Create backup…</button>
         </div>
         {pendingRestore !== null && (
           <div className="restore-confirm" role="alertdialog" aria-labelledby="restore-title">
@@ -75,22 +97,6 @@ export function SettingsPage({ hidden, state, theme, onThemeChange }: {
           </div>
         )}
         {backupNotice && <p className="settings-notice" role="status">{backupNotice}</p>}
-      </div>
-
-      <div className="settings-group">
-        <h2>About</h2>
-        <dl className="settings-facts">
-          <dt>Version</dt>
-          <dd>{appInfo?.version ?? "…"}</dd>
-          <dt>Settings folder</dt>
-          <dd>{appInfo?.dataDirectory ?? "Unavailable"}</dd>
-          <dt>Log folder</dt>
-          <dd>{appInfo?.logDirectory ?? "Unavailable"}</dd>
-        </dl>
-        <div className="settings-actions">
-          <button disabled={!appInfo?.dataDirectory} onClick={() => void openFolder("data")}>Open settings folder</button>
-          <button disabled={!appInfo?.logDirectory} onClick={() => void openFolder("logs")}>Open log folder</button>
-        </div>
       </div>
     </section>
   );

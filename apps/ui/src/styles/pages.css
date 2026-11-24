@@ -230,10 +230,21 @@
 .library-filter { justify-self: start; }
 .state-card.library-empty { padding: var(--space-6) var(--space-5); border: 1px dashed var(--color-border-strong); border-radius: var(--radius-lg); background: var(--color-surface-subtle); }
 
-/* Settings: card grid */
-.settings-page { max-width: none; grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr)); align-items: start; gap: var(--space-4); }
-.settings-page > .settings-group { border: 1px solid var(--glass-border); border-radius: var(--radius-lg); background: var(--glass-bg); backdrop-filter: var(--glass-blur); box-shadow: var(--glass-shadow); padding: var(--space-5); }
-.settings-page > [role="alert"], .settings-page > .error-notice { grid-column: 1 / -1; }
+/* Settings: three glass cards in a centered column */
+.settings-page { display: grid; width: 100%; max-width: 47.5rem; margin-inline: auto; gap: var(--space-4); }
+.settings-page[hidden] { display: none; }
+.settings-card { display: flex; flex-direction: column; padding: var(--space-2) var(--space-6); }
+.settings-line { display: flex; min-height: 4.5rem; align-items: center; justify-content: space-between; gap: var(--space-4); }
+.settings-name { display: flex; min-width: 0; flex-direction: column; color: var(--color-text); font-size: var(--font-size-md); font-weight: 700; }
+.settings-name small { color: var(--color-text-muted); font-size: var(--font-size-sm); font-weight: 400; overflow-wrap: anywhere; }
+.settings-mono { color: var(--color-text-muted); font-family: var(--font-mono, ui-monospace, monospace); font-size: 0.78rem; font-weight: 500; }
+.settings-hr { width: 100%; height: 1px; margin: 0; border: 0; background: var(--glass-border); }
+.settings-backup { flex-flow: row wrap; align-items: center; justify-content: space-between; gap: var(--space-3); padding-block: var(--space-5); }
+.settings-backup > .settings-name { flex: 1 1 18rem; }
+.settings-backup > .restore-confirm, .settings-backup > .settings-notice { flex: 1 1 100%; }
+.settings-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.settings-notice { margin: 0; color: var(--color-text-muted); }
+.settings-page > .error-notice { margin: 0; }
 
 /* First run */
 .first-run {

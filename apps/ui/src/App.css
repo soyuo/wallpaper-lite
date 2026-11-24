@@ -1,76 +1,3 @@
-.settings-page {
-  display: grid;
-  gap: var(--space-4);
-}
-
-.settings-page[hidden] {
-  display: none;
-}
-
-.settings-group {
-  display: grid;
-  min-width: 0;
-  gap: var(--space-3);
-  margin: 0;
-  padding: var(--space-4);
-  border: 1px solid var(--glass-border);
-  border-radius: var(--radius-lg);
-  background: var(--glass-bg);
-  backdrop-filter: var(--glass-blur);
-  box-shadow: var(--glass-shadow);
-}
-
-.settings-group h2,
-.settings-group legend {
-  margin: 0;
-  padding: 0 var(--space-1);
-  font-size: 1rem;
-}
-
-.settings-row {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-3);
-}
-
-.settings-row small {
-  display: block;
-  color: var(--color-text-muted);
-}
-
-.settings-facts {
-  display: grid;
-  grid-template-columns: max-content minmax(0, 1fr);
-  gap: var(--space-2) var(--space-4);
-  margin: 0;
-}
-
-.settings-facts dt {
-  color: var(--color-text-muted);
-}
-
-.settings-facts dd {
-  margin: 0;
-  overflow-wrap: anywhere;
-}
-
-.settings-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-}
-
-.settings-help,
-.settings-notice {
-  margin: 0;
-  color: var(--color-text-muted);
-}
-
-.settings-notice {
-  color: var(--color-text);
-  overflow-wrap: anywhere;
-}
-
 .error-notice {
   display: flex;
   flex-wrap: wrap;
@@ -699,26 +626,6 @@ label {
 }
 
 /* Settings: grouped rows */
-.settings-row {
-  align-items: center;
-  padding: var(--space-3);
-  border-radius: var(--radius-md);
-  background: var(--color-surface-subtle);
-  color: var(--color-text);
-  font-size: var(--font-size-sm);
-}
-
-.settings-row small {
-  font-size: var(--font-size-xs);
-}
-
-.settings-notice {
-  padding: var(--space-3);
-  border-radius: var(--radius-md);
-  background: var(--color-success-bg);
-  color: var(--color-success-text);
-}
-
 /* Displays and performance: inner glass cards */
 .performance-target-card,
 .display-manager-card {
