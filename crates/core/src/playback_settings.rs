@@ -141,7 +141,7 @@ impl PlaybackSettings {
     }
 
     pub fn default_for(wallpaper_id: u64) -> Result<Self, PlaybackSettingsValidationError> {
-        Self::new(wallpaper_id, LoopMode::Disabled, None, 100, 60, 100, false)
+        Self::new(wallpaper_id, LoopMode::Disabled, None, 100, 60, 100, true)
     }
 
     pub const fn schema_version(&self) -> u32 {
@@ -305,7 +305,7 @@ mod tests {
         assert_eq!(settings.speed_percent(), 100);
         assert_eq!(settings.fps_limit(), 60);
         assert_eq!(settings.volume_percent(), 100);
-        assert!(!settings.muted());
+        assert!(settings.muted());
         settings.validate().unwrap();
     }
 
