@@ -7,6 +7,7 @@ use wallpaper_core::error::AppError;
 use wallpaper_core::error::ErrorCode;
 use wallpaper_media::{CatalogStore, ImportResult, import_local_media};
 
+mod app_info;
 mod autostart;
 mod displays;
 mod editor;
@@ -237,6 +238,8 @@ pub fn run() -> process::ExitCode {
             host_ping,
             host_start,
             host_shutdown,
+            app_info::app_info,
+            app_info::open_app_folder,
             get_autostart,
             set_autostart,
             import_media,

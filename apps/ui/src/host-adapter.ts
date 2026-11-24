@@ -204,6 +204,12 @@ export interface PerformanceMetricsSnapshot {
   targets: TargetPerformanceMetrics[];
 }
 
+export interface AppInfo {
+  version: string;
+  dataDirectory: string | null;
+  logDirectory: string | null;
+}
+
 export type AppErrorCode =
   | "host_unavailable"
   | "timeout"
@@ -258,6 +264,8 @@ export interface HostAdapter {
   ping(): Promise<void>;
   /** Starts the bundled wallpaper host unless one is already running. */
   startHost(): Promise<"already_running" | "started">;
+  appInfo(): Promise<AppInfo>;
+  openAppFolder(folder: "data" | "logs"): Promise<void>;
   getAutostart(): Promise<boolean>;
   setAutostart(enabled: boolean): Promise<void>;
   importMedia(paths: string[]): Promise<ImportResult[]>;
@@ -352,6 +360,12 @@ function isAppErrorCode(value: unknown): value is AppErrorCode {
 }
 
 export const hostAdapter: HostAdapter = {
+  appInfo() {
+    return invoke<AppInfo>("app_info");
+  },
+  openAppFolder(folder) {
+    return invokeAppCommand<void>("open_app_folder", { folder });
+  },
   getAutostart() {
     return invokeAppCommand<boolean>("get_autostart");
   },
