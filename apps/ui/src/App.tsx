@@ -10,6 +10,7 @@ import type { AppPage } from "./components/app-pages";
 import { AppDock } from "./components/AppDock";
 import { AppTopBar } from "./components/AppTopBar";
 import { FirstRun } from "./components/FirstRun";
+import { Splash } from "./components/Splash";
 import type { HostState } from "./dashboard-view.mjs";
 import { hostAdapter } from "./host-adapter";
 import type { LibraryEntry } from "./host-adapter";
@@ -41,6 +42,7 @@ function App() {
   const playbackState = usePlayback();
   const libraryState = useLibrary();
   const [page, setPage] = useState<AppPage>("dashboard");
+  const [splashOpen, setSplashOpen] = useState(true);
   const [firstRunOpen, setFirstRunOpen] = useState(() => localStorage.getItem("wallpaper-lite.first-run-done") === null);
   const settingsState = useSettings(page === "settings" || firstRunOpen);
   const { previews, setPreviews, setRecentIds } = libraryState;
@@ -177,7 +179,8 @@ function App() {
       />
       <LibraryPage hidden={page !== "library"} state={libraryState} onOpenEditor={openInEditor} onStartPlayback={(entry) => void playbackState.startPlayback(entry)} />
     </main>
-      {firstRunOpen && (
+      {splashOpen && <Splash ready={hostState !== "checking"} onDone={() => setSplashOpen(false)} />}
+      {!splashOpen && firstRunOpen && (
         <FirstRun
           library={libraryState}
           settings={settingsState}

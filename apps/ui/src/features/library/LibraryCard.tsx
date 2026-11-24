@@ -84,32 +84,32 @@ export function LibraryCard({
         ) : previewError ? (
           <span>Preview unavailable</span>
         ) : previewLoading ? (
-          <span>Loading preview...</span>
+          <span className="skeleton">Loading preview...</span>
         ) : (
           <span>Preview pending</span>
         )}
       </div>
       <div className="library-card-content">
-        {renaming ? (
-          <form className="library-rename-form" onSubmit={(event) => {
-            event.preventDefault();
-            onSubmitRename(entry);
-          }}>
-            <label>
-              <span className="visually-hidden">New name for {entry.displayName}</span>
-              <input
-                autoFocus
-                maxLength={256}
-                value={renameDraft}
-                onChange={(event) => onRenameDraftChange(event.currentTarget.value)}
-              />
-            </label>
-            <button disabled={actionBusy} type="submit">Save name</button>
-            <button disabled={actionBusy} onClick={onCancelRename} type="button">Cancel</button>
-          </form>
-        ) : (
-          <h3>{entry.displayName}</h3>
+        {renaming && (
+          <div className="dialog-backdrop" onKeyDown={(event) => { if (event.key === "Escape") onCancelRename(); }}>
+            <form className="dialog glass-card" role="dialog" aria-modal="true" aria-labelledby={`rename-title-${entry.id}`} onSubmit={(event) => {
+              event.preventDefault();
+              onSubmitRename(entry);
+            }}>
+              <h2 id={`rename-title-${entry.id}`}>Rename wallpaper</h2>
+              <p>The name changes in the library only. The source file is not renamed.</p>
+              <label>
+                <span className="visually-hidden">New name for {entry.displayName}</span>
+                <input autoFocus maxLength={256} value={renameDraft} onChange={(event) => onRenameDraftChange(event.currentTarget.value)} />
+              </label>
+              <div className="dialog-actions">
+                <button disabled={actionBusy} onClick={onCancelRename} type="button">Cancel</button>
+                <button className="ui-button--primary" disabled={actionBusy || !renameDraft.trim()} type="submit">Save name</button>
+              </div>
+            </form>
+          </div>
         )}
+        <h3>{entry.displayName}</h3>
         <p className="library-card-path" title={entry.sourcePath}>{entry.sourcePath}</p>
         <p className="library-card-meta">
           {entry.mediaKind === "video" ? "Video" : "Image"} · {formatBytes(preview?.sizeBytes ?? entry.sizeBytes)}

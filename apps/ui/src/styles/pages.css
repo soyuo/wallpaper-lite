@@ -272,3 +272,112 @@
 .first-run-body { display: grid; gap: var(--space-3); }
 .first-run-body h2 { margin: 0; font-size: var(--font-size-xl); letter-spacing: -0.02em; }
 .first-run-actions { display: flex; justify-content: space-between; gap: var(--space-2); }
+
+/* Splash, dialogs, loading skeleton, error notice icon */
+.splash {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: var(--space-3);
+  background: var(--backdrop-gradient);
+  text-align: center;
+}
+
+.splash-mark {
+  width: 5rem;
+  height: 5rem;
+  border-radius: 50%;
+  background: radial-gradient(circle at 50% 50%, #3b68d8 0 28%, #fff 30%);
+  box-shadow: 0 0 4rem rgb(255 255 255 / 45%);
+}
+
+.splash h1 {
+  margin: 0;
+}
+
+.splash p {
+  margin: 0;
+  color: var(--color-text-muted);
+}
+
+.splash-bar {
+  width: 12rem;
+  height: 0.5rem;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgb(255 255 255 / 20%);
+}
+
+.splash-bar i {
+  display: block;
+  width: 40%;
+  height: 100%;
+  border-radius: 999px;
+  background: #fff;
+  animation: splash-slide 1.2s ease-in-out infinite;
+}
+
+@keyframes splash-slide {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(250%); }
+}
+
+.dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: grid;
+  place-items: center;
+  padding: var(--space-4);
+  background: rgb(5 12 40 / 55%);
+}
+
+.dialog {
+  display: grid;
+  gap: var(--space-3);
+  width: min(26rem, 100%);
+  padding: var(--space-5);
+}
+
+.dialog h2,
+.dialog p {
+  margin: 0;
+}
+
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.skeleton {
+  border-radius: var(--radius-sm);
+  background: linear-gradient(90deg, rgb(255 255 255 / 8%), rgb(255 255 255 / 22%), rgb(255 255 255 / 8%)) 0 0 / 200% 100%;
+  animation: skeleton-shimmer 1.4s linear infinite;
+}
+
+@keyframes skeleton-shimmer {
+  to { background-position: -200% 0; }
+}
+
+.error-notice-icon {
+  display: grid;
+  flex: none;
+  width: 1.5rem;
+  height: 1.5rem;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--color-danger);
+  color: var(--color-on-accent);
+  font-weight: 700;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .splash-bar i,
+  .skeleton {
+    animation: none;
+  }
+}
