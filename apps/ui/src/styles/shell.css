@@ -64,13 +64,16 @@
 .host-status[data-state="disconnected"]::before { background: var(--color-danger); }
 
 .app-main {
+  display: grid;
+  align-content: start;
+  gap: var(--space-4);
   width: min(100%, var(--content-width));
   margin: 0 auto;
   padding: var(--space-5) var(--space-5) var(--dock-clearance);
 }
 
 .app-header {
-  margin-bottom: var(--space-5);
+  margin-bottom: var(--space-2);
 }
 
 .app-header p {
@@ -137,6 +140,7 @@
   border-radius: var(--radius-lg);
   background: var(--glass-bg);
   color: var(--color-text-muted);
+  text-align: center;
 }
 
 @media (max-width: 40rem) {
