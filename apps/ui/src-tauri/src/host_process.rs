@@ -13,7 +13,10 @@ use std::{
 };
 
 use wallpaper_core::error::{AppError, ErrorCode};
-use wallpaper_ipc::{IpcError, protocol::ResponseResult};
+use wallpaper_ipc::{
+    IpcError,
+    protocol::{HOST_ALREADY_RUNNING_EXIT_CODE, ResponseResult},
+};
 
 const HOST_EXECUTABLE: &str = "wallpaper-host.exe";
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -52,8 +55,20 @@ fn launch_failed(message: &'static str) -> AppError {
 /// Make sure a host is answering on the control pipe, starting one if needed.
 pub async fn ensure_host_running() -> Result<HostStartOutcome, AppError> {
     let _lifecycle = LIFECYCLE_LOCK.lock().await;
-    if wallpaper_ipc::client::ping().await.is_ok() {
-        return Ok(HostStartOutcome::AlreadyRunning);
+    match wallpaper_ipc::client::ping().await {
+        Ok(()) => return Ok(HostStartOutcome::AlreadyRunning),
+        Err(IpcError::HostUnavailable) => {}
+        // A host that is busy or speaks another protocol version is still running.
+        // Starting a second one would fight it for the pipe and the wallpaper window.
+        Err(error) => {
+            tracing::warn!(
+                component = "ui_backend",
+                event = "host_unhealthy",
+                error_code = error.code(),
+                "A wallpaper host exists but did not answer the liveness check"
+            );
+            return Err(error.to_app_error());
+        }
     }
 
     let Some(path) = std::env::current_exe()
@@ -80,16 +95,19 @@ pub async fn ensure_host_running() -> Result<HostStartOutcome, AppError> {
         ));
     }
 
-    let mut child = spawn_host(&path).map_err(|error| {
-        tracing::error!(
-            component = "ui_backend",
-            event = "host_spawn_failed",
-            error_kind = ?error.kind(),
-            os_error_code = ?error.raw_os_error(),
-            "The wallpaper host process could not be created"
-        );
-        launch_failed("The wallpaper host could not be started.")
-    })?;
+    let spawn = || {
+        spawn_host(&path).map_err(|error| {
+            tracing::error!(
+                component = "ui_backend",
+                event = "host_spawn_failed",
+                error_kind = ?error.kind(),
+                os_error_code = ?error.raw_os_error(),
+                "The wallpaper host process could not be created"
+            );
+            launch_failed("The wallpaper host could not be started.")
+        })
+    };
+    let mut child = spawn()?;
 
     let deadline = Instant::now() + READY_TIMEOUT;
     loop {
@@ -101,9 +119,18 @@ pub async fn ensure_host_running() -> Result<HostStartOutcome, AppError> {
             );
             return Ok(HostStartOutcome::Started);
         }
-        // A host that exits successfully lost the single-instance race to one that
-        // is still starting, so keep waiting for that one. Any other exit is a failure.
         match child.try_wait() {
+            // The new host found the previous one still holding the single-instance
+            // mutex, for example while that host finishes shutting down. Try again
+            // until the old host is gone or one answers.
+            Ok(Some(status))
+                if status.code() == Some(i32::from(HOST_ALREADY_RUNNING_EXIT_CODE)) =>
+            {
+                tokio::time::sleep(POLL_INTERVAL).await;
+                if wallpaper_ipc::client::ping().await.is_err() {
+                    child = spawn()?;
+                }
+            }
             Ok(Some(status)) if !status.success() => {
                 tracing::error!(
                     component = "ui_backend",
