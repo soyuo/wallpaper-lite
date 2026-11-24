@@ -47,7 +47,6 @@ function welcome() {
     progress(1),
     el("div", { className: "hero" }, logo(), el("h1", {}, state.info.existingInstall ? "Update wallpaper Lite" : "wallpaper Lite Setup"),
       el("p", {}, `Version ${state.info.version}`)),
-    chips("Current user only", "No administrator rights needed"),
     state.info.payloadReady ? "" : el("div", { className: "error", role: "alert" }, "This setup program was built without the app files, so it cannot install."),
     actions(button("Cancel", () => appWindow.close()), button("Next", path, true, !state.info.payloadReady)),
   );
@@ -64,7 +63,7 @@ function path() {
   show(
     progress(2),
     el("h1", {}, "Install location"),
-    chips("No administrator rights needed", "A running app is closed before upgrading"),
+    chips("A running app is closed before upgrading"),
     el("div", { className: "label" }, "Install location"),
     el("div", { className: "field" }, input, browse),
     actions(button("Back", welcome), button("Install", beginInstall, true)),
