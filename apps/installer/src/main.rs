@@ -67,6 +67,8 @@ async fn run_install(app: tauri::AppHandle, options: InstallOptions) -> Result<(
     tauri::async_runtime::spawn_blocking(move || {
         install::install(&options, &|step, status| {
             let _ = app.emit("install-progress", serde_json::json!({ "step": step, "status": status }));
+            // The copy takes milliseconds; hold each step on screen so the user can follow it.
+            std::thread::sleep(std::time::Duration::from_millis(if status == "working" { 350 } else { 450 }));
         })
     })
         .await
