@@ -186,7 +186,10 @@ Only checks that were actually run are listed. Environment: Windows 11 Education
     the tray window (`tray_icon_app`) and started the host.
   - Logs were written to `%LOCALAPPDATA%\kr.soyuo.wallpaper\logs` (`host.<date>.log`, `ui.log`).
   - Afterwards the app was stopped, the silent uninstall exited with code 0 and left no
-    process, folder or launch-at-login value, and `%APPDATA%\WallpaperLite` was unchanged.
+    process, folder or launch-at-login value. `%APPDATA%\WallpaperLite` already held one
+    file (the library) before the run and still held one file afterwards; only the file
+    count was compared, not the contents or timestamps, and the run itself did not change
+    any setting.
 - The generated NSIS script contains the sidecar installed as `wallpaper-host.exe`,
   its removal on uninstall, and the custom hooks.
 
@@ -208,6 +211,8 @@ Only checks that were actually run are listed. Environment: Windows 11 Education
 - The Korean installer language and the WebView2 bootstrapper download.
 - Several monitors, and video playback with real media on the installed build.
 
-These are tracked as unchecked items on the issues listed in the pull requests (#6, #98,
-#134 to #137, #142 to #145, #148, #153 and #155) and must be run on real machines before a
-release.
+These must be run on real machines before a release. Issues #6 (Phase 1 desktop host on
+Windows 10 and 11) and #98 (Phase 6 multi-monitor) are still open for them. For the rest,
+the unchecked items are in comments on the issues for each feature (#134 to #137, #142 to
+#145, #148, #153 and #155). Those issues are closed because their code is merged, so
+their comments are the record, not an open task.
