@@ -1260,6 +1260,8 @@ impl PlaybackController {
                 Err(PlaybackCommandErrorCode::PerformancePolicyApplyFailed)
             }
             Command::Ping => return ResponseResult::Pong,
+            // The IPC server answers Shutdown itself and never dispatches it.
+            Command::Shutdown => return self.error(PlaybackCommandErrorCode::PlaybackUnavailable),
         };
 
         match result {

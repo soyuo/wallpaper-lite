@@ -19,11 +19,12 @@ pub async fn run_with_commands_and_events(
 ) -> Result<(), IpcError> {
     #[cfg(windows)]
     {
-        tokio::try_join!(
-            run_on_pipe_with_commands(crate::protocol::PIPE_NAME, Some(commands)),
-            run_on_event_pipe(crate::protocol::PLAYBACK_EVENTS_PIPE_NAME, events),
-        )?;
-        Ok(())
+        // The control pipe returns Ok only after a Shutdown request; either pipe
+        // failing is fatal, so the first one to finish decides the result.
+        tokio::select! {
+            result = run_on_pipe_with_commands(crate::protocol::PIPE_NAME, Some(commands)) => result,
+            result = run_on_event_pipe(crate::protocol::PLAYBACK_EVENTS_PIPE_NAME, events) => result,
+        }
     }
     #[cfg(not(windows))]
     {
@@ -58,6 +59,7 @@ pub(crate) async fn run_on_pipe_with_commands(
 
     loop {
         pipe.connect().await.map_err(from_io)?;
+        let mut shutdown_requested = false;
 
         let read_result = time::timeout(IO_TIMEOUT, async {
             let payload = read_frame(&mut pipe).await?;
@@ -73,6 +75,10 @@ pub(crate) async fn run_on_pipe_with_commands(
                     let request_id = request.request_id;
                     let result = match request.command {
                         Command::Ping => ResponseResult::Pong,
+                        Command::Shutdown => {
+                            shutdown_requested = true;
+                            ResponseResult::ShuttingDown
+                        }
                         command => match &commands {
                             Some(dispatcher) => {
                                 let mut trailing_byte = [0_u8; 1];
@@ -134,6 +140,15 @@ pub(crate) async fn run_on_pipe_with_commands(
         }
 
         pipe.disconnect().map_err(from_io)?;
+
+        if shutdown_requested {
+            tracing::info!(
+                component = "ipc",
+                event = "shutdown_requested",
+                "Host shutdown requested over IPC"
+            );
+            return Ok(());
+        }
 
         // Each request is isolated; malformed clients and slow readers do not
         // take down the host or prevent the next UI request from connecting.
