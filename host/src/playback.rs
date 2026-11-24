@@ -253,6 +253,7 @@ struct PlaybackController {
     last_error: Option<PlaybackCommandErrorCode>,
     event_sender: tokio::sync::watch::Sender<PlaybackStateEvent>,
     last_event_sent: Instant,
+    last_diagnostic: Instant,
     display_refresh_sender: Option<tokio::sync::mpsc::UnboundedSender<DisplayRefreshRequest>>,
     policy_settings: Arc<RwLock<PerformancePolicySettings>>,
     signal_receiver: Option<tokio::sync::watch::Receiver<PerformanceSignalSnapshot>>,
@@ -838,6 +839,7 @@ impl PlaybackController {
             last_error: None,
             event_sender,
             last_event_sent: Instant::now(),
+            last_diagnostic: Instant::now(),
             display_refresh_sender,
             policy_settings,
             signal_receiver,
@@ -1110,6 +1112,7 @@ impl PlaybackController {
                         code: PlaybackCommandErrorCode::PerformancePolicyApplyFailed,
                     };
                 };
+                wallpaper_renderer::set_sharp_upscaling(settings.sharp_upscaling());
                 *current = settings;
                 drop(current);
                 self.poll_policy();
@@ -1586,6 +1589,24 @@ impl PlaybackController {
             }
         }
 
+        if self.source.is_some() && self.last_diagnostic.elapsed() >= Duration::from_secs(2) {
+            self.last_diagnostic = Instant::now();
+            let now = self.now_100ns();
+            tracing::info!(
+                component = "media",
+                event = "video_playback_diagnostic",
+                state = ?self.scheduler.state(),
+                queued_frames = self.scheduler.queued_frames(),
+                dropped_frames = self.scheduler.dropped_frames(),
+                media_time_100ns = self.scheduler.media_time_100ns(now).unwrap_or(-1),
+                audio_time_100ns = self
+                    .source
+                    .as_ref()
+                    .and_then(VideoSourceWorker::audio_time_100ns)
+                    .unwrap_or(-1),
+                "Video playback progress"
+            );
+        }
         self.publish_performance_metrics();
         if self.scheduler.state() == PlaybackState::Playing
             && self.last_event_sent.elapsed() >= Duration::from_millis(250)

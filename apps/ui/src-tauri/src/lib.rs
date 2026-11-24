@@ -185,6 +185,8 @@ pub fn run() -> process::ExitCode {
             tray::show_main_window(app);
         }))
         .plugin(tauri_plugin_dialog::init())
+        // Remembers the main window's size, position and maximized state between launches.
+        .plugin(tauri_plugin_window_state::Builder::default().build())
         .on_window_event(|window, event| {
             // Closing the settings window must not stop the wallpaper: hide it and
             // leave the tray's Quit item as the only exit.
@@ -195,6 +197,12 @@ pub fn run() -> process::ExitCode {
                 && let tauri::WindowEvent::CloseRequested { api, .. } = event
             {
                 api.prevent_close();
+                // The plugin only writes its file when the app exits, and this app usually
+                // ends by being killed or by a tray Quit. Save now, while the size is current.
+                let _ = tauri_plugin_window_state::AppHandleExt::save_window_state(
+                    tauri::Manager::app_handle(window),
+                    tauri_plugin_window_state::StateFlags::all(),
+                );
                 let _ = window.hide();
             }
         })

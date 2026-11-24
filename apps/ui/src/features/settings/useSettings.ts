@@ -22,6 +22,10 @@ export interface SettingsState {
   backupNotice: string | null;
   changeAutostart(enabled: boolean): Promise<void>;
   createBackup(): Promise<void>;
+  /** The folder chosen for a restore, waiting for the user to confirm. */
+  pendingRestore: string | null;
+  chooseRestore(): Promise<void>;
+  cancelRestore(): void;
   restoreBackup(): Promise<void>;
   openFolder(folder: "data" | "logs"): Promise<void>;
 }
@@ -35,6 +39,7 @@ export function useSettings(active: boolean): SettingsState {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [backupBusy, setBackupBusy] = useState(false);
   const [backupNotice, setBackupNotice] = useState<string | null>(null);
+  const [pendingRestore, setPendingRestore] = useState<string | null>(null);
 
   useEffect(() => {
     // A restore reloads the page so every view reads the restored files; show its result afterwards.
@@ -105,24 +110,35 @@ export function useSettings(active: boolean): SettingsState {
     }
   }, []);
 
-  const restoreBackup = useCallback(async () => {
+  const chooseRestore = useCallback(async () => {
     setError(null);
     setBackupNotice(null);
-    setBackupBusy(true);
     try {
       const source = await open({ directory: true, multiple: false, title: "Choose a wallpaper Lite backup folder" });
-      if (typeof source !== "string") { setBackupBusy(false); return; }
-      if (!window.confirm("Restore settings from this backup? Your current settings are kept in the restore-previous folder, and the wallpaper host restarts.")) { setBackupBusy(false); return; }
-      const summary = await hostAdapter.restoreSettingsBackup(source);
+      if (typeof source === "string") setPendingRestore(source);
+    } catch (reason) {
+      setError(describeError(reason, "Could not open the folder picker."));
+    }
+  }, []);
+
+  const cancelRestore = useCallback(() => setPendingRestore(null), []);
+
+  const restoreBackup = useCallback(async () => {
+    if (pendingRestore === null) return;
+    setError(null);
+    setBackupBusy(true);
+    try {
+      const summary = await hostAdapter.restoreSettingsBackup(pendingRestore);
       sessionStorage.setItem(RESTORE_NOTICE_KEY, summary.hostRestarted
         ? `Restored ${summary.fileCount} settings files.`
         : `Restored ${summary.fileCount} settings files, but the wallpaper host could not be restarted. Quit from the tray and start the app again.`);
       window.location.reload();
     } catch (reason) {
       setError(describeError(reason, "Could not restore the backup."));
+      setPendingRestore(null);
       setBackupBusy(false);
     }
-  }, []);
+  }, [pendingRestore]);
 
-  return { appInfo, autostart, autostartBusy, loadError, error, backupBusy, backupNotice, changeAutostart, createBackup, restoreBackup, openFolder };
+  return { appInfo, autostart, autostartBusy, loadError, error, backupBusy, backupNotice, pendingRestore, changeAutostart, createBackup, chooseRestore, cancelRestore, restoreBackup, openFolder };
 }

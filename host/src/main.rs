@@ -359,6 +359,7 @@ fn main() -> process::ExitCode {
                 PerformancePolicySettings::default()
             }
         };
+    wallpaper_renderer::set_sharp_upscaling(policy_settings.sharp_upscaling());
     let policy_settings = std::sync::Arc::new(std::sync::RwLock::new(policy_settings));
     let mut signal_monitor = match PerformanceSignalMonitor::start() {
         Ok(monitor) => {

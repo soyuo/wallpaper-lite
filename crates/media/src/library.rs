@@ -125,6 +125,10 @@ impl WallpaperLibrary {
 
     pub fn rename(&mut self, id: u64, display_name: impl Into<String>) -> Result<(), LibraryError> {
         let display_name = validate_display_name(display_name.into())?;
+        if !self.entries.iter().any(|entry| entry.id.get() == id) {
+            return Err(LibraryError::EntryNotFound);
+        }
+        let display_name = self.unique_display_name(id, display_name);
         let entry = self
             .entries
             .iter_mut()
@@ -132,6 +136,22 @@ impl WallpaperLibrary {
             .ok_or(LibraryError::EntryNotFound)?;
         entry.display_name = display_name;
         Ok(())
+    }
+
+    /// Returns `name`, or `name 2`, `name 3`, ... when another entry already uses it (case-insensitive).
+    fn unique_display_name(&self, id: u64, name: String) -> String {
+        let taken = |candidate: &str| {
+            self.entries
+                .iter()
+                .any(|entry| entry.id.get() != id && entry.display_name.to_lowercase() == candidate.to_lowercase())
+        };
+        if !taken(&name) {
+            return name;
+        }
+        (2u32..)
+            .map(|number| format!("{name} {number}"))
+            .find(|candidate| candidate.chars().count() <= MAX_DISPLAY_NAME_CHARS && !taken(candidate))
+            .unwrap_or(name)
     }
 
     pub fn set_favorite(&mut self, id: u64, favorite: bool) -> Result<(), LibraryError> {
@@ -614,6 +634,27 @@ mod tests {
             fs::read(&source).expect("source remains readable"),
             original
         );
+    }
+
+    #[test]
+    fn rename_adds_a_number_when_another_entry_has_the_name() {
+        let directory = TestDirectory::new();
+        let first = directory.path().join("a.png");
+        let second = directory.path().join("b.png");
+        fs::write(&first, b"a").expect("source should be written");
+        fs::write(&second, b"b").expect("source should be written");
+        let mut library = CatalogStore::at_path(directory.path().join("WallpaperLite/library.json"))
+            .load()
+            .expect("catalog should load");
+        let first_id = library.add(&first, "Mint Dunes", MediaKind::Image).expect("first entry");
+        let second_id = library.add(&second, "Other", MediaKind::Image).expect("second entry");
+
+        library.rename(second_id.get(), "mint dunes").expect("duplicate is renamed");
+        assert_eq!(library.get(second_id).expect("entry").display_name(), "mint dunes 2");
+        library.rename(second_id.get(), "mint dunes 2").expect("own name stays unchanged");
+        assert_eq!(library.get(second_id).expect("entry").display_name(), "mint dunes 2");
+        library.rename(first_id.get(), "Mint Dunes").expect("own name is not a duplicate");
+        assert_eq!(library.get(first_id).expect("entry").display_name(), "Mint Dunes");
     }
 
     #[test]

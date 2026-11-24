@@ -1,8 +1,16 @@
 import { formatTimecode, isTimelineCommitKey, moveSegmentHandle, parseTimecode } from "../../playback-time.mjs";
-import type { PlaybackSettings } from "../../host-adapter";
 import type { PlaybackState } from "./usePlayback";
 
-export function PlaybackPanelView({ hidden, state }: { hidden: boolean; state: PlaybackState }) {
+function segmentProblems(start: number | null, end: number | null, duration: number): string[] {
+  if (start === null || end === null) return ["Enter times as HH:MM:SS.mmm."];
+  const problems: string[] = [];
+  if (end <= start) problems.push("The end must be later than the start.");
+  else if (end - start < 500) problems.push("A segment must be at least 0.5 seconds.");
+  if (duration > 0 && end > duration) problems.push(`The segment can’t go past the video length (${formatTimecode(duration)}).`);
+  return problems;
+}
+
+export function PlaybackPage({ hidden, state, onOpenLibrary }: { hidden: boolean; state: PlaybackState; onOpenLibrary?(): void }) {
   const {
     playbackSettingsDraft,
     playbackMessage,
@@ -29,13 +37,22 @@ export function PlaybackPanelView({ hidden, state }: { hidden: boolean; state: P
   } = state;
 
   return (
-      <section className="ui-panel playback-panel" hidden={hidden} aria-labelledby="playback-title">
+      <section className="ui-panel playback-panel playback-layout" hidden={hidden} aria-labelledby="playback-title">
         <h2 id="playback-title">Video playback</h2>
         {playbackState?.wallpaperId == null ? (
-          <p>No video is active. Start a video from its library card.</p>
+          <div className="state-card playback-empty">
+            <p className="state-title">No video is active</p>
+            <p className="dashboard-detail">No video is active. Start a video from its library card.</p>
+            {onOpenLibrary && <button className="ui-button--primary" onClick={onOpenLibrary}>Open Library</button>}
+          </div>
         ) : (
           <>
-            <p className="playback-state">{playbackState.loadingVideo ? "Loading" : playbackState.state} · {playbackState.speedPercent}% · {playbackState.fpsLimit} FPS</p>
+            <div className="playback-stage">
+            <p className="playback-state chip" data-state={playbackState.state}><span className="dot" />{playbackState.loadingVideo ? "Loading" : playbackState.state === "ended" ? "Ended" : playbackState.state} · {playbackState.speedPercent}% · {playbackState.fpsLimit} FPS</p>
+            <p className="playback-chips">
+              <span className="chip"><span className="dot" />{playbackState.fpsLimit} FPS</span>
+              <span className="chip" data-state={playbackState.audioAvailable ? "connected" : "disconnected"}><span className="dot" />{playbackState.audioAvailable ? "Has audio" : "No audio"}</span>
+            </p>
             {playbackState.lastError && <p className="playback-message" role="status">Host playback error: {playbackState.lastError}</p>}
             <div className="playback-timeline">
               <label htmlFor="playback-seek">Timeline</label>
@@ -74,30 +91,30 @@ export function PlaybackPanelView({ hidden, state }: { hidden: boolean; state: P
               <input value={seekTimeDraft} onChange={(event) => { setSeekTimeDirty(true); setSeekTimeDraft(event.currentTarget.value); }} onKeyDown={(event) => { if (event.key === "Enter") void seekTimecode(); }} onBlur={() => { if (parseTimecode(seekTimeDraft) === null) setPlaybackMessage("Enter time as HH:MM:SS.mmm."); }} />
               <button disabled={playbackBusy} onClick={() => void seekTimecode()}>Seek</button>
             </label>
+            </div>
             {playbackSettingsDraft?.wallpaperId === playbackState.wallpaperId && (
               <fieldset className="playback-settings">
                 <legend>Loop and playback settings</legend>
-                <label>
-                  <span>Loop mode</span>
-                  <select
-                    value={playbackSettingsDraft.loopMode}
-                    onChange={(event) => {
-                      const loopMode = event.currentTarget.value as PlaybackSettings["loopMode"];
-                      const segment = loopMode === "segment"
-                        ? playbackSettingsDraft.segment ?? { startMs: 0, endMs: playbackDurationMs }
-                        : null;
-                      setPlaybackSettingsDraft({ ...playbackSettingsDraft, loopMode, segment });
-                      if (loopMode === "segment" && segment) {
-                        setSegmentStartDraft(formatTimecode(segment.startMs));
-                        setSegmentEndDraft(formatTimecode(segment.endMs));
-                      }
-                    }}
-                  >
-                    <option value="disabled">Disabled</option>
-                    <option value="full">Full video</option>
-                    <option value="segment">Segment</option>
-                  </select>
-                </label>
+                <div className="seg" role="group" aria-label="Loop mode">
+                  {([["disabled", "Disabled"], ["full", "Full video"], ["segment", "Segment"]] as const).map(([loopMode, label]) => (
+                    <button
+                      key={loopMode}
+                      type="button"
+                      aria-pressed={playbackSettingsDraft.loopMode === loopMode}
+                      className={playbackSettingsDraft.loopMode === loopMode ? "on" : undefined}
+                      onClick={() => {
+                        const segment = loopMode === "segment"
+                          ? playbackSettingsDraft.segment ?? { startMs: 0, endMs: playbackDurationMs }
+                          : null;
+                        setPlaybackSettingsDraft({ ...playbackSettingsDraft, loopMode, segment });
+                        if (loopMode === "segment" && segment) {
+                          setSegmentStartDraft(formatTimecode(segment.startMs));
+                          setSegmentEndDraft(formatTimecode(segment.endMs));
+                        }
+                      }}
+                    >{label}</button>
+                  ))}
+                </div>
                 {playbackSettingsDraft.loopMode === "segment" && (
                   <div className="playback-segment-fields">
                     <label>
@@ -144,7 +161,9 @@ export function PlaybackPanelView({ hidden, state }: { hidden: boolean; state: P
                     </label>
                     <label><span>Segment start</span><input value={segmentStartDraft} onChange={(event) => setSegmentStartDraft(event.currentTarget.value)} placeholder="00:00:00.000" /></label>
                     <label><span>Segment end</span><input value={segmentEndDraft} onChange={(event) => setSegmentEndDraft(event.currentTarget.value)} placeholder="00:00:00.000" /></label>
-                    <p>Segment must be at least 500 ms and fit within the video duration.</p>
+                    <ul className="playback-segment-errors" role="status">
+                      {segmentProblems(parseTimecode(segmentStartDraft), parseTimecode(segmentEndDraft), playbackDurationMs).map((problem) => <li key={problem}>{problem}</li>)}
+                    </ul>
                   </div>
                 )}
                 <label><span>Speed</span><select value={playbackSettingsDraft.speedPercent} onChange={(event) => setPlaybackSettingsDraft({ ...playbackSettingsDraft, speedPercent: Number(event.currentTarget.value) })}>{[25, 50, 75, 100, 125, 150, 200].map((value) => <option key={value} value={value}>{value}%</option>)}</select></label>
@@ -154,7 +173,7 @@ export function PlaybackPanelView({ hidden, state }: { hidden: boolean; state: P
                 {!playbackState.audioAvailable && <p>This video has no audio track.</p>}
                 {playbackState.audioAvailable && playbackState.audioEffectiveMuted && playbackSettingsDraft.muted && <p>Audio is muted.</p>}
                 {playbackState.audioAvailable && playbackState.audioEffectiveMuted && !playbackSettingsDraft.muted && playbackState.speedPercent !== 100 && <p>Audio is muted while video runs at non-1x speed.</p>}
-                <button disabled={playbackBusy} onClick={() => void applyPlaybackSettingsDraft()}>Apply playback settings</button>
+                <button className="ui-button--primary" disabled={playbackBusy} onClick={() => void applyPlaybackSettingsDraft()}>Apply playback settings</button>
               </fieldset>
             )}
           </>

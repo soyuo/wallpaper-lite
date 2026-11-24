@@ -170,6 +170,7 @@ export interface PerformancePolicySettings {
   sessionLockAction: PolicyAction;
   batteryAction: PolicyAction;
   batteryFpsLimit: number | null;
+  sharpUpscaling: boolean;
 }
 
 export interface ActivePerformancePolicyCauses {

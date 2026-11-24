@@ -22,6 +22,12 @@ pub struct PerformancePolicySettings {
     battery_action: PolicyAction,
     #[serde(default)]
     battery_fps_limit: Option<u16>,
+    #[serde(default = "default_sharp_upscaling")]
+    sharp_upscaling: bool,
+}
+
+const fn default_sharp_upscaling() -> bool {
+    true
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -44,6 +50,8 @@ impl<'de> Deserialize<'de> for PerformancePolicySettings {
             battery_action: PolicyAction,
             #[serde(default)]
             battery_fps_limit: Option<u16>,
+            #[serde(default = "default_sharp_upscaling")]
+            sharp_upscaling: bool,
         }
 
         let value = WireSettings::deserialize(deserializer)?;
@@ -70,6 +78,7 @@ impl<'de> Deserialize<'de> for PerformancePolicySettings {
             session_lock_action: value.session_lock_action,
             battery_action: value.battery_action,
             battery_fps_limit: value.battery_fps_limit,
+            sharp_upscaling: value.sharp_upscaling,
         })
     }
 }
@@ -82,6 +91,7 @@ impl Default for PerformancePolicySettings {
             session_lock_action: PolicyAction::PausePlayback,
             battery_action: PolicyAction::Continue,
             battery_fps_limit: None,
+            sharp_upscaling: true,
         }
     }
 }
@@ -98,7 +108,17 @@ impl PerformancePolicySettings {
             session_lock_action,
             battery_action,
             battery_fps_limit: None,
+            sharp_upscaling: true,
         }
+    }
+
+    pub const fn sharp_upscaling(&self) -> bool {
+        self.sharp_upscaling
+    }
+
+    pub const fn with_sharp_upscaling(mut self, enabled: bool) -> Self {
+        self.sharp_upscaling = enabled;
+        self
     }
 
     pub const fn fullscreen_action(&self) -> PolicyAction {
@@ -223,6 +243,22 @@ impl PerformanceDecision {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sharp_upscaling_is_on_by_default_and_for_files_without_the_field() {
+        assert!(PerformancePolicySettings::default().sharp_upscaling());
+        let old = r#"{"schemaVersion":1,"fullscreenAction":"continue","sessionLockAction":"continue","batteryAction":"continue"}"#;
+        let loaded: PerformancePolicySettings = serde_json::from_str(old).unwrap();
+        assert!(loaded.sharp_upscaling());
+    }
+
+    #[test]
+    fn sharp_upscaling_can_be_turned_off_and_round_trips() {
+        let off = PerformancePolicySettings::default().with_sharp_upscaling(false);
+        let json = serde_json::to_string(&off).unwrap();
+        let loaded: PerformancePolicySettings = serde_json::from_str(&json).unwrap();
+        assert!(!loaded.sharp_upscaling());
+    }
 
     #[test]
     fn defaults_pause_on_fullscreen_and_session_lock() {

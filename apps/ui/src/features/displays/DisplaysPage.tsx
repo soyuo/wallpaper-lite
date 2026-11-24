@@ -1,11 +1,24 @@
+import { NumberField } from "../../components/NumberField";
+import { friendlyDisplayName } from "../../format";
+import { useState } from "react";
+
+import { makeDisplayEdits } from "../../display-manager.mjs";
 import type { DisplaysState } from "./useDisplays";
 import type { DisplayPresentationMode } from "../../host-adapter";
 
-export function DisplayPanel({ hidden, state }: { hidden: boolean; state: DisplaysState }) {
+export function DisplaysPage({ hidden, state }: { hidden: boolean; state: DisplaysState }) {
   const {
     displaySnapshot, displayMode, displayEdits, displayStatus, displayLoading, displaySaving,
     setDisplayMode, setDisplayEdits, refreshDisplayManager, saveDisplayAssignments,
   } = state;
+  const saved = displaySnapshot ? makeDisplayEdits(displaySnapshot) : null;
+  const dirty = saved !== null && (saved.mode !== displayMode || JSON.stringify(saved.edits) !== JSON.stringify(displayEdits));
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const MODES: { value: DisplayPresentationMode; label: string }[] = [
+    { value: "independent", label: "Independent" },
+    { value: "duplicate", label: "Duplicate" },
+    { value: "span", label: "Span" },
+  ];
 
   return (
       <section className="ui-panel display-manager" hidden={hidden} aria-labelledby="display-manager-title">
@@ -14,27 +27,36 @@ export function DisplayPanel({ hidden, state }: { hidden: boolean; state: Displa
             <h2 id="display-manager-title">Displays</h2>
             <p>Assign wallpapers and per-display frame-rate limits.</p>
           </div>
-          <button disabled={displayLoading || displaySaving} onClick={() => void refreshDisplayManager()}>
-            {displayLoading ? "Refreshing..." : "Refresh displays"}
-          </button>
+          <div className="display-toolbar">
+            <div className="seg" role="group" aria-label="Presentation mode">
+              {MODES.map((mode) => (
+                <button key={mode.value} aria-pressed={displayMode === mode.value} className={displayMode === mode.value ? "on" : undefined} disabled={displaySaving || !displaySnapshot} onClick={() => setDisplayMode(mode.value)}>{mode.label}</button>
+              ))}
+            </div>
+            <button disabled={displayLoading || displaySaving} onClick={() => void refreshDisplayManager()}>
+              {displayLoading ? "Refreshing..." : "Refresh displays"}
+            </button>
+          </div>
         </div>
         {displaySnapshot ? (
           <>
-            <label className="display-mode-control">
-              Presentation mode
-              <select
-                aria-label="Presentation mode"
-                disabled={displaySaving}
-                value={displayMode}
-                onChange={(event) => setDisplayMode(event.currentTarget.value as DisplayPresentationMode)}
-              >
-                <option value="independent">Independent</option>
-                <option value="duplicate">Duplicate</option>
-                <option value="span">Span</option>
-              </select>
-            </label>
+            <div className="display-map" role="group" aria-label="Monitor map">
+              {displaySnapshot.displays.map((display, index) => (
+                <button
+                  key={display.id}
+                  className="display-tile"
+                  aria-pressed={(selectedId ?? displaySnapshot.displays[0]?.id) === display.id}
+                  style={{ flexGrow: display.width }}
+                  onClick={() => setSelectedId(display.id)}
+                >
+                  <span className="display-tile-index">{index + 1}</span>
+                  {saved && JSON.stringify(saved.edits[display.id]) !== JSON.stringify(displayEdits[display.id]) && <span className="chip display-tile-badge">Changed</span>}
+                  <span className="display-tile-caption"><span>{friendlyDisplayName(display.name)}</span><span>{display.width}×{display.height}</span></span>
+                </button>
+              ))}
+            </div>
             <div className="display-manager-list">
-              {displaySnapshot.displays.map((display) => {
+              {displaySnapshot.displays.filter((display) => display.id === (selectedId ?? displaySnapshot.displays[0]?.id)).map((display) => {
                 const edit = displayEdits[display.id] ?? { wallpaperId: "", fpsOverride: "" };
                 const savedProfile = displaySnapshot.profiles.find((profile) => profile.displayId === display.id);
                 const assignedWallpaper = savedProfile
@@ -43,7 +65,7 @@ export function DisplayPanel({ hidden, state }: { hidden: boolean; state: Displa
                 const showWallpaper = displayMode === "independent" || display.isPrimary;
                 return (
                   <article className="display-manager-card" key={display.id}>
-                    <h3>{display.name}{display.isPrimary ? " · Primary" : ""}</h3>
+                    <h3>{friendlyDisplayName(display.name)}{display.isPrimary ? " · Primary" : ""}</h3>
                     <code className="display-stable-id" title={display.id}>Stable ID: {display.id}</code>
                     <p>{display.deviceName} · {display.width} × {display.height} · {display.refreshRate ?? "Refresh rate unavailable"} · {display.dpiScalePercent}% scale ({display.effectiveDpi.toFixed(1)} DPI)</p>
                     <p className={savedProfile && assignedWallpaper?.availability !== "available" ? "display-assignment-warning" : "display-assignment-state"}>
@@ -57,7 +79,7 @@ export function DisplayPanel({ hidden, state }: { hidden: boolean; state: Displa
                       <label>
                         {displayMode === "independent" ? "Wallpaper" : "Shared wallpaper"}
                         <select
-                          aria-label={`${display.name} wallpaper`}
+                          aria-label={`${friendlyDisplayName(display.name)} wallpaper`}
                           disabled={displaySaving}
                           value={edit.wallpaperId}
                           onChange={(event) => {
@@ -80,9 +102,8 @@ export function DisplayPanel({ hidden, state }: { hidden: boolean; state: Displa
                     )}
                     <label>
                       FPS override
-                      <input
-                        aria-label={`${display.name} FPS override`}
-                        type="number"
+                      <NumberField
+                        aria-label={`${friendlyDisplayName(display.name)} FPS override`}
                         min={1}
                         max={120}
                         step={1}
@@ -120,8 +141,15 @@ export function DisplayPanel({ hidden, state }: { hidden: boolean; state: Displa
                 </ul>
               </div>
             )}
+            {dirty && (
+              <p className="home-banner display-dirty" role="status">
+                <span>You have unsaved changes.</span>
+                <button disabled={displaySaving || displayLoading} onClick={() => void refreshDisplayManager()}>Revert</button>
+                <button className="ui-button--primary" disabled={displaySaving || displayLoading} onClick={() => void saveDisplayAssignments()}>Save and apply</button>
+              </p>
+            )}
             <div className="display-manager-actions">
-              <button disabled={displaySaving || displayLoading} onClick={() => void saveDisplayAssignments()}>
+              <button className="ui-button--primary" disabled={displaySaving || displayLoading} onClick={() => void saveDisplayAssignments()}>
                 {displaySaving ? "Applying..." : "Save and apply"}
               </button>
             </div>

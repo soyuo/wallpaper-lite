@@ -1303,7 +1303,7 @@ async fn start_video(
         ResponseResult::PlaybackState(_) => {}
         _ => return Err("video_load_request"),
     }
-    let loaded = wait_for_video_load(events).await?;
+    let loaded = wait_for_video_load(events, wallpaper_id).await?;
     if loaded.last_error.is_some() || loaded.wallpaper_id != Some(wallpaper_id) {
         return Err("video_load");
     }
@@ -1362,11 +1362,16 @@ async fn start_video(
 
 async fn wait_for_video_load(
     events: &mut tokio::sync::watch::Receiver<PlaybackStateEvent>,
+    wallpaper_id: u64,
 ) -> Result<PlaybackStateEvent, &'static str> {
     let deadline = Instant::now() + Duration::from_secs(20);
     loop {
         let state = events.borrow().clone();
-        if !state.loading_video {
+        // The watch value can still be the state from before the load request was
+        // processed (not loading, other wallpaper, no error). That is not a result.
+        if !state.loading_video
+            && (state.wallpaper_id == Some(wallpaper_id) || state.last_error.is_some())
+        {
             return Ok(state);
         }
         let remaining = deadline.saturating_duration_since(Instant::now());
