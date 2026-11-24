@@ -15,11 +15,12 @@
         "label": "main",
         "title": "wallpaper Lite",
         "visible": false,
+        "decorations": false,
         "width": 900,
         "height": 600,
         "minWidth": 360,
         "minHeight": 480,
-        "zoomHotkeysEnabled": true
+        "zoomHotkeysEnabled": false
       }
     ],
     "security": {

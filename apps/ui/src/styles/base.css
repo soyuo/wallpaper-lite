@@ -7,7 +7,7 @@
 :root {
   color-scheme: dark;
   color: var(--color-text);
-  background: var(--color-bg);
+  background: var(--backdrop-gradient) fixed, var(--color-bg);
   font-family: var(--font-family);
   font-size: var(--font-size-md);
   line-height: 1.5;
@@ -21,6 +21,26 @@ body {
   min-height: 100vh;
   margin: 0;
 }
+
+/* Sky scene behind the glass (see components/Backdrop.tsx) */
+.backdrop {
+  position: fixed;
+  z-index: -1;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.backdrop-glow,
+.backdrop-sun {
+  position: absolute;
+  border-radius: 50%;
+}
+
+.backdrop-glow--mint { left: -6%; top: 30%; width: 32.5rem; height: 32.5rem; background: #8fe3cf; opacity: var(--glow-opacity-a); filter: blur(90px); }
+.backdrop-glow--peach { right: -4%; bottom: 6%; width: 35rem; height: 35rem; background: #ffc999; opacity: var(--glow-opacity-b); filter: blur(100px); }
+.backdrop-sun { right: 14%; top: 12%; width: 6.875rem; height: 6.875rem; background: #fff; box-shadow: 0 0 90px 30px rgb(255 255 255 / 65%); opacity: var(--backdrop-sun-opacity); }
+.backdrop svg { position: absolute; bottom: 0; left: 0; width: 100%; height: 46%; opacity: var(--backdrop-wave-opacity); }
 
 h1,
 h2,
@@ -61,31 +81,34 @@ legend {
 fieldset {
   min-width: 0;
   padding: var(--space-3);
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--glass-border);
   border-radius: var(--radius-md);
 }
 
 /* Controls. :where() keeps specificity at zero so class rules can refine them. */
 :where(button) {
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--color-border-strong);
+  min-height: var(--control-height);
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--glass-border);
   border-radius: var(--radius-sm);
   color: inherit;
-  background: var(--color-surface);
+  background: var(--color-surface-muted);
   font: inherit;
   font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-regular);
+  font-weight: var(--font-weight-semibold);
   cursor: pointer;
+  transition: background 0.15s, transform 0.15s;
 }
 
 :where(select, input:not([type="checkbox"], [type="radio"], [type="range"])) {
   width: 100%;
   min-width: 0;
+  min-height: var(--control-height);
   padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--color-border-strong);
+  border: 1px solid var(--glass-border);
   border-radius: var(--radius-sm);
   color: inherit;
-  background: var(--color-surface);
+  background: var(--color-surface-muted);
   font: inherit;
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-regular);
@@ -100,7 +123,8 @@ fieldset {
 }
 
 :where(button:hover:not(:disabled)) {
-  background: var(--color-surface-muted);
+  background: var(--color-surface-subtle);
+  filter: brightness(1.12);
 }
 
 :where(button:active:not(:disabled)) {
@@ -123,12 +147,14 @@ fieldset {
 
 .ui-button--primary {
   border-color: transparent;
-  color: var(--color-on-accent);
-  background: var(--color-accent);
+  color: var(--color-primary-text);
+  background: var(--color-primary-bg);
+  box-shadow: 0 6px 18px rgb(24 50 130 / 28%);
 }
 
 .ui-button--primary:hover:not(:disabled) {
-  background: var(--color-accent-hover);
+  background: var(--color-primary-bg);
+  filter: brightness(0.96);
 }
 
 .visually-hidden {
@@ -177,24 +203,75 @@ fieldset {
   opacity: 0.5;
 }
 
-/* Checkbox */
+/* Checkbox: pill toggle */
 :where(input[type="checkbox"]) {
-  width: 1.1rem;
-  height: 1.1rem;
+  position: relative;
+  width: 3rem;
+  height: 1.75rem;
+  flex: none;
   margin: 0;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-pill);
+  background: var(--color-border-strong);
+  appearance: none;
   cursor: pointer;
+  transition: background 0.15s;
+}
+
+:where(input[type="checkbox"])::after {
+  position: absolute;
+  top: 0.18rem;
+  left: 0.2rem;
+  width: 1.2rem;
+  height: 1.2rem;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 2px 6px rgb(0 0 0 / 25%);
+  content: "";
+  transition: transform 0.15s;
+}
+
+:where(input[type="checkbox"]:checked) {
+  background: var(--color-accent);
+}
+
+:where(input[type="checkbox"]:checked)::after {
+  transform: translateX(1.2rem);
 }
 
 /* Range slider */
 :where(input[type="range"]) {
-  height: 1.25rem;
+  height: 1.5rem;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  appearance: none;
   cursor: pointer;
+}
+
+:where(input[type="range"])::-webkit-slider-runnable-track {
+  height: 0.4rem;
+  border-radius: var(--radius-pill);
+  background: var(--color-border-strong);
+}
+
+:where(input[type="range"])::-webkit-slider-thumb {
+  width: 1.25rem;
+  height: 1.25rem;
+  margin-top: -0.43rem;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 2px 8px rgb(24 50 130 / 45%);
+  appearance: none;
 }
 
 /* Scrollbars */
 * {
-  scrollbar-color: var(--color-border-strong) transparent;
-  scrollbar-width: thin;
+  scrollbar-width: none;
+}
+
+*::-webkit-scrollbar {
+  display: none;
 }
 
 ::selection {
@@ -210,4 +287,49 @@ fieldset {
 :where(output) {
   color: var(--color-text-muted);
   font-variant-numeric: tabular-nums;
+}
+
+/* The design's number fields have no +/- spinner. */
+input[type="number"] {
+  appearance: textfield;
+  -moz-appearance: textfield;
+  font-variant-numeric: tabular-nums;
+}
+
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  margin: 0;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+.number-field {
+  position: relative;
+  display: block;
+}
+
+.number-field > input {
+  width: 100%;
+  padding-right: 4.75rem;
+}
+
+.number-field > button {
+  position: absolute;
+  top: 50%;
+  display: grid;
+  width: 2rem;
+  height: 2rem;
+  min-height: 0;
+  place-items: center;
+  padding: 0;
+  border-radius: 0.6rem;
+  transform: translateY(-50%);
+}
+
+.number-field > button:nth-of-type(1) { right: 2.6rem; }
+.number-field > button:nth-of-type(2) { right: 0.4rem; }
+
+/* Code-like text (paths, IDs) uses the UI font, as in the design. */
+code, kbd, samp, pre {
+  font-family: Inter, var(--font-family);
 }

@@ -13,6 +13,9 @@ export interface LibraryCardProps {
   actionBusy: boolean;
   renaming: boolean;
   renameDraft: string;
+  savedName: string;
+  selected: boolean;
+  onSelect(): void;
   onRequestPreview(id: number): void;
   onLocate(entry: LibraryEntry): void;
   onRemove(entry: LibraryEntry): void;
@@ -35,6 +38,9 @@ export function LibraryCard({
   actionBusy,
   renaming,
   renameDraft,
+  savedName,
+  selected,
+  onSelect,
   onRequestPreview,
   onLocate,
   onRemove,
@@ -75,8 +81,8 @@ export function LibraryCard({
   const unavailable = entry.availability !== "available";
 
   return (
-    <li className="library-card" ref={cardRef}>
-      <div className="library-thumbnail" aria-label={`${entry.displayName} thumbnail`}>
+    <li className={`library-card${selected ? " is-selected" : ""}`} ref={cardRef}>
+      <div className="library-thumbnail" aria-label={`${entry.displayName} thumbnail`} onClick={onSelect}>
         {preview ? (
           <img src={preview.thumbnailDataUrl} alt={`${entry.displayName} preview`} />
         ) : unavailable ? (
@@ -84,32 +90,62 @@ export function LibraryCard({
         ) : previewError ? (
           <span>Preview unavailable</span>
         ) : previewLoading ? (
-          <span>Loading preview...</span>
+          <span className="skeleton">Loading preview...</span>
         ) : (
           <span>Preview pending</span>
         )}
-      </div>
-      <div className="library-card-content">
+        <span className="chip chip-glass library-kind">{entry.mediaKind === "video" ? "Video" : "Image"}</span>
         {renaming ? (
-          <form className="library-rename-form" onSubmit={(event) => {
-            event.preventDefault();
-            onSubmitRename(entry);
-          }}>
-            <label>
-              <span className="visually-hidden">New name for {entry.displayName}</span>
+          <form
+            className="tile-cap tile-cap--edit"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (renameDraft.trim()) onSubmitRename(entry);
+            }}
+            onKeyDown={(event) => { if (event.key === "Escape") onCancelRename(); }}
+          >
+            <span className="tile-cap-row">
               <input
                 autoFocus
+                aria-invalid={!renameDraft.trim()}
+                aria-label={`New name for ${entry.displayName}`}
+                className="field"
                 maxLength={256}
+                placeholder="Enter a name"
                 value={renameDraft}
                 onChange={(event) => onRenameDraftChange(event.currentTarget.value)}
               />
-            </label>
-            <button disabled={actionBusy} type="submit">Save name</button>
-            <button disabled={actionBusy} onClick={onCancelRename} type="button">Cancel</button>
+              <span className="tile-cap-size">{formatBytes(preview?.sizeBytes ?? entry.sizeBytes)}</span>
+            </span>
+            <span className="tile-cap-hint" role="status">
+              {!renameDraft.trim() ? (
+                <><i aria-hidden="true">!</i>A name is required to save</>
+              ) : savedName !== renameDraft.trim() ? (
+                <><i aria-hidden="true">!</i>Will be saved as “{savedName}”</>
+              ) : (
+                "Enter to save · Esc to cancel"
+              )}
+            </span>
           </form>
         ) : (
-          <h3>{entry.displayName}</h3>
+          <span className="tile-cap">
+            <span className="tile-cap-name">
+              <span title={entry.displayName}>{entry.displayName}</span>
+              <button
+                aria-label={`Rename ${entry.displayName}`}
+                className="tile-cap-edit"
+                disabled={actionBusy}
+                onClick={() => onStartRename(entry)}
+                type="button"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16Z" /></svg>
+              </button>
+            </span>
+            <span className="tile-cap-size">{unavailable ? "—" : formatBytes(preview?.sizeBytes ?? entry.sizeBytes)}</span>
+          </span>
         )}
+      </div>
+      <div className="library-card-content">
         <p className="library-card-path" title={entry.sourcePath}>{entry.sourcePath}</p>
         <p className="library-card-meta">
           {entry.mediaKind === "video" ? "Video" : "Image"} · {formatBytes(preview?.sizeBytes ?? entry.sizeBytes)}
@@ -130,7 +166,6 @@ export function LibraryCard({
           >
             {entry.isFavorite ? "★ Favorited" : "☆ Favorite"}
           </button>
-          {!renaming && <button disabled={actionBusy} onClick={() => onStartRename(entry)}>Rename</button>}
           <button disabled={actionBusy} onClick={() => onRemove(entry)}>Remove entry</button>
           {unavailable && (
             <>

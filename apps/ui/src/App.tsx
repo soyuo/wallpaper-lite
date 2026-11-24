@@ -1,18 +1,28 @@
 import { useEffect, useState } from "react";
 
+import { Backdrop } from "./components/Backdrop";
 import "./styles/tokens.css";
 import "./styles/base.css";
+import "./styles/shell.css";
+import "./styles/pages.css";
 import "./App.css";
+import { APP_PAGES } from "./components/app-pages";
+import type { AppPage } from "./components/app-pages";
+import { AppDock } from "./components/AppDock";
+import { AppTopBar } from "./components/AppTopBar";
+import { FirstRun } from "./components/FirstRun";
+import { Splash } from "./components/Splash";
 import type { HostState } from "./dashboard-view.mjs";
 import { hostAdapter } from "./host-adapter";
+import { useZoom } from "./use-zoom";
 import type { LibraryEntry } from "./host-adapter";
-import { PerformancePanels } from "./features/performance/PerformancePanels";
+import { PerformancePage } from "./features/performance/PerformancePage";
 import { usePerformance } from "./features/performance/usePerformance";
-import { DisplayPanel } from "./features/displays/DisplayPanel";
+import { DisplaysPage } from "./features/displays/DisplaysPage";
 import { useDisplays } from "./features/displays/useDisplays";
-import { PlaybackPanelView } from "./features/playback/PlaybackPanelView";
+import { PlaybackPage } from "./features/playback/PlaybackPage";
 import { usePlayback } from "./features/playback/usePlayback";
-import { EditorPanel } from "./features/editor/EditorPanel";
+import { EditorPage } from "./features/editor/EditorPage";
 import { useEditor } from "./features/editor/useEditor";
 import { DashboardPage } from "./features/dashboard/DashboardPage";
 import { LibraryPage } from "./features/library/LibraryPage";
@@ -22,18 +32,6 @@ import type { ThemeChoice } from "./features/settings/SettingsPage";
 import { useSettings } from "./features/settings/useSettings";
 import { describeError, isRetryable } from "./features/errors/error-message";
 import { ErrorNotice } from "./features/errors/ErrorNotice";
-
-type AppPage = "dashboard" | "library" | "editor" | "displays" | "playback" | "performance" | "settings";
-
-const APP_PAGES: { id: AppPage; label: string }[] = [
-  { id: "dashboard", label: "Dashboard" },
-  { id: "library", label: "Library" },
-  { id: "editor", label: "Editor" },
-  { id: "displays", label: "Monitors" },
-  { id: "playback", label: "Playback" },
-  { id: "performance", label: "Performance" },
-  { id: "settings", label: "Settings" },
-];
 
 function App() {
   const [checkingHost, setCheckingHost] = useState(false);
@@ -46,7 +44,10 @@ function App() {
   const playbackState = usePlayback();
   const libraryState = useLibrary();
   const [page, setPage] = useState<AppPage>("dashboard");
-  const settingsState = useSettings(page === "settings");
+  const [splashOpen, setSplashOpen] = useState(true);
+  useZoom();
+  const [firstRunOpen, setFirstRunOpen] = useState(() => localStorage.getItem("wallpaper-lite.first-run-done") === null);
+  const settingsState = useSettings(page === "settings" || firstRunOpen);
   const { previews, setPreviews, setRecentIds } = libraryState;
   const editorState = useEditor({ previews, setPreviews, setRecentIds, onOpen: () => setPage("editor") });
   const [theme, setTheme] = useState<ThemeChoice>(() => {
@@ -145,32 +146,13 @@ function App() {
   }
 
   return (
-    <div className="app-layout">
-      <nav className="app-sidebar" aria-label="Main">
-        <p className="app-brand">wallpaper Lite</p>
-        <ul>
-          {APP_PAGES.map((item) => (
-            <li key={item.id}>
-              <button className="app-nav-item" aria-current={page === item.id ? "page" : undefined} onClick={() => setPage(item.id)}>
-                {item.label}
-                {item.id === "editor" && editorState.editorDirty && <span className="app-nav-dirty" role="img" aria-label="Unapplied changes"> •</span>}
-              </button>
-            </li>
-          ))}
-        </ul>
-      </nav>
-    <main className="app-shell">
+    <div className="app-shell">
+      <Backdrop />
+      <AppTopBar hostState={hostState} hostStatus={hostStatus} checking={checkingHost} onCheck={checkHost} />
+    <main className="app-main">
       <header className="app-header">
-        <div>
-          <h1>{APP_PAGES.find((item) => item.id === page)?.label}</h1>
-          <p>{activeWallpaper ? `Now playing: ${activeWallpaper.displayName}` : "No video wallpaper is playing"}</p>
-        </div>
-        <div className="app-header-actions">
-          <p aria-live="polite" className="host-status" role="status">{hostStatus}</p>
-          <button className="ui-button--primary" disabled={checkingHost} onClick={checkHost}>
-            {checkingHost ? "Checking..." : "Check wallpaper host"}
-          </button>
-        </div>
+        <h1>{APP_PAGES.find((item) => item.id === page)?.label}</h1>
+        <p>{activeWallpaper ? `Now playing: ${activeWallpaper.displayName}` : "No video wallpaper is playing"}</p>
       </header>
 
       <ErrorNotice
@@ -179,15 +161,14 @@ function App() {
         retrying={checkingHost}
       />
 
-      <PerformancePanels hidden={page !== "performance"} state={performanceState} />
+      <PerformancePage hidden={page !== "performance"} state={performanceState} />
 
       <SettingsPage hidden={page !== "settings"} state={settingsState} theme={theme} onThemeChange={setTheme} />
 
-      <DisplayPanel hidden={page !== "displays"} state={displaysState} />
+      <DisplaysPage hidden={page !== "displays"} state={displaysState} />
 
-      <PlaybackPanelView hidden={page !== "playback"} state={playbackState} />
-      {page === "editor" && !editorState.editorEntry && (<p className="app-empty">Choose a wallpaper in the Library and press Edit.</p>)}
-      <EditorPanel hidden={page !== "editor"} state={editorState} previews={previews} />
+      <PlaybackPage hidden={page !== "playback"} state={playbackState} onOpenLibrary={() => setPage("library")} />
+      <EditorPage hidden={page !== "editor"} state={editorState} previews={previews} />
       <DashboardPage
         hidden={page !== "dashboard"}
         hostState={hostState}
@@ -195,12 +176,24 @@ function App() {
         onStartHost={() => void retryHost()}
         playback={playbackState}
         library={libraryState}
+        displaySnapshot={displaySnapshot}
         onStartPlayback={(entry) => void playbackState.startPlayback(entry)}
         onOpenEditor={openInEditor}
         onOpenLibrary={() => setPage("library")}
       />
       <LibraryPage hidden={page !== "library"} state={libraryState} onOpenEditor={openInEditor} onStartPlayback={(entry) => void playbackState.startPlayback(entry)} />
     </main>
+      {splashOpen && <Splash ready={hostState !== "checking"} onDone={() => setSplashOpen(false)} />}
+      {!splashOpen && firstRunOpen && (
+        <FirstRun
+          library={libraryState}
+          settings={settingsState}
+          theme={theme}
+          onThemeChange={setTheme}
+          onFinish={() => { localStorage.setItem("wallpaper-lite.first-run-done", "1"); setFirstRunOpen(false); }}
+        />
+      )}
+      <AppDock page={page} editorDirty={editorState.editorDirty} onNavigate={setPage} />
     </div>
   );
 }

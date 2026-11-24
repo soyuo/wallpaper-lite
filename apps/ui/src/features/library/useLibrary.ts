@@ -1,3 +1,4 @@
+import { uniqueDisplayName } from "./labels";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 
@@ -11,6 +12,7 @@ export function useLibrary() {
   const [recentIds, setRecentIds] = useState<number[]>([]);
   const [librarySearch, setLibrarySearch] = useState("");
   const [favoritesOnly, setFavoritesOnly] = useState(false);
+  const [kindFilter, setKindFilter] = useState<"all" | "image" | "video" | "missing">("all");
   const [libraryBusy, setLibraryBusy] = useState(false);
   const [libraryMessage, setLibraryMessage] = useState("");
   const [previews, setPreviews] = useState<Record<number, LibraryPreview>>({});
@@ -63,9 +65,10 @@ export function useLibrary() {
     const query = librarySearch.trim().toLocaleLowerCase();
     return library.filter((entry) =>
       (!favoritesOnly || entry.isFavorite) &&
+      (kindFilter === "all" || (kindFilter === "missing" ? entry.availability !== "available" : entry.mediaKind === kindFilter)) &&
       (!query || `${entry.displayName}\n${entry.sourcePath}`.toLocaleLowerCase().includes(query)),
     );
-  }, [favoritesOnly, library, librarySearch]);
+  }, [favoritesOnly, kindFilter, library, librarySearch]);
   const visibleLibrary = filteredLibrary.slice(0, visibleCount);
   const recentLibrary = useMemo(() => recentIds
     .map((id) => library.find((entry) => entry.id === id))
@@ -163,7 +166,7 @@ export function useLibrary() {
       await hostAdapter.renameLibraryEntry(entry.id, renameDraft);
       setRenamingId(null);
       setRenameDraft("");
-      setLibraryMessage(`Renamed to "${renameDraft.trim()}".`);
+      setLibraryMessage(`Renamed to "${uniqueDisplayName(library, entry.id, renameDraft)}".`);
       await refreshLibrary();
     } catch {
       setLibraryMessage("Could not rename this entry. Use a name of 1 to 256 characters.");
@@ -194,6 +197,8 @@ export function useLibrary() {
     recentLibrary,
     librarySearch,
     favoritesOnly,
+    kindFilter,
+    setKindFilter,
     libraryBusy,
     libraryMessage,
     previews,

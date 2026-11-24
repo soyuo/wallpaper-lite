@@ -7,6 +7,7 @@ export function ErrorNotice({ message, onRetry, retrying = false }: {
   if (!message) return null;
   return (
     <div className="error-notice" role="alert">
+      <span className="error-notice-icon" aria-hidden="true">!</span>
       <p>{message}</p>
       {onRetry && (
         <button disabled={retrying} onClick={onRetry}>{retrying ? "Trying again..." : "Try again"}</button>

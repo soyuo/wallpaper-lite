@@ -508,6 +508,17 @@ fn recovery_loop(
                     .as_deref()
                     .is_some_and(|active| same_source_path(active, &source_path));
                 let had_presenter = presenter.is_some();
+                if source_changed || !had_presenter {
+                    tracing::info!(
+                        component = "renderer",
+                        event = "video_frame_received",
+                        rendering_paused,
+                        device_recovery_pending,
+                        had_presenter,
+                        has_window = window.is_some(),
+                        "First video frame for this source reached the desktop presenter"
+                    );
+                }
                 let result = if rendering_paused {
                     Ok(())
                 } else if device_recovery_pending {

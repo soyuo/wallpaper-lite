@@ -1,9 +1,9 @@
-import type { WallpaperEditorSettings } from "../../host-adapter";
+import { NumberField } from "../../components/NumberField";
 import { colorControls, editorDragTransform, editorGhostStyle } from "./editor-utils";
 import type { LibraryPreview } from "../../host-adapter";
 import type { EditorState } from "./useEditor";
 
-export function EditorPanel({ hidden, state, previews }: { hidden: boolean; state: EditorState; previews: Record<number, LibraryPreview> }) {
+export function EditorPage({ hidden, state, previews }: { hidden: boolean; state: EditorState; previews: Record<number, LibraryPreview> }) {
   const {
     beginCropPointer,
     beginEditorGesture,
@@ -54,8 +54,10 @@ export function EditorPanel({ hidden, state, previews }: { hidden: boolean; stat
 
   return (
     <>
+      {!editorEntry && !hidden && (<p className="app-empty">Choose a wallpaper in the Library and press Edit.</p>)}
       {editorEntry && (
-        <section className="ui-panel editor-preview-panel" hidden={hidden} aria-labelledby="editor-preview-title">
+        <section className="ui-panel editor-preview-panel editor-layout" hidden={hidden} aria-labelledby="editor-preview-title">
+          <div className="editor-stage">
           <div className="editor-preview-heading">
             <div>
               <h2 id="editor-preview-title">Preview: {editorEntry.displayName}</h2>
@@ -65,18 +67,32 @@ export function EditorPanel({ hidden, state, previews }: { hidden: boolean; stat
               Close preview
             </button>
           </div>
-          <label className="editor-monitor-select">
-            <span>Preview display</span>
-            <select value={editorMonitorId} onChange={(event) => void changeEditorMonitor(event.currentTarget.value)}>
+          <div className="editor-toolbar">
+            <div className="seg" role="group" aria-label="Preview display">
               {editorMonitors.map((monitor) => (
-                <option key={monitor.id} value={monitor.id}>{monitor.label}</option>
+                <button key={monitor.id} type="button" aria-pressed={monitor.id === editorMonitorId} className={monitor.id === editorMonitorId ? "on" : undefined} onClick={() => void changeEditorMonitor(monitor.id)}>{monitor.label}</button>
               ))}
-            </select>
-          </label>
+            </div>
+            {editorSettingsDraft && editorPreview && !editorBusy && (
+              <div className="editor-actions">
+                <button type="button" aria-label="Undo" disabled={!editorHistory.current.canUndo} onClick={undoEditorChange}>Undo</button>
+                <button type="button" aria-label="Redo" disabled={!editorHistory.current.canRedo} onClick={redoEditorChange}>Redo</button>
+                <button type="button" onClick={resetEditorSettings}>Reset settings</button>
+                <button disabled={editorSaveBusy} onClick={cancelEditorChanges}>Cancel</button>
+                <button className="ui-button--primary" disabled={editorSaveBusy} onClick={() => void saveEditorSettingsDraft()}>
+                  {editorSaveBusy ? "Applying and rendering..." : "Apply"}
+                </button>
+              </div>
+            )}
+          </div>
+          {editorError && (
+            <p className="home-banner" role="alert">
+              <span>{editorError}</span>
+              {editorSettingsDraft && editorPreview && <button disabled={editorSaveBusy} onClick={() => void saveEditorSettingsDraft()}>Try again</button>}
+            </p>
+          )}
           {editorBusy ? (
             <p role="status">Rendering preview...</p>
-          ) : editorError ? (
-            <p role="status">{editorError}</p>
           ) : editorPreview ? (
             <div
               ref={previewCanvasRef}
@@ -121,18 +137,20 @@ export function EditorPanel({ hidden, state, previews }: { hidden: boolean; stat
             </div>
           ) : null}
           {editorSettingsDraft && editorPreview && !editorBusy && (
+            <p className="editor-readout">
+              X {editorSettingsDraft.render.positionPx.x} px · Y {editorSettingsDraft.render.positionPx.y} px · {editorSettingsDraft.render.scale.x.toFixed(2)}×
+            </p>
+          )}
+          <p className="editor-history-shortcuts">Ctrl/Cmd+Z undo · Ctrl/Cmd+Y redo · Delete resets settings · Drag the preview to position; drag the corner handle to resize (Shift locks aspect, Alt resizes around center).</p>
+          <p className="editor-preview-note">Resizing this application window only scales the preview display; it does not change saved wallpaper settings.</p>
+          </div>
+          {editorSettingsDraft && editorPreview && !editorBusy && (
             <div className="editor-controls">
-              <div className="editor-history-controls" aria-label="Edit history">
-                <button type="button" disabled={!editorHistory.current.canUndo} onClick={undoEditorChange}>Undo</button>
-                <button type="button" disabled={!editorHistory.current.canRedo} onClick={redoEditorChange}>Redo</button>
-                <button type="button" onClick={resetEditorSettings}>Reset settings</button>
+              <div className="seg" role="group" aria-label="Placement">
+                {(["cover", "fit", "stretch", "center", "custom"] as const).map((mode) => (
+                  <button key={mode} type="button" aria-pressed={editorSettingsDraft.render.placementMode === mode} className={editorSettingsDraft.render.placementMode === mode ? "on" : undefined} onClick={() => selectPlacementMode(mode)}>{mode[0].toUpperCase() + mode.slice(1)}</button>
+                ))}
               </div>
-              <p className="editor-history-shortcuts">Ctrl/Cmd+Z undo · Ctrl/Cmd+Y redo · Delete resets settings (shortcuts pause in text controls)</p>
-              <label>Placement
-                <select value={editorSettingsDraft.render.placementMode} onChange={(event) => selectPlacementMode(event.currentTarget.value as WallpaperEditorSettings["render"]["placementMode"])}>
-                  <option value="cover">Cover</option><option value="fit">Fit</option><option value="stretch">Stretch</option><option value="center">Center</option><option value="custom">Custom</option>
-                </select>
-              </label>
               <label>Zoom
                 <input
                   type="range" min="0.01" max="8" step="0.01" value={editorSettingsDraft.render.scale.x}
@@ -147,21 +165,21 @@ export function EditorPanel({ hidden, state, previews }: { hidden: boolean; stat
                 <output>{editorSettingsDraft.render.scale.x.toFixed(2)}×</output>
               </label>
               <label>Rotation
-                <input type="number" min="-3600" max="3600" step="0.5" value={editorSettingsDraft.render.rotationDegrees} onChange={(event) => updateEditorRender({ placementMode: "custom", rotationDegrees: Number(event.currentTarget.value) || 0 })} />
+                <NumberField min="-3600" max="3600" step="0.5" value={editorSettingsDraft.render.rotationDegrees} onChange={(event) => updateEditorRender({ placementMode: "custom", rotationDegrees: Number(event.currentTarget.value) || 0 })} />
               </label>
               <label>Position X (physical px)
-                <input type="number" min="-32768" max="32768" value={editorSettingsDraft.render.positionPx.x} onChange={(event) => updateEditorRender({ placementMode: "custom", positionPx: { ...editorSettingsDraft.render.positionPx, x: Number(event.currentTarget.value) || 0 } })} />
+                <NumberField min="-32768" max="32768" value={editorSettingsDraft.render.positionPx.x} onChange={(event) => updateEditorRender({ placementMode: "custom", positionPx: { ...editorSettingsDraft.render.positionPx, x: Number(event.currentTarget.value) || 0 } })} />
               </label>
               <label>Position Y (physical px)
-                <input type="number" min="-32768" max="32768" value={editorSettingsDraft.render.positionPx.y} onChange={(event) => updateEditorRender({ placementMode: "custom", positionPx: { ...editorSettingsDraft.render.positionPx, y: Number(event.currentTarget.value) || 0 } })} />
+                <NumberField min="-32768" max="32768" value={editorSettingsDraft.render.positionPx.y} onChange={(event) => updateEditorRender({ placementMode: "custom", positionPx: { ...editorSettingsDraft.render.positionPx, y: Number(event.currentTarget.value) || 0 } })} />
               </label>
               {editorSettingsDraft.render.placementMode === "custom" && (
                 <>
                   <label>Width (physical px)
-                    <input type="number" min="1" max="32768" value={editorSettingsDraft.render.sizePx?.width ?? selectedEditorMonitor?.width ?? 1} onChange={(event) => updateEditorRender({ sizePx: { width: Math.max(1, Number(event.currentTarget.value) || 1), height: editorSettingsDraft.render.sizePx?.height ?? selectedEditorMonitor?.height ?? 1 } })} />
+                    <NumberField min="1" max="32768" value={editorSettingsDraft.render.sizePx?.width ?? selectedEditorMonitor?.width ?? 1} onChange={(event) => updateEditorRender({ sizePx: { width: Math.max(1, Number(event.currentTarget.value) || 1), height: editorSettingsDraft.render.sizePx?.height ?? selectedEditorMonitor?.height ?? 1 } })} />
                   </label>
                   <label>Height (physical px)
-                    <input type="number" min="1" max="32768" value={editorSettingsDraft.render.sizePx?.height ?? selectedEditorMonitor?.height ?? 1} onChange={(event) => updateEditorRender({ sizePx: { width: editorSettingsDraft.render.sizePx?.width ?? selectedEditorMonitor?.width ?? 1, height: Math.max(1, Number(event.currentTarget.value) || 1) } })} />
+                    <NumberField min="1" max="32768" value={editorSettingsDraft.render.sizePx?.height ?? selectedEditorMonitor?.height ?? 1} onChange={(event) => updateEditorRender({ sizePx: { width: editorSettingsDraft.render.sizePx?.width ?? selectedEditorMonitor?.width ?? 1, height: Math.max(1, Number(event.currentTarget.value) || 1) } })} />
                   </label>
                 </>
               )}
@@ -223,7 +241,7 @@ export function EditorPanel({ hidden, state, previews }: { hidden: boolean; stat
                 <button type="button" onClick={() => setCreateCropMode(true)}>Select crop</button>
                 {(["x", "y", "width", "height"] as const).map((key) => (
                   <label key={key}>{key}
-                    <input type="number" min="0" max="1" step="0.01" value={editorSettingsDraft.render.crop[key]} onChange={(event) => updateEditorRender({ crop: { ...editorSettingsDraft.render.crop, [key]: Number(event.currentTarget.value) || 0 } })} />
+                    <NumberField min="0" max="1" step="0.01" value={editorSettingsDraft.render.crop[key]} onChange={(event) => updateEditorRender({ crop: { ...editorSettingsDraft.render.crop, [key]: Number(event.currentTarget.value) || 0 } })} />
                   </label>
                 ))}
                 <button onClick={() => updateEditorRender({ crop: { x: 0, y: 0, width: 1, height: 1 } })}>Reset crop</button>
@@ -261,14 +279,9 @@ export function EditorPanel({ hidden, state, previews }: { hidden: boolean; stat
                 <p role="status" aria-live="polite">{presetMessage}</p>
                 <p>Loading a preset changes this draft only. Use Apply to update the desktop.</p>
               </fieldset>
-              <button disabled={editorSaveBusy} onClick={() => void saveEditorSettingsDraft()}>
-                {editorSaveBusy ? "Applying and rendering..." : "Apply"}
-              </button>
-              <button disabled={editorSaveBusy} onClick={cancelEditorChanges}>Cancel</button>
               <p>Drag the preview to position. Drag the corner handle to resize; hold Shift to lock its aspect ratio or Alt to resize around its center.</p>
             </div>
           )}
-          <p className="editor-preview-note">Resizing this application window only scales the preview display; it does not change saved wallpaper settings.</p>
         </section>
       )}
 
