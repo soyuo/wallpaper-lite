@@ -1,3 +1,4 @@
+import { friendlyDisplayName } from "../../format";
 import { useState } from "react";
 
 import { makeDisplayEdits } from "../../display-manager.mjs";
@@ -49,7 +50,7 @@ export function DisplaysPage({ hidden, state }: { hidden: boolean; state: Displa
                 >
                   <span className="display-tile-index">{index + 1}</span>
                   {saved && JSON.stringify(saved.edits[display.id]) !== JSON.stringify(displayEdits[display.id]) && <span className="chip display-tile-badge">Changed</span>}
-                  <span className="display-tile-caption"><span>{display.name}</span><span>{display.width}×{display.height}</span></span>
+                  <span className="display-tile-caption"><span>{friendlyDisplayName(display.name)}</span><span>{display.width}×{display.height}</span></span>
                 </button>
               ))}
             </div>
@@ -63,7 +64,7 @@ export function DisplaysPage({ hidden, state }: { hidden: boolean; state: Displa
                 const showWallpaper = displayMode === "independent" || display.isPrimary;
                 return (
                   <article className="display-manager-card" key={display.id}>
-                    <h3>{display.name}{display.isPrimary ? " · Primary" : ""}</h3>
+                    <h3>{friendlyDisplayName(display.name)}{display.isPrimary ? " · Primary" : ""}</h3>
                     <code className="display-stable-id" title={display.id}>Stable ID: {display.id}</code>
                     <p>{display.deviceName} · {display.width} × {display.height} · {display.refreshRate ?? "Refresh rate unavailable"} · {display.dpiScalePercent}% scale ({display.effectiveDpi.toFixed(1)} DPI)</p>
                     <p className={savedProfile && assignedWallpaper?.availability !== "available" ? "display-assignment-warning" : "display-assignment-state"}>
@@ -77,7 +78,7 @@ export function DisplaysPage({ hidden, state }: { hidden: boolean; state: Displa
                       <label>
                         {displayMode === "independent" ? "Wallpaper" : "Shared wallpaper"}
                         <select
-                          aria-label={`${display.name} wallpaper`}
+                          aria-label={`${friendlyDisplayName(display.name)} wallpaper`}
                           disabled={displaySaving}
                           value={edit.wallpaperId}
                           onChange={(event) => {
@@ -101,7 +102,7 @@ export function DisplaysPage({ hidden, state }: { hidden: boolean; state: Displa
                     <label>
                       FPS override
                       <input
-                        aria-label={`${display.name} FPS override`}
+                        aria-label={`${friendlyDisplayName(display.name)} FPS override`}
                         type="number"
                         min={1}
                         max={120}

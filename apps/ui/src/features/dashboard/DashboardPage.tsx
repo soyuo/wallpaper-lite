@@ -1,3 +1,4 @@
+import { friendlyDisplayName } from "../../format";
 import { canPlayFromDashboard, hostSummary, nowPlayingSummary, toggleControl, toggleLabel } from "../../dashboard-view.mjs";
 import type { HostState } from "../../dashboard-view.mjs";
 import type { DisplayManagerSnapshot, LibraryEntry } from "../../host-adapter";
@@ -96,7 +97,7 @@ export function DashboardPage({ hidden, hostState, hostBusy, onStartHost, playba
             <h3 className="home-eyebrow">Displays</h3>
             <ul className="home-displays">
               {displaySnapshot.displays.map((display) => (
-                <li key={display.id}><span>{display.name}{display.isPrimary ? " · Primary" : ""}</span><span>{display.width}×{display.height}</span></li>
+                <li key={display.id}><span>{friendlyDisplayName(display.name)}{display.isPrimary ? " · Primary" : ""}</span><span>{display.width}×{display.height}</span></li>
               ))}
             </ul>
           </>

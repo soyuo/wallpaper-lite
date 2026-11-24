@@ -1,4 +1,4 @@
-import { formatBytes } from "../../format";
+import { formatBytes, friendlyDisplayName } from "../../format";
 import { formatPerformanceValue } from "../../performance-dashboard.mjs";
 import type { PolicyAction } from "../../host-adapter";
 import type { PerformanceState } from "./usePerformance";
@@ -107,7 +107,7 @@ export function PerformancePage({ hidden, state }: { hidden: boolean; state: Per
                     <tbody>
                       {performanceRows.map((row) => (
                         <tr key={row.id}>
-                          <th scope="row">{row.label}{row.metrics ? <small>{row.metrics.mediaKind}</small> : null}</th>
+                          <th scope="row">{friendlyDisplayName(row.label)}{row.metrics ? <small>{row.metrics.mediaKind}</small> : null}</th>
                           <td>{row.metrics ? formatPerformanceValue(row.metrics.sourceFps, "FPS") : "—"}</td>
                           <td>{row.metrics ? formatPerformanceValue(row.metrics.renderedFps, "FPS") : "—"}</td>
                           <td>{row.metrics ? formatPerformanceValue(row.metrics.frameIntervalMs, "ms") : "—"}</td>
