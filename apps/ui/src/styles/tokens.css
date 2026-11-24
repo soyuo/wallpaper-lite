@@ -32,6 +32,12 @@
   --color-primary-bg: #fff;
   --color-primary-text: #14213d;
 
+  /* Tile captions and chips (the dark board uses a navy caption and white chip text) */
+  --tile-cap-bg: rgb(14 22 56 / 80%);
+  --tile-cap-text: #fff;
+  --chip-bg: rgb(255 255 255 / 18%);
+  --chip-text: #fff;
+
   /* Editor canvas */
   --color-canvas-border: rgb(255 255 255 / 40%);
   --color-canvas-bg: rgb(10 18 50 / 55%);
@@ -104,6 +110,10 @@
   --color-canvas-bg: rgb(255 255 255 / 35%);
   --color-canvas-check: rgb(36 68 159 / 10%);
   --color-accent-overlay: rgb(59 104 216 / 16%);
+  --tile-cap-bg: rgb(255 255 255 / 88%);
+  --tile-cap-text: #14213d;
+  --chip-bg: rgb(255 255 255 / 72%);
+  --chip-text: #14213d;
 }
 
 @media (prefers-reduced-motion: reduce) {
