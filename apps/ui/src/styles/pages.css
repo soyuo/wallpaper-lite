@@ -243,8 +243,8 @@
   display: grid;
   place-items: center;
   padding: var(--space-5);
-  background: rgb(8 14 40 / 55%);
-  backdrop-filter: blur(10px);
+  background: rgb(20 40 110 / 18%);
+  backdrop-filter: blur(6px);
 }
 
 .first-run-card {
@@ -252,8 +252,9 @@
   width: min(34rem, 100%);
   gap: var(--space-5);
   padding: var(--space-6);
-  background: var(--color-bg);
-  background-image: var(--glass-bg);
+  border-radius: 1.75rem;
+  background: var(--glass-flat);
+  backdrop-filter: blur(32px) saturate(1.6);
 }
 
 .first-run-steps {
