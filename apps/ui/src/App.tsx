@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 
 import "./styles/tokens.css";
 import "./styles/base.css";
+import "./styles/shell.css";
 import "./App.css";
 import type { HostState } from "./dashboard-view.mjs";
 import { hostAdapter } from "./host-adapter";
@@ -25,14 +26,14 @@ import { ErrorNotice } from "./features/errors/ErrorNotice";
 
 type AppPage = "dashboard" | "library" | "editor" | "displays" | "playback" | "performance" | "settings";
 
-const APP_PAGES: { id: AppPage; label: string }[] = [
-  { id: "dashboard", label: "Dashboard" },
-  { id: "library", label: "Library" },
-  { id: "editor", label: "Editor" },
-  { id: "displays", label: "Monitors" },
-  { id: "playback", label: "Playback" },
-  { id: "performance", label: "Performance" },
-  { id: "settings", label: "Settings" },
+const APP_PAGES: { id: AppPage; label: string; icon: string }[] = [
+  { id: "dashboard", label: "Dashboard", icon: "⌂" },
+  { id: "library", label: "Library", icon: "▦" },
+  { id: "editor", label: "Editor", icon: "✎" },
+  { id: "displays", label: "Monitors", icon: "▭" },
+  { id: "playback", label: "Playback", icon: "▶" },
+  { id: "performance", label: "Performance", icon: "◔" },
+  { id: "settings", label: "Settings", icon: "⚙" },
 ];
 
 function App() {
@@ -145,32 +146,20 @@ function App() {
   }
 
   return (
-    <div className="app-layout">
-      <nav className="app-sidebar" aria-label="Main">
-        <p className="app-brand">wallpaper Lite</p>
-        <ul>
-          {APP_PAGES.map((item) => (
-            <li key={item.id}>
-              <button className="app-nav-item" aria-current={page === item.id ? "page" : undefined} onClick={() => setPage(item.id)}>
-                {item.label}
-                {item.id === "editor" && editorState.editorDirty && <span className="app-nav-dirty" role="img" aria-label="Unapplied changes"> •</span>}
-              </button>
-            </li>
-          ))}
-        </ul>
-      </nav>
-    <main className="app-shell">
-      <header className="app-header">
-        <div>
-          <h1>{APP_PAGES.find((item) => item.id === page)?.label}</h1>
-          <p>{activeWallpaper ? `Now playing: ${activeWallpaper.displayName}` : "No video wallpaper is playing"}</p>
-        </div>
-        <div className="app-header-actions">
-          <p aria-live="polite" className="host-status" role="status">{hostStatus}</p>
+    <div className="app-shell">
+      <div className="app-topbar">
+        <p className="app-brand"><span className="app-brand-mark" aria-hidden="true" />wallpaper Lite</p>
+        <div className="app-topbar-status">
+          <p aria-live="polite" className="host-status" data-state={hostState} role="status"><span>{hostStatus}</span></p>
           <button className="ui-button--primary" disabled={checkingHost} onClick={checkHost}>
             {checkingHost ? "Checking..." : "Check wallpaper host"}
           </button>
         </div>
+      </div>
+    <main className="app-main">
+      <header className="app-header">
+        <h1>{APP_PAGES.find((item) => item.id === page)?.label}</h1>
+        <p>{activeWallpaper ? `Now playing: ${activeWallpaper.displayName}` : "No video wallpaper is playing"}</p>
       </header>
 
       <ErrorNotice
@@ -201,6 +190,19 @@ function App() {
       />
       <LibraryPage hidden={page !== "library"} state={libraryState} onOpenEditor={openInEditor} onStartPlayback={(entry) => void playbackState.startPlayback(entry)} />
     </main>
+      <nav className="app-dock" aria-label="Main">
+        <ul>
+          {APP_PAGES.map((item) => (
+            <li key={item.id}>
+              <button className="app-dock-item" aria-current={page === item.id ? "page" : undefined} onClick={() => setPage(item.id)}>
+                <span className="app-dock-icon" aria-hidden="true">{item.icon}</span>
+                <span>{item.label}</span>
+                {item.id === "editor" && editorState.editorDirty && <span className="app-nav-dirty" role="img" aria-label="Unapplied changes"> •</span>}
+              </button>
+            </li>
+          ))}
+        </ul>
+      </nav>
     </div>
   );
 }
