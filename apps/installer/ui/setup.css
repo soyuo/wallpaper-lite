@@ -15,7 +15,7 @@ body {
 .close { width: 52px; height: 44px; border: 0; background: transparent; color: var(--muted); font-size: 13px; cursor: pointer; }
 .close:hover { background: rgba(20,40,110,.1); }
 
-.body { padding: 20px 24px; display: flex; flex-direction: column; gap: 12px; }
+.body { flex: 1; min-height: 0; padding: 20px 24px; display: flex; flex-direction: column; gap: 12px; }
 .progress { display: flex; align-items: center; gap: 8px; }
 .progress i { flex: 1; height: 6px; border-radius: 99px; background: rgba(20,40,110,.22); }
 .progress i.on { background: #fff; box-shadow: 0 0 0 1px rgba(20,40,110,.15); }
@@ -49,7 +49,7 @@ label.glass-in input { width: 18px; height: 18px; accent-color: #3B68D8; }
 
 .error { padding: 12px 16px; border-radius: 16px; background: rgba(255,255,255,.6); border: 1px solid rgba(200,50,70,.4); color: #8c1d2f; line-height: 1.5; user-select: text; word-break: break-word; }
 
-.actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 0; }
+.actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: auto; }
 .btn { min-height: 36px; padding: 0 18px; font-size: 13px; border-radius: 999px; border: 1px solid rgba(255,255,255,.8); background: rgba(255,255,255,.6); color: #14213D; font: inherit; font-weight: 600; cursor: pointer; }
 .btn:hover:not(:disabled) { background: rgba(255,255,255,.8); }
 .btn.primary { background: #fff; box-shadow: 0 6px 18px rgba(24,50,130,.28); }
