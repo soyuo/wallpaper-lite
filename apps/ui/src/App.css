@@ -873,3 +873,21 @@ label {
 .performance-stale {
   border-radius: var(--radius-pill);
 }
+
+/* Alerts: pill banner with danger accent; editor stage as a framed glass canvas */
+.error-notice {
+  border-radius: var(--radius-pill);
+  padding-inline: var(--space-5);
+  color: var(--color-text);
+}
+
+.editor-preview-canvas {
+  overflow: hidden;
+  border-radius: var(--radius-md);
+  box-shadow: var(--glass-shadow);
+}
+
+.editor-presets button,
+.editor-history-controls button {
+  border-radius: var(--radius-pill);
+}
