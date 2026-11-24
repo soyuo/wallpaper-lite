@@ -141,8 +141,24 @@ fn acquire_single_instance() -> SingleInstance {
     SingleInstance::Acquired(SingleInstanceGuard(handles))
 }
 
+/// Windows sleeps in ~15.6 ms steps by default, which makes the 8 ms playback ticks
+/// coarse and lets a short CPU stall empty the video frame queue.
+fn request_fine_timer_resolution() {
+    // SAFETY: timeBeginPeriod has no pointer arguments; the request lasts for the process.
+    let result = unsafe { windows::Win32::Media::timeBeginPeriod(1) };
+    if result != 0 {
+        tracing::warn!(
+            component = "host",
+            event = "timer_resolution_failed",
+            result,
+            "Could not request 1 ms timer resolution"
+        );
+    }
+}
+
 fn main() -> process::ExitCode {
     let _logging_guard = initialize_logging();
+    request_fine_timer_resolution();
     tracing::info!(
         component = "host",
         event = "startup",
