@@ -6,6 +6,7 @@ use wallpaper_core::error::{AppError, ErrorCode};
 
 #[cfg(target_os = "windows")]
 mod audio_engine;
+mod backup;
 mod display_profiles;
 mod editor_metadata;
 mod editor_settings;
@@ -20,6 +21,10 @@ mod video;
 #[cfg(target_os = "windows")]
 mod wic;
 
+pub use backup::{
+    BACKUP_SCHEMA_VERSION, BackupError, BackupManifest, BackupOutcome, PREVIOUS_SETTINGS_DIRECTORY,
+    RestoreOutcome, create_backup, restore_backup, validate_backup,
+};
 pub use display_profiles::{DisplayProfileStore, DisplayProfileStoreError};
 pub use editor_metadata::{
     EditorMetadataError, EditorPresetStore, RecentWallpaperStore, WallpaperEditorPreset,

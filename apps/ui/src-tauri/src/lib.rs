@@ -15,6 +15,7 @@ mod host_process;
 mod library;
 mod performance;
 mod playback;
+mod settings_backup;
 mod tray;
 
 const APP_LOG_DIRECTORY: &str = "com.soyuo.wallpaper-lite";
@@ -240,6 +241,8 @@ pub fn run() -> process::ExitCode {
             host_shutdown,
             app_info::app_info,
             app_info::open_app_folder,
+            settings_backup::create_settings_backup,
+            settings_backup::restore_settings_backup,
             get_autostart,
             set_autostart,
             import_media,
