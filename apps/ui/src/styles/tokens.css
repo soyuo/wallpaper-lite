@@ -1,9 +1,9 @@
 /* Ocean Dawn design tokens. Dark is the default; [data-theme="light"] is the daylight sky. */
 :root {
   /* Color */
-  --color-text: #eaf1ff;
-  --color-text-muted: #aebbdc;
-  --color-bg: #0d1633;
+  --color-text: #eaf0ff;
+  --color-text-muted: #b9c7ee;
+  --color-bg: #0f1c47;
   --color-surface: rgb(22 33 74 / 62%);
   --color-surface-subtle: rgb(255 255 255 / 6%);
   --color-surface-muted: rgb(255 255 255 / 12%);
@@ -12,7 +12,7 @@
   --color-accent: #5f8cf0;
   --color-accent-strong: #9dbdff;
   --color-accent-hover: #7aa1f5;
-  --color-on-accent: #0d1633;
+  --color-on-accent: #14213d;
   --color-danger: #ff9a92;
   --color-warning-text: #ffd089;
   --color-warning-bg: rgb(255 180 80 / 16%);
@@ -20,15 +20,15 @@
   --color-success-bg: rgb(60 200 160 / 16%);
 
   /* Page backdrop (sky gradient and soft glows) */
-  --backdrop-gradient: linear-gradient(180deg, #0d1633 0%, #1b2d6b 55%, #2f4fae 100%);
+  --backdrop-gradient: linear-gradient(180deg, #0f1c47 0%, #1b3a94 55%, #2a55c8 100%);
   --backdrop-glow-a: rgb(143 227 207 / 14%);
   --backdrop-glow-b: rgb(255 201 153 / 12%);
 
   /* Glass surfaces */
-  --glass-bg: linear-gradient(135deg, rgb(255 255 255 / 14%), rgb(255 255 255 / 6%));
-  --glass-border: rgb(255 255 255 / 20%);
+  --glass-bg: linear-gradient(135deg, rgb(255 255 255 / 16%), rgb(255 255 255 / 7%));
+  --glass-border: rgb(255 255 255 / 24%);
   --glass-blur: blur(28px) saturate(1.5);
-  --glass-shadow: 0 16px 48px rgb(3 8 30 / 45%), inset 0 1px 0 rgb(255 255 255 / 22%);
+  --glass-shadow: 0 16px 48px rgb(0 0 20 / 45%), inset 0 1px 0 rgb(255 255 255 / 25%);
   --color-primary-bg: #fff;
   --color-primary-text: #14213d;
 
