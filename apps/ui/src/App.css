@@ -397,8 +397,8 @@ label {
   max-height: 44rem;
   gap: var(--space-3);
   overflow: auto;
+  padding: 0.25rem;
   margin: 0;
-  padding: 0;
   list-style: none;
 }
 
