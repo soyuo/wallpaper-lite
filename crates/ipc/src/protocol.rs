@@ -9,7 +9,7 @@ use crate::{IpcError, error::from_io};
 
 pub const PIPE_NAME: &str = r"\\.\pipe\wallpaper-lite";
 pub const PLAYBACK_EVENTS_PIPE_NAME: &str = r"\\.\pipe\wallpaper-lite-playback-events";
-pub const PROTOCOL_VERSION: u16 = 12;
+pub const PROTOCOL_VERSION: u16 = 13;
 pub const MAX_FRAME_BYTES: usize = 16 * 1024;
 pub(crate) const IO_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
 const COMMAND_QUEUE_CAPACITY: usize = 16;
@@ -75,6 +75,8 @@ pub enum Command {
     GetPerformanceMetrics,
     SubscribePlaybackState,
     RefreshDisplayAssignments,
+    /// Ask the host to release its wallpaper windows and exit.
+    Shutdown,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -115,6 +117,7 @@ pub enum ResponseResult {
     },
     PlaybackState(PlaybackStateEvent),
     PerformanceMetrics(PerformanceMetricsSnapshot),
+    ShuttingDown,
     Error {
         code: PlaybackCommandErrorCode,
     },

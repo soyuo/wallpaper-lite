@@ -241,6 +241,34 @@ mod tests {
     }
 
     #[test]
+    fn shutdown_command_is_acknowledged_then_stops_the_server_and_releases_the_pipe() {
+        use crate::protocol::{Command, ResponseResult};
+
+        run_test(async {
+            let pipe_name = test_pipe_name("shutdown");
+            let server_name = pipe_name.clone();
+            let server =
+                tokio::spawn(async move { crate::server::run_on_pipe(&server_name).await });
+
+            wait_for_host(&pipe_name).await;
+            let response = super::request_at(&pipe_name, Command::Shutdown)
+                .await
+                .expect("shutdown is acknowledged");
+            assert_eq!(response, ResponseResult::ShuttingDown);
+
+            let result = time::timeout(Duration::from_secs(3), server)
+                .await
+                .expect("server stops after shutdown")
+                .expect("server task is not cancelled");
+            assert!(result.is_ok());
+            assert!(matches!(
+                super::ping_at(&pipe_name).await,
+                Err(IpcError::HostUnavailable)
+            ));
+        });
+    }
+
+    #[test]
     fn playback_commands_round_trip_over_named_pipe_with_typed_state_and_errors() {
         use crate::protocol::{
             Command, IpcPlaybackState, PlaybackCommandErrorCode, PlaybackStateEvent,

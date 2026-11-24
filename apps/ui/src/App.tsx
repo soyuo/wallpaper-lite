@@ -63,6 +63,18 @@ function App() {
     ? null
     : libraryState.library.find((entry) => entry.id === activeWallpaperId) ?? null;
 
+  useEffect(() => {
+    let cancelled = false;
+    setHostStatus("Starting wallpaper host...");
+    hostAdapter.startHost().then(
+      () => { if (!cancelled) setHostStatus("Wallpaper host connected."); },
+      (error: unknown) => {
+        if (!cancelled) setHostStatus(error instanceof Error ? error.message : "Could not start the wallpaper host.");
+      },
+    );
+    return () => { cancelled = true; };
+  }, []);
+
   async function checkHost() {
     setCheckingHost(true);
     setHostStatus("Checking host connection...");

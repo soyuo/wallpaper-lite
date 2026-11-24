@@ -215,6 +215,7 @@ export type AppErrorCode =
   | "protocol_version_mismatch"
   | "unsupported_platform"
   | "transport_error"
+  | "host_launch_failed"
   | "library_storage_failed"
   | "invalid_library_entry"
   | "editor_settings_storage_failed"
@@ -254,6 +255,8 @@ export class HostAdapterError extends Error {
 
 export interface HostAdapter {
   ping(): Promise<void>;
+  /** Starts the bundled wallpaper host unless one is already running. */
+  startHost(): Promise<"already_running" | "started">;
   importMedia(paths: string[]): Promise<ImportResult[]>;
   listLibrary(): Promise<LibraryEntry[]>;
   libraryPreview(id: number): Promise<LibraryPreview>;
@@ -319,6 +322,7 @@ function isAppErrorCode(value: unknown): value is AppErrorCode {
     value === "protocol_version_mismatch" ||
     value === "unsupported_platform" ||
     value === "transport_error" ||
+    value === "host_launch_failed" ||
     value === "library_storage_failed" ||
     value === "invalid_library_entry" ||
     value === "editor_settings_storage_failed" ||
@@ -344,6 +348,9 @@ function isAppErrorCode(value: unknown): value is AppErrorCode {
 }
 
 export const hostAdapter: HostAdapter = {
+  startHost() {
+    return invokeAppCommand<"already_running" | "started">("host_start");
+  },
   async ping() {
     try {
       await invoke<void>("host_ping");

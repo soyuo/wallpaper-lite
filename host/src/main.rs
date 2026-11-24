@@ -79,6 +79,48 @@ fn initialize_logging() -> Option<WorkerGuard> {
     Some(guard)
 }
 
+/// Holds the per-session mutex that keeps a second host from attaching another
+/// wallpaper window. Windows releases it when the process exits.
+struct SingleInstanceGuard(windows::Win32::Foundation::HANDLE);
+
+impl Drop for SingleInstanceGuard {
+    fn drop(&mut self) {
+        // SAFETY: the handle was returned by CreateMutexW and is closed exactly once.
+        let _ = unsafe { windows::Win32::Foundation::CloseHandle(self.0) };
+    }
+}
+
+enum SingleInstance {
+    Acquired(SingleInstanceGuard),
+    AlreadyRunning,
+    Unavailable(windows::core::Error),
+}
+
+fn acquire_single_instance() -> SingleInstance {
+    use windows::{
+        Win32::{
+            Foundation::{ERROR_ALREADY_EXISTS, GetLastError},
+            System::Threading::CreateMutexW,
+        },
+        core::w,
+    };
+
+    // SAFETY: the name is a valid NUL-terminated wide string and no security
+    // attributes are supplied, so the default per-user descriptor applies.
+    match unsafe { CreateMutexW(None, false, w!("Local\\com.soyuo.wallpaper-lite.host")) } {
+        Ok(handle) => {
+            // SAFETY: reads the thread's last-error value set by CreateMutexW above.
+            if unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
+                let _ = unsafe { windows::Win32::Foundation::CloseHandle(handle) };
+                SingleInstance::AlreadyRunning
+            } else {
+                SingleInstance::Acquired(SingleInstanceGuard(handle))
+            }
+        }
+        Err(error) => SingleInstance::Unavailable(error),
+    }
+}
+
 fn main() -> process::ExitCode {
     let _logging_guard = initialize_logging();
     tracing::info!(
@@ -86,6 +128,26 @@ fn main() -> process::ExitCode {
         event = "startup",
         "Wallpaper host starting"
     );
+    let _single_instance = match acquire_single_instance() {
+        SingleInstance::Acquired(guard) => Some(guard),
+        SingleInstance::AlreadyRunning => {
+            tracing::info!(
+                component = "host",
+                event = "already_running",
+                "Another wallpaper host is already running; exiting"
+            );
+            return process::ExitCode::SUCCESS;
+        }
+        SingleInstance::Unavailable(error) => {
+            tracing::warn!(
+                component = "host",
+                event = "single_instance_unavailable",
+                os_error_code = error.code().0,
+                "Single-instance guard is unavailable; continuing without it"
+            );
+            None
+        }
+    };
 
     let initial_image = match load_startup_image() {
         Ok(image) => image,

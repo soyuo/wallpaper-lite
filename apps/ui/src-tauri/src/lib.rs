@@ -9,6 +9,7 @@ use wallpaper_media::{CatalogStore, ImportResult, import_local_media};
 
 mod displays;
 mod editor;
+mod host_process;
 mod library;
 mod performance;
 mod playback;
@@ -125,6 +126,18 @@ async fn host_ping() -> Result<(), AppError> {
     }
 }
 
+/// Start the bundled wallpaper host unless one is already answering.
+#[tauri::command]
+async fn host_start() -> Result<host_process::HostStartOutcome, AppError> {
+    host_process::ensure_host_running().await
+}
+
+/// Ask the wallpaper host to restore the desktop and exit.
+#[tauri::command]
+async fn host_shutdown() -> Result<(), AppError> {
+    host_process::shutdown_host().await
+}
+
 #[tauri::command]
 async fn import_media(paths: Vec<String>) -> Result<Vec<ImportResult>, AppError> {
     let store = CatalogStore::for_current_user().map_err(|error| error.to_app_error())?;
@@ -152,8 +165,25 @@ pub fn run() -> process::ExitCode {
 
     let result = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .setup(|_app| {
+            // Start the host without waiting for the webview, so the wallpaper is
+            // restored even when the settings window never opens.
+            tauri::async_runtime::spawn(async {
+                if let Err(error) = host_process::ensure_host_running().await {
+                    tracing::warn!(
+                        component = "ui_backend",
+                        event = "host_autostart_failed",
+                        error_code = error.code.as_str(),
+                        "The wallpaper host could not be started at launch"
+                    );
+                }
+            });
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             host_ping,
+            host_start,
+            host_shutdown,
             import_media,
             editor::editor_monitors,
             editor::editor_preview,
