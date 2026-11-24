@@ -83,7 +83,10 @@ function App() {
     hostAdapter.getAutostart().then(
       (enabled) => { if (!cancelled) setAutostart(enabled); },
       (error: unknown) => {
-        if (!cancelled) setAutostartError(error instanceof Error ? error.message : "Could not read the launch-at-login setting.");
+        if (cancelled) return;
+        // Leave the checkbox usable so the user can still try to set it.
+        setAutostart(false);
+        setAutostartError(error instanceof Error ? error.message : "Could not read the launch-at-login setting.");
       },
     );
     return () => { cancelled = true; };
