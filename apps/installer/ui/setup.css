@@ -2,20 +2,14 @@
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; overflow: hidden; user-select: none; -webkit-user-select: none; }
 body {
-  display: grid; place-items: center; position: relative; font-size: 14px;
+  position: relative; font-size: 14px;
   background: linear-gradient(160deg, #D3E3FF 0%, #9DBDFF 42%, #5F8CF0 100%);
 }
 .blob { position: absolute; border-radius: 50%; filter: blur(80px); pointer-events: none; }
 .blob-a { width: 380px; height: 380px; left: -90px; bottom: -110px; background: #8FE3CF; opacity: .55; }
 .blob-b { width: 360px; height: 360px; right: -80px; bottom: -100px; background: #FFC999; opacity: .5; }
 
-.card {
-  position: relative; width: 640px; max-height: 520px; display: flex; flex-direction: column; overflow: hidden;
-  border-radius: 22px; border: 1px solid rgba(255,255,255,.7);
-  background: linear-gradient(135deg, rgba(255,255,255,.04), rgba(255,255,255,.02));
-  backdrop-filter: blur(12px) saturate(1.4);
-  box-shadow: 0 16px 48px rgba(24,50,130,.28), inset 0 1px 0 rgba(255,255,255,.8);
-}
+.card { position: relative; width: 100%; height: 100%; display: flex; flex-direction: column; overflow: hidden; }
 .titlebar { height: 44px; flex: none; display: flex; align-items: center; gap: 10px; padding-left: 26px; border-bottom: 1px solid rgba(255,255,255,.7); }
 .titlebar strong { flex: 1; font-size: 13px; }
 .close { width: 52px; height: 44px; border: 0; background: transparent; color: var(--muted); font-size: 13px; cursor: pointer; }
