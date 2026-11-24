@@ -14,7 +14,6 @@ Usage: python scripts/build-icons.py [--browser PATH] [--output-root DIR]
 
 import argparse
 import io
-import shutil
 import struct
 import subprocess
 import sys
@@ -51,7 +50,9 @@ def render_master(browser):
     sized = source.replace(
         'width="256" height="256"', f'width="{RENDER_SIZE}" height="{RENDER_SIZE}"', 1
     )
-    with tempfile.TemporaryDirectory() as work:
+    # Browser helper processes can outlive the screenshot and still hold files in the
+    # profile folder, so a failed cleanup must not abort a render that worked.
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as work:
         svg_path = Path(work) / "icon.svg"
         png_path = Path(work) / "master.png"
         svg_path.write_text(sized, encoding="utf-8")
@@ -71,12 +72,18 @@ def render_master(browser):
             capture_output=True,
             timeout=120,
         )
+        if not png_path.is_file():
+            sys.exit("The browser did not write a screenshot.")
         image = Image.open(png_path).convert("RGBA")
-    if image.width < RENDER_SIZE or image.height < RENDER_SIZE:
+    if image.size != (RENDER_SIZE, RENDER_SIZE):
         sys.exit(f"Browser produced a {image.size} image, expected {RENDER_SIZE}x{RENDER_SIZE}.")
-    image = image.crop((0, 0, RENDER_SIZE, RENDER_SIZE))
-    if image.getpixel((0, 0))[3] != 0:
-        sys.exit("The rendered corner is not transparent; the browser ignored the transparent background.")
+    corners = [(0, 0), (RENDER_SIZE - 1, 0), (0, RENDER_SIZE - 1), (RENDER_SIZE - 1, RENDER_SIZE - 1)]
+    if any(image.getpixel(corner)[3] != 0 for corner in corners):
+        sys.exit("A rendered corner is not transparent; the browser ignored the transparent background.")
+    # The icon fills its canvas, so the opaque area must reach every edge.
+    left, top, right, bottom = image.getchannel("A").getbbox() or (0, 0, 0, 0)
+    if (left, top, right, bottom) != (0, 0, RENDER_SIZE, RENDER_SIZE):
+        sys.exit(f"The rendered icon does not fill the canvas (bounds {(left, top, right, bottom)}).")
     return image
 
 
@@ -116,13 +123,11 @@ def main():
     args = parser.parse_args()
 
     master = render_master(find_browser(args.browser))
-    root = args.output_root
+    root = args.output_root.resolve()
     icons = root / "apps" / "ui" / "src-tauri" / "icons"
     write_ico(icons / "icon.ico", master)
     write_png(icons / "icon.png", master, 512)
     write_png(root / "docs" / "assets" / "icon.png", master, 256)
-    if root != REPO:
-        shutil.copyfile(SVG, icons / "icon.svg")
     print(f"Wrote icons under {root}")
 
 
