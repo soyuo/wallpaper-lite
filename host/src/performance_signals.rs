@@ -110,7 +110,7 @@ mod platform {
     use tokio::sync::watch;
     use windows::{
         Win32::{
-            Foundation::{GetLastError, HANDLE, HWND, LPARAM, RECT, WPARAM},
+            Foundation::{CloseHandle, GetLastError, HANDLE, HWND, LPARAM, RECT, WPARAM},
             Graphics::Gdi::{
                 GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromWindow,
             },
@@ -125,13 +125,17 @@ mod platform {
                     WTSRegisterSessionNotification, WTSSessionInfoEx,
                     WTSUnRegisterSessionNotification,
                 },
-                Threading::{GetCurrentProcessId, GetCurrentThreadId},
+                Threading::{
+                    GetCurrentProcessId, GetCurrentThreadId, OpenProcess,
+                    PROCESS_NAME_FORMAT, PROCESS_QUERY_LIMITED_INFORMATION,
+                    QueryFullProcessImageNameW,
+                },
             },
             UI::{
                 Shell::{QUNS_RUNNING_D3D_FULL_SCREEN, SHQueryUserNotificationState},
                 WindowsAndMessaging::{
                     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW,
-                    GetForegroundWindow, GetMessageW, GetWindowRect, GetWindowThreadProcessId,
+                    GetClassNameW, GetForegroundWindow, GetMessageW, GetWindowRect, GetWindowThreadProcessId,
                     IsIconic, IsWindowVisible, KillTimer, MSG, PBT_APMPOWERSTATUSCHANGE,
                     PBT_APMRESUMEAUTOMATIC, PBT_APMRESUMECRITICAL, PBT_APMRESUMESUSPEND,
                     PBT_APMSUSPEND, PBT_POWERSETTINGCHANGE, PostThreadMessageW, RegisterClassW,
@@ -142,7 +146,7 @@ mod platform {
                 },
             },
         },
-        core::w,
+        core::{PWSTR, w},
     };
 
     use super::{
@@ -543,6 +547,10 @@ mod platform {
             if process_id == GetCurrentProcessId() {
                 return Ok(false);
             }
+            let class = window_class(foreground);
+            if is_shell_window_class(&class) {
+                return Ok(false);
+            }
             let mut window_rect = RECT::default();
             GetWindowRect(foreground, &mut window_rect)?;
             let monitor = MonitorFromWindow(foreground, MONITOR_DEFAULTTONEAREST);
@@ -557,11 +565,73 @@ mod platform {
                 return Err(windows::core::Error::from_win32());
             }
             let bounds = monitor_info.rcMonitor;
-            Ok(window_rect.left <= bounds.left
+            let covers = window_rect.left <= bounds.left
                 && window_rect.top <= bounds.top
                 && window_rect.right >= bounds.right
-                && window_rect.bottom >= bounds.bottom)
+                && window_rect.bottom >= bounds.bottom;
+            if covers {
+                log_covering_window(&class, process_id, &window_rect);
+            }
+            Ok(covers)
         }
+    }
+
+    /// Records which window made the geometry check report fullscreen, once per window, so an
+    /// unexpected pause can be traced to a program.
+    fn log_covering_window(class: &str, process_id: u32, rect: &RECT) {
+        static LAST: std::sync::Mutex<Option<(String, u32)>> = std::sync::Mutex::new(None);
+        let key = (class.to_owned(), process_id);
+        let Ok(mut last) = LAST.lock() else { return };
+        if last.as_ref() == Some(&key) {
+            return;
+        }
+        *last = Some(key);
+        tracing::info!(
+            component = "performance",
+            event = "fullscreen_window_detected",
+            window_class = class,
+            process = process_name(process_id).as_deref().unwrap_or("unknown"),
+            process_id,
+            left = rect.left,
+            top = rect.top,
+            right = rect.right,
+            bottom = rect.bottom,
+            "A foreground window covers the whole monitor"
+        );
+    }
+
+    fn window_class(window: HWND) -> String {
+        let mut buffer = [0u16; 256];
+        let length = unsafe { GetClassNameW(window, &mut buffer) };
+        String::from_utf16_lossy(&buffer[..length.max(0) as usize])
+    }
+
+    fn process_name(process_id: u32) -> Option<String> {
+        unsafe {
+            let process =
+                OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, process_id).ok()?;
+            let mut buffer = [0u16; 520];
+            let mut length = buffer.len() as u32;
+            let result = QueryFullProcessImageNameW(
+                process,
+                PROCESS_NAME_FORMAT(0),
+                PWSTR(buffer.as_mut_ptr()),
+                &mut length,
+            );
+            let _ = CloseHandle(process);
+            result.ok()?;
+            let path = String::from_utf16_lossy(&buffer[..length as usize]);
+            path.rsplit('\\').next().map(str::to_owned)
+        }
+    }
+
+    /// Explorer's desktop and taskbar windows cover the monitor but are not a fullscreen app;
+    /// clicking or drag-selecting on the desktop makes them the foreground window.
+    pub(super) fn is_shell_window_class(class: &str) -> bool {
+        matches!(
+            class,
+            "Progman" | "WorkerW" | "Shell_TrayWnd" | "Shell_SecondaryTrayWnd"
+        )
     }
 
     fn query_session_locked() -> (Option<bool>, Option<i32>) {
@@ -682,6 +752,18 @@ mod tests {
     };
     use tokio::sync::watch;
     use wallpaper_core::performance_policy::PerformanceSignals;
+
+    #[cfg(windows)]
+    #[test]
+    fn explorer_desktop_and_taskbar_windows_are_not_fullscreen_apps() {
+        use super::platform::is_shell_window_class;
+        for class in ["Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd"] {
+            assert!(is_shell_window_class(class), "{class}");
+        }
+        for class in ["Chrome_WidgetWin_1", "UnityWndClass", "", "progman"] {
+            assert!(!is_shell_window_class(class), "{class}");
+        }
+    }
 
     #[test]
     fn unavailable_signals_fail_open_and_known_battery_state_is_used() {
