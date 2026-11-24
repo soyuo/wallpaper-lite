@@ -19,7 +19,7 @@ crate-type = ["rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "~2.11.6", features = [] }
+tauri = { version = "~2.11.6", features = ["tray-icon"] }
 tauri-plugin-dialog = "=2.5.0"
 wallpaper-core = { workspace = true }
 wallpaper-display = { workspace = true }
@@ -34,3 +34,4 @@ tracing = { workspace = true }
 tracing-appender = { workspace = true }
 rolling-file = { workspace = true }
 tracing-subscriber = { workspace = true }
+tauri-plugin-single-instance = "2"
