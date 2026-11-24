@@ -27,8 +27,8 @@ export const ERROR_GUIDANCE = {
     next: "If wallpaper-host.exe is missing, reinstall wallpaper-lite. Otherwise open the log folder in Settings to see why it did not start.",
     retry: true,
   },
-  autostart_failed: { next: "Try again, or manage startup apps in Windows Settings.", retry: false },
-  backup_failed: { next: "Choose a folder you can write to with enough free space, then try again.", retry: false },
+  autostart_failed: { next: "Try again, or manage startup apps in Windows Settings.", retry: true },
+  backup_failed: { next: "Choose a folder you can write to with enough free space, then try again.", retry: true },
   invalid_backup: {
     next: "Choose a folder made by Create backup in a compatible version of wallpaper-lite.",
     retry: false,

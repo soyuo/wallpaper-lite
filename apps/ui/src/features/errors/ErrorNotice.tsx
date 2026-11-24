@@ -4,7 +4,7 @@ export function ErrorNotice({ message, onRetry, retrying = false }: {
   onRetry?: () => void;
   retrying?: boolean;
 }) {
-  if (message === null) return null;
+  if (!message) return null;
   return (
     <div className="error-notice" role="alert">
       <p>{message}</p>

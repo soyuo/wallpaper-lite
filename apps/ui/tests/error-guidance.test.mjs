@@ -20,7 +20,14 @@ function codesOfTypeGuard() {
 }
 
 function codesOfRustEnum() {
-  return [...errorSource.matchAll(/=> "([a-z_]+)",/g)].map((match) => match[1]);
+  // Only the arms of ErrorCode::as_str, so other string matches in the file are ignored.
+  const start = errorSource.indexOf("pub const fn as_str(self)");
+  assert.ok(start >= 0, "ErrorCode::as_str not found in error.rs");
+  const end = errorSource.indexOf("\n    }\n}", start);
+  assert.ok(end > start, "end of ErrorCode::as_str not found in error.rs");
+  const codes = [...errorSource.slice(start, end).matchAll(/=> "([a-z_]+)",/g)].map((match) => match[1]);
+  assert.ok(codes.length > 30, "too few error codes parsed from error.rs");
+  return codes;
 }
 
 test("every error code the backend can send has guidance", () => {
