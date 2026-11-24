@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 
 import { applyDisplayProfiles, buildDisplayProfiles, makeDisplayEdits } from "../../display-manager.mjs";
 import { hostAdapter, type DisplayManagerSnapshot, type DisplayPresentationMode } from "../../host-adapter";
+import { describeError } from "../errors/error-message";
 
 export function useDisplays() {
   const [displaySnapshot, setDisplaySnapshot] = useState<DisplayManagerSnapshot | null>(null);
@@ -28,7 +29,7 @@ export function useDisplays() {
         ? loadedMessage
         : `${loadedMessage} ${snapshot.targetFailures.length} target${snapshot.targetFailures.length === 1 ? "" : "s"} could not apply their assignments.`);
     } catch (error) {
-      setDisplayStatus(error instanceof Error ? error.message : "Display information could not be loaded.");
+      setDisplayStatus(describeError(error, "Display information could not be loaded."));
     } finally {
       setDisplayLoading(false);
     }
@@ -40,7 +41,7 @@ export function useDisplays() {
     try {
       profiles = buildDisplayProfiles(displaySnapshot, displayMode, displayEdits);
     } catch (error) {
-      setDisplayStatus(error instanceof Error ? error.message : "Display assignments are invalid.");
+      setDisplayStatus(describeError(error, "Display assignments are invalid."));
       return;
     }
     setDisplaySaving(true);

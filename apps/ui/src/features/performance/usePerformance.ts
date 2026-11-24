@@ -7,6 +7,7 @@ import {
   type PerformanceMetricsSnapshot,
   type PerformancePolicySettings,
 } from "../../host-adapter";
+import { describeError } from "../errors/error-message";
 
 export function usePerformance(displaySnapshot: DisplayManagerSnapshot | null) {
   const [performancePolicy, setPerformancePolicy] = useState<PerformancePolicySettings | null>(null);
@@ -21,7 +22,7 @@ export function usePerformance(displaySnapshot: DisplayManagerSnapshot | null) {
     void hostAdapter.performancePolicySettings().then((settings) => {
       if (!stopped) setPerformancePolicy(settings);
     }).catch((error: unknown) => {
-      if (!stopped) setPerformancePolicyMessage(error instanceof Error ? error.message : "Performance policy settings could not be loaded.");
+      if (!stopped) setPerformancePolicyMessage(describeError(error, "Performance policy settings could not be loaded."));
     });
     return () => { stopped = true; };
   }, []);
@@ -38,7 +39,7 @@ export function usePerformance(displaySnapshot: DisplayManagerSnapshot | null) {
         }
       } catch (error: unknown) {
         if (!stopped) {
-          setPerformanceMetricsError(error instanceof Error ? error.message : "Performance metrics could not be refreshed.");
+          setPerformanceMetricsError(describeError(error, "Performance metrics could not be refreshed."));
         }
       } finally {
         if (!stopped) {
@@ -67,7 +68,7 @@ export function usePerformance(displaySnapshot: DisplayManagerSnapshot | null) {
       await hostAdapter.applyPerformancePolicySettings(performancePolicy);
       setPerformancePolicyMessage("Power-saving policy saved and applied to active playback targets.");
     } catch (error: unknown) {
-      setPerformancePolicyMessage(error instanceof Error ? error.message : "Power-saving policy could not be applied.");
+      setPerformancePolicyMessage(describeError(error, "Power-saving policy could not be applied."));
     } finally {
       setPerformancePolicySaving(false);
     }

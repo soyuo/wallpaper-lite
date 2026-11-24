@@ -256,7 +256,14 @@ export type AppErrorCode =
   | "invalid_performance_policy"
   | "performance_policy_apply_failed"
   | "performance_policy_rollback_failed"
-  | "internal";
+  | "internal"
+  | "windows_initialization_failed"
+  | "graphics_initialization_failed"
+  | "graphics_device_lost"
+  | "image_decode_failed"
+  | "video_source_open_failed"
+  | "video_decode_failed"
+  | "desktop_host_unavailable";
 
 interface AppErrorPayload {
   code: AppErrorCode;
@@ -373,6 +380,13 @@ function isAppErrorCode(value: unknown): value is AppErrorCode {
     value === "invalid_performance_policy" ||
     value === "performance_policy_apply_failed" ||
     value === "performance_policy_rollback_failed" ||
+    value === "windows_initialization_failed" ||
+    value === "graphics_initialization_failed" ||
+    value === "graphics_device_lost" ||
+    value === "image_decode_failed" ||
+    value === "video_source_open_failed" ||
+    value === "video_decode_failed" ||
+    value === "desktop_host_unavailable" ||
     value === "internal"
   );
 }

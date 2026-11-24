@@ -17,6 +17,8 @@ import { useLibrary } from "./features/library/useLibrary";
 import { SettingsPage } from "./features/settings/SettingsPage";
 import type { ThemeChoice } from "./features/settings/SettingsPage";
 import { useSettings } from "./features/settings/useSettings";
+import { describeError, isRetryable } from "./features/errors/error-message";
+import { ErrorNotice } from "./features/errors/ErrorNotice";
 
 type AppPage = "library" | "editor" | "displays" | "playback" | "performance" | "settings";
 
@@ -32,6 +34,7 @@ const APP_PAGES: { id: AppPage; label: string }[] = [
 function App() {
   const [checkingHost, setCheckingHost] = useState(false);
   const [hostStatus, setHostStatus] = useState("Host connection has not been checked.");
+  const [hostProblem, setHostProblem] = useState<{ message: string; retryable: boolean } | null>(null);
   const displaysState = useDisplays();
   const { displaySnapshot } = displaysState;
   const performanceState = usePerformance(displaySnapshot);
@@ -64,14 +67,22 @@ function App() {
     ? null
     : libraryState.library.find((entry) => entry.id === activeWallpaperId) ?? null;
 
+  function hostConnected() {
+    setHostStatus("Wallpaper host connected.");
+    setHostProblem(null);
+  }
+
+  function hostFailed(error: unknown, fallback: string) {
+    setHostStatus("Wallpaper host is not connected.");
+    setHostProblem({ message: describeError(error, fallback), retryable: isRetryable(error) });
+  }
+
   useEffect(() => {
     let cancelled = false;
     setHostStatus("Starting wallpaper host...");
     hostAdapter.startHost().then(
-      () => { if (!cancelled) setHostStatus("Wallpaper host connected."); },
-      (error: unknown) => {
-        if (!cancelled) setHostStatus(error instanceof Error ? error.message : "Could not start the wallpaper host.");
-      },
+      () => { if (!cancelled) hostConnected(); },
+      (error: unknown) => { if (!cancelled) hostFailed(error, "Could not start the wallpaper host."); },
     );
     return () => { cancelled = true; };
   }, []);
@@ -81,9 +92,22 @@ function App() {
     setHostStatus("Checking host connection...");
     try {
       await hostAdapter.ping();
-      setHostStatus("Wallpaper host connected.");
+      hostConnected();
     } catch (error) {
-      setHostStatus(error instanceof Error ? error.message : "Could not check the wallpaper host.");
+      hostFailed(error, "Could not check the wallpaper host.");
+    } finally {
+      setCheckingHost(false);
+    }
+  }
+
+  async function retryHost() {
+    setCheckingHost(true);
+    setHostStatus("Starting wallpaper host...");
+    try {
+      await hostAdapter.startHost();
+      hostConnected();
+    } catch (error) {
+      hostFailed(error, "Could not start the wallpaper host.");
     } finally {
       setCheckingHost(false);
     }
@@ -117,6 +141,12 @@ function App() {
           </button>
         </div>
       </header>
+
+      <ErrorNotice
+        message={hostProblem?.message ?? null}
+        onRetry={hostProblem?.retryable ? () => void retryHost() : undefined}
+        retrying={checkingHost}
+      />
 
       <PerformancePanels hidden={page !== "performance"} state={performanceState} />
 

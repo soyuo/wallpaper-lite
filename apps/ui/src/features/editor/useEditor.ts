@@ -12,6 +12,7 @@ import {
   type WallpaperEditorSettings,
 } from "../../host-adapter";
 import { defaultEditorSettings, type CropPointer, type EditorPointer } from "./editor-utils";
+import { describeError } from "../errors/error-message";
 
 export interface EditorHostDeps {
   previews: Record<number, LibraryPreview>;
@@ -218,7 +219,7 @@ export function useEditor({ previews, setPreviews, setRecentIds, onOpen }: Edito
       setPresetName("");
       setPresetMessage("Preset saved.");
     } catch (error) {
-      setPresetMessage(error instanceof Error ? error.message : "The preset could not be saved.");
+      setPresetMessage(describeError(error, "The preset could not be saved."));
     } finally {
       setPresetBusy(false);
     }
@@ -242,7 +243,7 @@ export function useEditor({ previews, setPreviews, setRecentIds, onOpen }: Edito
       setPresetRename(null);
       setPresetMessage("Preset renamed.");
     } catch (error) {
-      setPresetMessage(error instanceof Error ? error.message : "The preset could not be renamed.");
+      setPresetMessage(describeError(error, "The preset could not be renamed."));
     } finally {
       setPresetBusy(false);
     }
@@ -257,7 +258,7 @@ export function useEditor({ previews, setPreviews, setRecentIds, onOpen }: Edito
       setEditorPresets(await hostAdapter.listEditorPresets(editorEntry.id));
       setPresetMessage("Preset removed.");
     } catch (error) {
-      setPresetMessage(error instanceof Error ? error.message : "The preset could not be removed.");
+      setPresetMessage(describeError(error, "The preset could not be removed."));
     } finally {
       setPresetBusy(false);
     }

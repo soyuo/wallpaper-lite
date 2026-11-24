@@ -123,9 +123,23 @@
   overflow-wrap: anywhere;
 }
 
-.settings-error {
+.error-notice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-danger);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+
+.error-notice p {
+  flex: 1 1 18rem;
   margin: 0;
   color: var(--color-danger);
+  overflow-wrap: anywhere;
 }
 
 .app-empty {

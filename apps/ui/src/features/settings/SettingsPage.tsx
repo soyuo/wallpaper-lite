@@ -1,3 +1,4 @@
+import { ErrorNotice } from "../errors/ErrorNotice";
 import type { SettingsState } from "./useSettings";
 
 export type ThemeChoice = "dark" | "light" | "system";
@@ -18,8 +19,8 @@ export function SettingsPage({ hidden, state, theme, onThemeChange }: {
 
   return (
     <section className="settings-page" hidden={hidden} aria-labelledby="settings-startup-heading">
-      {loadError && <p className="settings-error" role="alert">{loadError}</p>}
-      {error && <p className="settings-error" role="alert">{error}</p>}
+      <ErrorNotice message={loadError} />
+      <ErrorNotice message={error} />
 
       <div className="settings-group">
         <h2 id="settings-startup-heading">Startup</h2>
