@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="16 16 224 224" role="img" aria-label="wallpaper-lite">
+  <defs>
+    <linearGradient id="wl-g" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#7aa9ff"/>
+      <stop offset="1" stop-color="#2a5bc6"/>
+    </linearGradient>
+    <clipPath id="wl-c">
+      <rect x="16" y="16" width="224" height="224" rx="56"/>
+    </clipPath>
+  </defs>
+  <rect x="16" y="16" width="224" height="224" rx="56" fill="url(#wl-g)"/>
+  <g clip-path="url(#wl-c)">
+    <circle cx="174" cy="88" r="24" fill="#ffffff"/>
+    <path d="M0 152 C50 118 100 118 140 146 S210 178 256 140 V256 H0Z" fill="#ffffff" fill-opacity="0.35"/>
+    <path d="M0 192 C45 162 95 160 135 184 S210 208 256 178 V256 H0Z" fill="#ffffff"/>
+  </g>
+</svg>

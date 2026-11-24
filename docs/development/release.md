@@ -67,6 +67,15 @@ release. Development builds are unchanged.
   same Tauri option.
 - Source images and videos are never moved or deleted.
 
+## Icon
+
+The app, the window, the tray and the installer use the icon built from
+`apps/ui/src-tauri/icons/icon.svg` (see the README for how to regenerate it).
+`tauri.release.conf.json` sets `installerIcon` to the same `icon.ico`, because the
+installer otherwise gets the default NSIS icon. Tauri 2 has no setting for the
+uninstaller's icon, so `uninstall.exe` in the install folder keeps the default NSIS
+icon. Apps & features uses the app's own icon.
+
 ## Not included
 
 - Code signing. The installer is unsigned, so Windows SmartScreen warns on first
@@ -93,6 +102,11 @@ Only checks that were actually run are listed. Environment: Windows 11 Education
 - Installing the same installer over an existing install (the upgrade path, silent)
   exited with code 0, kept a launch-at-login value that was present, and kept the
   user data; the following uninstall then removed the value.
+- Icon check on the release build: `wallpaper-ui.exe` and the installer executable
+  carry the new icon (checked by reading the icon Explorer shows for each file), and
+  the installed `wallpaper-ui.exe` does too. `uninstall.exe` still shows the default
+  NSIS icon. The install and uninstall ran silently with exit code 0 and removed the
+  Start menu shortcut and the install folder.
 - The generated NSIS script contains the sidecar installed as `wallpaper-host.exe`,
   its removal on uninstall, and the custom hooks.
 
