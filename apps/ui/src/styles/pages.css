@@ -228,3 +228,8 @@
 /* Library: filter and empty states */
 .library-filter { justify-self: start; }
 .state-card.library-empty { padding: var(--space-6) var(--space-5); border: 1px dashed var(--color-border-strong); border-radius: var(--radius-lg); background: var(--color-surface-subtle); }
+
+/* Settings: card grid */
+.settings-page { max-width: none; grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr)); align-items: start; gap: var(--space-4); }
+.settings-page > .settings-group { border: 1px solid var(--glass-border); border-radius: var(--radius-lg); background: var(--glass-bg); backdrop-filter: var(--glass-blur); box-shadow: var(--glass-shadow); padding: var(--space-5); }
+.settings-page > [role="alert"], .settings-page > .error-notice { grid-column: 1 / -1; }

@@ -40,18 +40,17 @@ export function SettingsPage({ hidden, state, theme, onThemeChange }: {
 
       <fieldset className="settings-group">
         <legend>Appearance</legend>
-        {THEME_OPTIONS.map((option) => (
-          <label className="settings-row" key={option.value}>
-            <input
-              type="radio"
-              name="theme"
-              value={option.value}
-              checked={theme === option.value}
-              onChange={() => onThemeChange(option.value)}
-            />
-            <span>{option.label}</span>
-          </label>
-        ))}
+        <div className="seg" role="group" aria-label="Theme">
+          {THEME_OPTIONS.map((option) => (
+            <button
+              key={option.value}
+              type="button"
+              aria-pressed={theme === option.value}
+              className={theme === option.value ? "on" : undefined}
+              onClick={() => onThemeChange(option.value)}
+            >{option.label}</button>
+          ))}
+        </div>
       </fieldset>
 
       <div className="settings-group">
@@ -61,7 +60,7 @@ export function SettingsPage({ hidden, state, theme, onThemeChange }: {
           Your original images and videos are not copied or changed.
         </p>
         <div className="settings-actions">
-          <button disabled={backupBusy} onClick={() => void createBackup()}>Create backup…</button>
+          <button className="ui-button--primary" disabled={backupBusy} onClick={() => void createBackup()}>Create backup…</button>
           <button disabled={backupBusy} onClick={() => void restoreBackup()}>Restore from backup…</button>
         </div>
         {backupNotice && <p className="settings-notice" role="status">{backupNotice}</p>}
