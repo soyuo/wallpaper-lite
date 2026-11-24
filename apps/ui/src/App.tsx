@@ -4,16 +4,20 @@ import "./styles/tokens.css";
 import "./styles/base.css";
 import "./styles/shell.css";
 import "./App.css";
+import { APP_PAGES } from "./components/app-pages";
+import type { AppPage } from "./components/app-pages";
+import { AppDock } from "./components/AppDock";
+import { AppTopBar } from "./components/AppTopBar";
 import type { HostState } from "./dashboard-view.mjs";
 import { hostAdapter } from "./host-adapter";
 import type { LibraryEntry } from "./host-adapter";
-import { PerformancePanels } from "./features/performance/PerformancePanels";
+import { PerformancePage } from "./features/performance/PerformancePage";
 import { usePerformance } from "./features/performance/usePerformance";
-import { DisplayPanel } from "./features/displays/DisplayPanel";
+import { DisplaysPage } from "./features/displays/DisplaysPage";
 import { useDisplays } from "./features/displays/useDisplays";
-import { PlaybackPanelView } from "./features/playback/PlaybackPanelView";
+import { PlaybackPage } from "./features/playback/PlaybackPage";
 import { usePlayback } from "./features/playback/usePlayback";
-import { EditorPanel } from "./features/editor/EditorPanel";
+import { EditorPage } from "./features/editor/EditorPage";
 import { useEditor } from "./features/editor/useEditor";
 import { DashboardPage } from "./features/dashboard/DashboardPage";
 import { LibraryPage } from "./features/library/LibraryPage";
@@ -23,18 +27,6 @@ import type { ThemeChoice } from "./features/settings/SettingsPage";
 import { useSettings } from "./features/settings/useSettings";
 import { describeError, isRetryable } from "./features/errors/error-message";
 import { ErrorNotice } from "./features/errors/ErrorNotice";
-
-type AppPage = "dashboard" | "library" | "editor" | "displays" | "playback" | "performance" | "settings";
-
-const APP_PAGES: { id: AppPage; label: string; icon: string }[] = [
-  { id: "dashboard", label: "Dashboard", icon: "⌂" },
-  { id: "library", label: "Library", icon: "▦" },
-  { id: "editor", label: "Editor", icon: "✎" },
-  { id: "displays", label: "Monitors", icon: "▭" },
-  { id: "playback", label: "Playback", icon: "▶" },
-  { id: "performance", label: "Performance", icon: "◔" },
-  { id: "settings", label: "Settings", icon: "⚙" },
-];
 
 function App() {
   const [checkingHost, setCheckingHost] = useState(false);
@@ -147,15 +139,7 @@ function App() {
 
   return (
     <div className="app-shell">
-      <div className="app-topbar">
-        <p className="app-brand"><span className="app-brand-mark" aria-hidden="true" />wallpaper Lite</p>
-        <div className="app-topbar-status">
-          <p aria-live="polite" className="host-status" data-state={hostState} role="status"><span>{hostStatus}</span></p>
-          <button className="ui-button--primary" disabled={checkingHost} onClick={checkHost}>
-            {checkingHost ? "Checking..." : "Check wallpaper host"}
-          </button>
-        </div>
-      </div>
+      <AppTopBar hostState={hostState} hostStatus={hostStatus} checking={checkingHost} onCheck={checkHost} />
     <main className="app-main">
       <header className="app-header">
         <h1>{APP_PAGES.find((item) => item.id === page)?.label}</h1>
@@ -168,15 +152,14 @@ function App() {
         retrying={checkingHost}
       />
 
-      <PerformancePanels hidden={page !== "performance"} state={performanceState} />
+      <PerformancePage hidden={page !== "performance"} state={performanceState} />
 
       <SettingsPage hidden={page !== "settings"} state={settingsState} theme={theme} onThemeChange={setTheme} />
 
-      <DisplayPanel hidden={page !== "displays"} state={displaysState} />
+      <DisplaysPage hidden={page !== "displays"} state={displaysState} />
 
-      <PlaybackPanelView hidden={page !== "playback"} state={playbackState} />
-      {page === "editor" && !editorState.editorEntry && (<p className="app-empty">Choose a wallpaper in the Library and press Edit.</p>)}
-      <EditorPanel hidden={page !== "editor"} state={editorState} previews={previews} />
+      <PlaybackPage hidden={page !== "playback"} state={playbackState} />
+      <EditorPage hidden={page !== "editor"} state={editorState} previews={previews} />
       <DashboardPage
         hidden={page !== "dashboard"}
         hostState={hostState}
@@ -190,19 +173,7 @@ function App() {
       />
       <LibraryPage hidden={page !== "library"} state={libraryState} onOpenEditor={openInEditor} onStartPlayback={(entry) => void playbackState.startPlayback(entry)} />
     </main>
-      <nav className="app-dock" aria-label="Main">
-        <ul>
-          {APP_PAGES.map((item) => (
-            <li key={item.id}>
-              <button className="app-dock-item" aria-current={page === item.id ? "page" : undefined} onClick={() => setPage(item.id)}>
-                <span className="app-dock-icon" aria-hidden="true">{item.icon}</span>
-                <span>{item.label}</span>
-                {item.id === "editor" && editorState.editorDirty && <span className="app-nav-dirty" role="img" aria-label="Unapplied changes"> •</span>}
-              </button>
-            </li>
-          ))}
-        </ul>
-      </nav>
+      <AppDock page={page} editorDirty={editorState.editorDirty} onNavigate={setPage} />
     </div>
   );
 }

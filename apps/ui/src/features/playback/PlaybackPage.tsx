@@ -2,7 +2,7 @@ import { formatTimecode, isTimelineCommitKey, moveSegmentHandle, parseTimecode }
 import type { PlaybackSettings } from "../../host-adapter";
 import type { PlaybackState } from "./usePlayback";
 
-export function PlaybackPanelView({ hidden, state }: { hidden: boolean; state: PlaybackState }) {
+export function PlaybackPage({ hidden, state }: { hidden: boolean; state: PlaybackState }) {
   const {
     playbackSettingsDraft,
     playbackMessage,

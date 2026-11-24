@@ -11,7 +11,7 @@ function policyActionLabel(action: PolicyAction): string {
   }
 }
 
-export function PerformancePanels({ hidden, state }: { hidden: boolean; state: PerformanceState }) {
+export function PerformancePage({ hidden, state }: { hidden: boolean; state: PerformanceState }) {
   const {
     performancePolicy,
     performancePolicySaving,

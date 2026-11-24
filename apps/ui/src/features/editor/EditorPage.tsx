@@ -3,7 +3,7 @@ import { colorControls, editorDragTransform, editorGhostStyle } from "./editor-u
 import type { LibraryPreview } from "../../host-adapter";
 import type { EditorState } from "./useEditor";
 
-export function EditorPanel({ hidden, state, previews }: { hidden: boolean; state: EditorState; previews: Record<number, LibraryPreview> }) {
+export function EditorPage({ hidden, state, previews }: { hidden: boolean; state: EditorState; previews: Record<number, LibraryPreview> }) {
   const {
     beginCropPointer,
     beginEditorGesture,
@@ -54,6 +54,7 @@ export function EditorPanel({ hidden, state, previews }: { hidden: boolean; stat
 
   return (
     <>
+      {!editorEntry && !hidden && (<p className="app-empty">Choose a wallpaper in the Library and press Edit.</p>)}
       {editorEntry && (
         <section className="ui-panel editor-preview-panel" hidden={hidden} aria-labelledby="editor-preview-title">
           <div className="editor-preview-heading">

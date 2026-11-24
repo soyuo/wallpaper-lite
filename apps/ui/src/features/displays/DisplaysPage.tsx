@@ -1,7 +1,7 @@
 import type { DisplaysState } from "./useDisplays";
 import type { DisplayPresentationMode } from "../../host-adapter";
 
-export function DisplayPanel({ hidden, state }: { hidden: boolean; state: DisplaysState }) {
+export function DisplaysPage({ hidden, state }: { hidden: boolean; state: DisplaysState }) {
   const {
     displaySnapshot, displayMode, displayEdits, displayStatus, displayLoading, displaySaving,
     setDisplayMode, setDisplayEdits, refreshDisplayManager, saveDisplayAssignments,
