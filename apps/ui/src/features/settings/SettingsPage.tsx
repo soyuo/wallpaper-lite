@@ -38,8 +38,8 @@ export function SettingsPage({ hidden, state, theme, onThemeChange }: {
         </label>
       </div>
 
-      <fieldset className="settings-group">
-        <legend>Appearance</legend>
+      <div className="settings-group" role="group" aria-labelledby="appearance-title">
+        <h2 id="appearance-title">Appearance</h2>
         <div className="seg" role="group" aria-label="Theme">
           {THEME_OPTIONS.map((option) => (
             <button
@@ -51,7 +51,7 @@ export function SettingsPage({ hidden, state, theme, onThemeChange }: {
             >{option.label}</button>
           ))}
         </div>
-      </fieldset>
+      </div>
 
       <div className="settings-group">
         <h2>Backup</h2>
