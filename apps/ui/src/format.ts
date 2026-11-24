@@ -11,8 +11,8 @@ export function formatBytes(value: number | null): string {
   return `${size.toFixed(size >= 100 ? 0 : 1)} ${unit}`;
 }
 
-/** Windows names monitors `\.\DISPLAY1`; show "Display 1" instead and leave other names alone. */
+/** Windows names monitors like `\\.\DISPLAY1`; show "Display 1" instead and leave other names alone. */
 export function friendlyDisplayName(name: string): string {
-  const match = /^\\\.\DISPLAY(\d+)$/i.exec(name);
+  const match = /^\\\\\.\\DISPLAY(\d+)$/i.exec(name);
   return match ? `Display ${match[1]}` : name;
 }
