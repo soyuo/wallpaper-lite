@@ -159,7 +159,7 @@ function App() {
 
       <DisplaysPage hidden={page !== "displays"} state={displaysState} />
 
-      <PlaybackPage hidden={page !== "playback"} state={playbackState} />
+      <PlaybackPage hidden={page !== "playback"} state={playbackState} onOpenLibrary={() => setPage("library")} />
       <EditorPage hidden={page !== "editor"} state={editorState} previews={previews} />
       <DashboardPage
         hidden={page !== "dashboard"}

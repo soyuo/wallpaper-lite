@@ -188,3 +188,39 @@
 @media (max-width: 52rem) {
   .home { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* Playback: stage and settings card */
+.playback-layout > :not(h2, .playback-message) { min-width: 0; }
+
+@media (min-width: 62rem) {
+  .playback-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1.6fr) minmax(18rem, 1fr);
+    align-items: start;
+    column-gap: var(--space-5);
+  }
+
+  .playback-layout > h2,
+  .playback-layout > .playback-message,
+  .playback-layout > .playback-empty { grid-column: 1 / -1; }
+}
+
+.playback-stage {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.playback-stage .playback-state { justify-self: start; text-transform: capitalize; }
+.playback-stage .playback-timeline { display: grid; gap: var(--space-2); }
+.playback-stage .playback-controls { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+
+.playback-layout .playback-settings {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface-subtle);
+}
+
+.chip[data-state="paused"] { color: var(--color-warning-text); background: var(--color-warning-bg); }
