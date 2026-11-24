@@ -15,7 +15,7 @@ body {
 .close { width: 52px; height: 44px; border: 0; background: transparent; color: var(--muted); font-size: 13px; cursor: pointer; }
 .close:hover { background: rgba(20,40,110,.1); }
 
-.body { padding: 24px; display: flex; flex-direction: column; gap: 16px; }
+.body { padding: 20px 24px; display: flex; flex-direction: column; gap: 12px; }
 .progress { display: flex; align-items: center; gap: 8px; }
 .progress i { flex: 1; height: 6px; border-radius: 99px; background: rgba(20,40,110,.22); }
 .progress i.on { background: #fff; box-shadow: 0 0 0 1px rgba(20,40,110,.15); }
@@ -23,8 +23,8 @@ body {
 
 h1 { margin: 0; font-size: 20px; }
 p { margin: 0; color: var(--muted); line-height: 1.55; }
-.hero { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 12px 0 4px; text-align: center; }
-.hero svg { width: 72px; height: 72px; }
+.hero { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 4px 0; text-align: center; }
+.hero svg { width: 64px; height: 64px; }
 .chips { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
 .chip { height: 26px; padding: 0 12px; display: inline-flex; align-items: center; border-radius: 999px; background: rgba(255,255,255,.72); border: 1px solid rgba(255,255,255,.8); font-size: 12px; font-weight: 600; }
 .label { font-size: 12px; font-weight: 600; color: var(--muted); }
@@ -33,7 +33,7 @@ p { margin: 0; color: var(--muted); line-height: 1.55; }
 .field input { flex: 1; min-width: 0; height: 36px; padding: 0 14px; border-radius: 12px; border: 1px solid rgba(255,255,255,.8); background: rgba(255,255,255,.06); font: 13px Consolas, monospace; color: inherit; user-select: text; }
 .field input:focus { outline: 2px solid rgba(59,104,216,.55); }
 
-.glass-in { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-radius: 16px; background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.3); }
+.glass-in { display: flex; align-items: center; gap: 12px; padding: 8px 14px; border-radius: 14px; background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.3); }
 .glass-in > div { flex: 1; display: flex; flex-direction: column; gap: 2px; }
 .glass-in small { color: var(--muted); font-size: 12px; }
 .glass-in .mono { font: 13px Consolas, monospace; }

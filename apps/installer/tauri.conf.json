@@ -14,7 +14,7 @@
         "resizable": false,
         "center": true,
         "width": 640,
-        "height": 480
+        "height": 400
       }
     ],
     "security": { "csp": null }
