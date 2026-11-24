@@ -252,8 +252,11 @@ fieldset {
 
 /* Scrollbars */
 * {
-  scrollbar-color: var(--color-border-strong) transparent;
-  scrollbar-width: thin;
+  scrollbar-width: none;
+}
+
+*::-webkit-scrollbar {
+  display: none;
 }
 
 ::selection {
