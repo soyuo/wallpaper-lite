@@ -11,6 +11,40 @@ function policyActionLabel(action: PolicyAction): string {
   }
 }
 
+function ratio(used: unknown, budget: unknown): number | null {
+  return typeof used === "number" && typeof budget === "number" && budget > 0 ? Math.min(100, (used / budget) * 100) : null;
+}
+
+function StatCard({ label, value, sub, pct }: { label: string; value: string; sub?: string; pct?: number | null }) {
+  return (
+    <section className="performance-stat">
+      <span className="performance-stat-label">{label}</span>
+      <strong className="performance-stat-value">{value}</strong>
+      {pct != null && <div className="dashboard-progress" aria-hidden="true"><span style={{ width: `${pct}%` }} /></div>}
+      {sub && <span className="performance-stat-sub">{sub}</span>}
+    </section>
+  );
+}
+
+const POLICY_OPTIONS: { value: PolicyAction; label: string }[] = [
+  { value: "continue", label: "Continue" },
+  { value: "pause_rendering", label: "Pause rendering" },
+  { value: "pause_playback", label: "Pause playback" },
+];
+
+function PolicySegment({ label, value, disabled, onChange }: { label: string; value: PolicyAction; disabled: boolean; onChange(value: PolicyAction): void }) {
+  return (
+    <div className="performance-policy-field">
+      <span className="performance-stat-label">{label}</span>
+      <div className="seg" role="group" aria-label={`${label} action`}>
+        {POLICY_OPTIONS.map((option) => (
+          <button key={option.value} aria-pressed={value === option.value} className={value === option.value ? "on" : undefined} disabled={disabled} onClick={() => onChange(option.value)}>{option.label}</button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function PerformancePage({ hidden, state }: { hidden: boolean; state: PerformanceState }) {
   const {
     performancePolicy,
@@ -41,10 +75,10 @@ export function PerformancePage({ hidden, state }: { hidden: boolean; state: Per
             {performanceMetricsError && <p className="performance-dashboard-warning" role="status">Refresh failed; retaining the last sample. {performanceMetricsError}</p>}
             {performanceMetricsStale && <p className="performance-dashboard-warning" role="status">The last host sample is older than 3.5 seconds.</p>}
             <div className="performance-memory-grid" aria-label="Process and GPU memory">
-              <p>Process working set: <strong>{formatBytes(performanceMetrics.processWorkingSetBytes)}</strong></p>
-              <p>Process private bytes: <strong>{formatBytes(performanceMetrics.processPrivateBytes)}</strong></p>
-              <p>GPU local: <strong>{formatBytes(performanceMetrics.gpuLocalUsageBytes)}</strong> / {formatBytes(performanceMetrics.gpuLocalBudgetBytes)}</p>
-              <p>GPU non-local: <strong>{formatBytes(performanceMetrics.gpuNonLocalUsageBytes)}</strong> / {formatBytes(performanceMetrics.gpuNonLocalBudgetBytes)}</p>
+              <StatCard label="Process working set" value={formatBytes(performanceMetrics.processWorkingSetBytes)} />
+              <StatCard label="Process private bytes" value={formatBytes(performanceMetrics.processPrivateBytes)} />
+              <StatCard label="GPU local" value={formatBytes(performanceMetrics.gpuLocalUsageBytes)} sub={`of ${formatBytes(performanceMetrics.gpuLocalBudgetBytes)}`} pct={ratio(performanceMetrics.gpuLocalUsageBytes, performanceMetrics.gpuLocalBudgetBytes)} />
+              <StatCard label="GPU non-local" value={formatBytes(performanceMetrics.gpuNonLocalUsageBytes)} sub={`of ${formatBytes(performanceMetrics.gpuNonLocalBudgetBytes)}`} pct={ratio(performanceMetrics.gpuNonLocalUsageBytes, performanceMetrics.gpuNonLocalBudgetBytes)} />
             </div>
             <div className="performance-policy-causes" aria-label="Active performance policy causes">
               <h3>Active policy causes</h3>
@@ -105,46 +139,20 @@ export function PerformancePage({ hidden, state }: { hidden: boolean; state: Per
             <h2 id="performance-policy-title">Power-saving policies</h2>
             <p>Fullscreen and session actions affect playback; battery options are temporary and keep each display’s saved FPS.</p>
           </div>
-          <button disabled={!performancePolicy || performancePolicySaving} onClick={() => void savePerformancePolicy()}>
+          <button className="ui-button--primary" disabled={!performancePolicy || performancePolicySaving} onClick={() => void savePerformancePolicy()}>
             {performancePolicySaving ? "Applying..." : "Apply policies"}
           </button>
         </div>
         {performancePolicy ? (
           <div className="performance-policy-controls">
-            {([
-              ["fullscreenAction", "Fullscreen app"],
-              ["sessionLockAction", "Session lock"],
-            ] as const).map(([key, label]) => (
-              <label key={key}>
-                {label}
-                <select
-                  aria-label={`${label} action`}
-                  disabled={performancePolicySaving}
-                  value={performancePolicy[key]}
-                  onChange={(event) => updatePerformancePolicy({ [key]: event.currentTarget.value as PolicyAction })}
-                >
-                  <option value="continue">Continue</option>
-                  <option value="pause_rendering">Pause rendering</option>
-                  <option value="pause_playback">Pause playback</option>
-                </select>
-              </label>
-            ))}
-            <label>
-              On battery
-              <select
-                aria-label="Battery action"
-                disabled={performancePolicySaving}
-                value={performancePolicy.batteryAction}
-                onChange={(event) => {
-                  const batteryAction = event.currentTarget.value as PolicyAction;
-                  updatePerformancePolicy({ batteryAction, batteryFpsLimit: batteryAction === "continue" ? performancePolicy.batteryFpsLimit : null });
-                }}
-              >
-                <option value="continue">Continue</option>
-                <option value="pause_rendering">Pause rendering</option>
-                <option value="pause_playback">Pause playback</option>
-              </select>
-            </label>
+            <PolicySegment label="Fullscreen app" value={performancePolicy.fullscreenAction} disabled={performancePolicySaving} onChange={(fullscreenAction) => updatePerformancePolicy({ fullscreenAction })} />
+            <PolicySegment label="Session lock" value={performancePolicy.sessionLockAction} disabled={performancePolicySaving} onChange={(sessionLockAction) => updatePerformancePolicy({ sessionLockAction })} />
+            <PolicySegment
+              label="On battery"
+              value={performancePolicy.batteryAction}
+              disabled={performancePolicySaving}
+              onChange={(batteryAction) => updatePerformancePolicy({ batteryAction, batteryFpsLimit: batteryAction === "continue" ? performancePolicy.batteryFpsLimit : null })}
+            />
             <label>
               Battery FPS cap (optional, 1–120)
               <input
