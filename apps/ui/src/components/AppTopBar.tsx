@@ -1,3 +1,4 @@
+import { Logo } from "./Logo";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 import type { HostState } from "../dashboard-view.mjs";
@@ -13,7 +14,7 @@ export function AppTopBar({ hostState, hostStatus, checking, onCheck }: {
 }) {
   return (
     <div className="app-topbar" data-tauri-drag-region={inTauri ? true : undefined}>
-      <p className="app-brand" data-tauri-drag-region={inTauri ? true : undefined}><span className="app-brand-mark" aria-hidden="true" />wallpaper Lite</p>
+      <p className="app-brand" data-tauri-drag-region={inTauri ? true : undefined}><Logo size={26} />wallpaper Lite</p>
       <div className="app-topbar-status" data-tauri-drag-region={inTauri ? true : undefined}>
         <p aria-live="polite" className="host-status" data-state={hostState} role="status"><span>{hostStatus}</span></p>
         <button className="ui-button--primary" disabled={checking} onClick={onCheck}>

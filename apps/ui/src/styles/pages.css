@@ -287,16 +287,36 @@
   text-align: center;
 }
 
-.splash-mark {
-  width: 5rem;
-  height: 5rem;
+.splash::before,
+.splash::after {
+  content: "";
+  position: absolute;
+  width: 24rem;
+  height: 24rem;
   border-radius: 50%;
-  background: radial-gradient(circle at 50% 50%, #3b68d8 0 28%, #fff 30%);
-  box-shadow: 0 0 4rem rgb(255 255 255 / 45%);
+  filter: blur(80px);
+  pointer-events: none;
+}
+
+.splash::before { left: -8%; top: 40%; background: #8fe3cf; opacity: 0.55; }
+.splash::after { right: -6%; bottom: 0; background: #ffc999; opacity: 0.5; }
+
+.splash-card {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  gap: 1rem;
+  width: min(32.5rem, 90vw);
+  min-height: 18.75rem;
+  border-radius: 1.75rem;
 }
 
 .splash h1 {
   margin: 0;
+  font-size: 1.375rem;
+  letter-spacing: -0.02em;
 }
 
 .splash p {
@@ -305,11 +325,11 @@
 }
 
 .splash-bar {
-  width: 12rem;
+  width: 15rem;
   height: 0.5rem;
   overflow: hidden;
   border-radius: 999px;
-  background: rgb(255 255 255 / 20%);
+  background: rgb(20 40 110 / 20%);
 }
 
 .splash-bar i {
