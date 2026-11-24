@@ -531,3 +531,10 @@
 .library-detail-head h3 { margin: 0; overflow-wrap: anywhere; }
 .library-detail-path { font-size: var(--font-size-sm); overflow-wrap: anywhere; }
 .library-detail-actions { display: grid; gap: var(--space-2); }
+
+/* Library: equal-width action buttons, and cards that keep their size when details open */
+.library-card-actions button { width: 100%; justify-content: center; text-align: center; }
+.library-detail-actions button { width: 100%; justify-content: center; text-align: center; }
+@media (min-width: 52rem) {
+  .library-split.has-detail { grid-template-columns: minmax(0, 1fr) 20rem; align-items: start; }
+}

@@ -392,7 +392,8 @@ label {
 
 .library-list {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(13rem, 1fr));
+  grid-template-columns: repeat(auto-fill, 13.5rem);
+  justify-content: start;
   max-height: 44rem;
   gap: var(--space-3);
   overflow: auto;
@@ -463,6 +464,8 @@ label {
 }
 
 .library-card-actions {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(7.5rem, 1fr));
   margin-top: var(--space-2);
 }
 
