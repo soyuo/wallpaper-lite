@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import "./styles/tokens.css";
 import "./styles/base.css";
 import "./styles/shell.css";
+import "./styles/pages.css";
 import "./App.css";
 import { APP_PAGES } from "./components/app-pages";
 import type { AppPage } from "./components/app-pages";
@@ -167,6 +168,7 @@ function App() {
         onStartHost={() => void retryHost()}
         playback={playbackState}
         library={libraryState}
+        displaySnapshot={displaySnapshot}
         onStartPlayback={(entry) => void playbackState.startPlayback(entry)}
         onOpenEditor={openInEditor}
         onOpenLibrary={() => setPage("library")}
