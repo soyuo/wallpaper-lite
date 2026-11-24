@@ -1,0 +1,19 @@
+[package]
+name = "wallpaper-setup"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Setup and uninstall program for wallpaper Lite"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "~2.11.6", features = [] }
+tauri-plugin-dialog = "=2.5.0"
+serde = { workspace = true }
+serde_json = { workspace = true }
+windows = { workspace = true }
+windows-core = { workspace = true }
+winreg = "0.56"

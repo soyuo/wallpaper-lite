@@ -9,6 +9,7 @@ members = [
     "crates/ipc",
     "host",
     "apps/ui/src-tauri",
+    "apps/installer",
 ]
 
 [workspace.package]

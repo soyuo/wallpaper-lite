@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>wallpaper Lite Setup</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="setup.css">
+</head>
+<body>
+<div class="setup">
+  <header class="titlebar" data-drag>
+    <span class="brand" data-drag><i class="logo" aria-hidden="true"></i>wallpaper Lite</span>
+    <span class="titlebar-controls">
+      <button id="minimize" aria-label="Minimize">&#8211;</button>
+      <button id="close" aria-label="Close">&#10005;</button>
+    </span>
+  </header>
+
+  <main class="card" id="card" aria-live="polite">
+    <ol class="steps" id="steps" aria-label="Progress"></ol>
+    <section id="page"></section>
+  </main>
+</div>
+<script src="setup.js"></script>
+</body>
+</html>

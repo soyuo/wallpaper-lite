@@ -4255,6 +4255,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "wallpaper-setup"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-dialog",
+ "windows",
+ "windows-core 0.61.2",
+ "winreg",
+]
+
+[[package]]
 name = "wallpaper-ui"
 version = "0.1.0"
 dependencies = [
