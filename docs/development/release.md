@@ -228,7 +228,8 @@ as a GitHub release.
   version must equal `apps/ui/src-tauri/tauri.conf.json` and the workspace `Cargo.toml`.
 - **Checks:** Rust tests for the workspace without `wallpaper-renderer`, `wallpaper-host`,
   `wallpaper-ui` and `wallpaper-setup`, and the UI `test:*` scripts. A failure stops the run and no
-  release is created. `cargo fmt --check` is not run because it currently fails on `main`.
+  release is created. `audio_track_is_detected_and_controls_accept_volume_mute_and_seek` is skipped:
+  the hosted runner has no audio device (`AudioPlaybackInitializationFailed`). `cargo fmt --check` is not run because it currently fails on `main`.
 - **Build:** `scripts/build-setup.ps1` on `windows-latest` (`--locked`, `npm ci`). Only the
   `release` job has `contents: write`; it publishes what the build job uploaded.
 - Actions are pinned to a version tag, not a commit SHA.
