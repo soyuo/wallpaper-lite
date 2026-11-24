@@ -5,7 +5,8 @@ import { readFileSync } from "node:fs";
 import { ERROR_GUIDANCE, canRetry, explainError, guidanceFor } from "../src/error-guidance.mjs";
 
 const adapterSource = readFileSync(new URL("../src/host-adapter.ts", import.meta.url), "utf8");
-const errorSource = readFileSync(new URL("../../../crates/core/src/error.rs", import.meta.url), "utf8");
+// The checkout may use CRLF line endings; the parsing below expects LF.
+const errorSource = readFileSync(new URL("../../../crates/core/src/error.rs", import.meta.url), "utf8").replace(/\r\n/g, "\n");
 
 function codesOfTypeUnion() {
   const union = /export type AppErrorCode =([\s\S]*?);/.exec(adapterSource);
