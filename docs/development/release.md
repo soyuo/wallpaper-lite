@@ -216,3 +216,25 @@ Windows 10 and 11) and #98 (Phase 6 multi-monitor) are still open for them. For 
 the unchecked items are in comments on the issues for each feature (#134 to #137, #142 to
 #145, #148, #153 and #155). Those issues are closed because their code is merged, so
 their comments are the record, not an open task.
+
+## Custom setup program (`apps/installer`)
+
+`scripts/build-setup.ps1` builds `wallpaper-setup.exe`, a Tauri program with a glass-style
+wizard that embeds `wallpaper-ui.exe` and `wallpaper-host.exe` (copied to `apps/installer/payload`
+first). It is an alternative to the NSIS installer above, which is unchanged.
+
+- **Install and upgrade:** stops the running app and host (`taskkill /F`, as the NSIS hook does),
+  removes a copy installed under the old name `wallpaper-lite` (keeping launch at login), copies the
+  files to `%LOCALAPPDATA%\wallpaper Lite` (or the existing install folder), writes `uninstall.exe`
+  (a copy of itself), the per-user uninstall entry, a Start menu shortcut, an optional desktop
+  shortcut and an optional launch-at-login value.
+- **Uninstall:** `uninstall.exe --uninstall` removes the files, shortcuts, uninstall entry and
+  launch-at-login values. `%APPDATA%\WallpaperLite` and `kr.soyuo.wallpaper` data are removed only
+  when the user ticks "Delete my library and settings". Source images and videos are never touched.
+- **Silent:** `--silent` (or `/S`) runs without a window; with `--uninstall` add `--delete-data`
+  to remove data, with install add `--launch-at-login`.
+- Without the payload files the program builds but refuses to install.
+
+Verification status: see the pull request. Unless it records a run, treat install, upgrade and
+uninstall as not exercised. The program is unsigned, has no WebView2 bootstrapper and does not
+auto-update.
