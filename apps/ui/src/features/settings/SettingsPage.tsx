@@ -15,7 +15,7 @@ export function SettingsPage({ hidden, state, theme, onThemeChange }: {
   theme: ThemeChoice;
   onThemeChange(theme: ThemeChoice): void;
 }) {
-  const { appInfo, autostart, autostartBusy, loadError, error, backupBusy, backupNotice, changeAutostart, createBackup, restoreBackup, openFolder } = state;
+  const { appInfo, autostart, autostartBusy, loadError, error, backupBusy, backupNotice, changeAutostart, createBackup, chooseRestore, cancelRestore, restoreBackup, pendingRestore, openFolder } = state;
 
   return (
     <section className="settings-page" hidden={hidden} aria-labelledby="settings-startup-heading">
@@ -61,8 +61,19 @@ export function SettingsPage({ hidden, state, theme, onThemeChange }: {
         </p>
         <div className="settings-actions">
           <button className="ui-button--primary" disabled={backupBusy} onClick={() => void createBackup()}>Create backup…</button>
-          <button disabled={backupBusy} onClick={() => void restoreBackup()}>Restore from backup…</button>
+          <button disabled={backupBusy} onClick={() => void chooseRestore()}>Restore from backup…</button>
         </div>
+        {pendingRestore !== null && (
+          <div className="restore-confirm" role="alertdialog" aria-labelledby="restore-title">
+            <h3 id="restore-title">Restore from this folder?</h3>
+            <p className="restore-path">{pendingRestore}</p>
+            <p>Your current settings are kept in the restore-previous folder, and the wallpaper host restarts. If the folder is not a valid backup, nothing is changed.</p>
+            <div className="settings-actions">
+              <button disabled={backupBusy} onClick={cancelRestore}>Cancel</button>
+              <button className="ui-button--primary" disabled={backupBusy} onClick={() => void restoreBackup()}>{backupBusy ? "Restoring…" : "Restore"}</button>
+            </div>
+          </div>
+        )}
         {backupNotice && <p className="settings-notice" role="status">{backupNotice}</p>}
       </div>
 
