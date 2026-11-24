@@ -42,6 +42,7 @@ pub enum ErrorCode {
     PerformancePolicyRollbackFailed,
     DesktopHostUnavailable,
     HostLaunchFailed,
+    AutostartFailed,
     Internal,
 }
 
@@ -86,6 +87,7 @@ impl ErrorCode {
             Self::PerformancePolicyRollbackFailed => "performance_policy_rollback_failed",
             Self::DesktopHostUnavailable => "desktop_host_unavailable",
             Self::HostLaunchFailed => "host_launch_failed",
+            Self::AutostartFailed => "autostart_failed",
             Self::Internal => "internal",
         }
     }

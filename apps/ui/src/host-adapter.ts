@@ -216,6 +216,7 @@ export type AppErrorCode =
   | "unsupported_platform"
   | "transport_error"
   | "host_launch_failed"
+  | "autostart_failed"
   | "library_storage_failed"
   | "invalid_library_entry"
   | "editor_settings_storage_failed"
@@ -257,6 +258,8 @@ export interface HostAdapter {
   ping(): Promise<void>;
   /** Starts the bundled wallpaper host unless one is already running. */
   startHost(): Promise<"already_running" | "started">;
+  getAutostart(): Promise<boolean>;
+  setAutostart(enabled: boolean): Promise<void>;
   importMedia(paths: string[]): Promise<ImportResult[]>;
   listLibrary(): Promise<LibraryEntry[]>;
   libraryPreview(id: number): Promise<LibraryPreview>;
@@ -323,6 +326,7 @@ function isAppErrorCode(value: unknown): value is AppErrorCode {
     value === "unsupported_platform" ||
     value === "transport_error" ||
     value === "host_launch_failed" ||
+    value === "autostart_failed" ||
     value === "library_storage_failed" ||
     value === "invalid_library_entry" ||
     value === "editor_settings_storage_failed" ||
@@ -348,6 +352,12 @@ function isAppErrorCode(value: unknown): value is AppErrorCode {
 }
 
 export const hostAdapter: HostAdapter = {
+  getAutostart() {
+    return invokeAppCommand<boolean>("get_autostart");
+  },
+  setAutostart(enabled) {
+    return invokeAppCommand<void>("set_autostart", { enabled });
+  },
   startHost() {
     return invokeAppCommand<"already_running" | "started">("host_start");
   },
