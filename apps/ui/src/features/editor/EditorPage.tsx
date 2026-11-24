@@ -84,10 +84,14 @@ export function EditorPage({ hidden, state, previews }: { hidden: boolean; state
               </div>
             )}
           </div>
+          {editorError && (
+            <p className="home-banner" role="alert">
+              <span>{editorError}</span>
+              {editorSettingsDraft && editorPreview && <button disabled={editorSaveBusy} onClick={() => void saveEditorSettingsDraft()}>Try again</button>}
+            </p>
+          )}
           {editorBusy ? (
             <p role="status">Rendering preview...</p>
-          ) : editorError ? (
-            <p role="status">{editorError}</p>
           ) : editorPreview ? (
             <div
               ref={previewCanvasRef}
@@ -131,6 +135,11 @@ export function EditorPage({ hidden, state, previews }: { hidden: boolean; state
               />
             </div>
           ) : null}
+          {editorSettingsDraft && editorPreview && !editorBusy && (
+            <p className="editor-readout">
+              X {editorSettingsDraft.render.positionPx.x} px · Y {editorSettingsDraft.render.positionPx.y} px · {editorSettingsDraft.render.scale.x.toFixed(2)}×
+            </p>
+          )}
           <p className="editor-history-shortcuts">Ctrl/Cmd+Z undo · Ctrl/Cmd+Y redo · Delete resets settings · Drag the preview to position; drag the corner handle to resize (Shift locks aspect, Alt resizes around center).</p>
           <p className="editor-preview-note">Resizing this application window only scales the preview display; it does not change saved wallpaper settings.</p>
           </div>
