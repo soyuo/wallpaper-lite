@@ -27,6 +27,34 @@ body {
   background-attachment: fixed;
 }
 
+/* Shapes behind the glass: a sun and soft waves, so the panels have something to blur. */
+body::before,
+body::after {
+  content: "";
+  position: fixed;
+  z-index: -1;
+  pointer-events: none;
+}
+
+body::before {
+  top: 4rem;
+  right: 12%;
+  width: 18rem;
+  height: 18rem;
+  border-radius: 50%;
+  background: radial-gradient(circle, #fff 0 38%, rgb(255 255 255 / 45%) 40%, rgb(255 255 255 / 0%) 70%);
+  opacity: var(--backdrop-sun-opacity);
+}
+
+body::after {
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 16rem;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1440 260' preserveAspectRatio='none'%3E%3Cpath d='M0 90 C240 30 420 40 640 90 S1100 150 1440 70 V260 H0Z' fill='%23fff' fill-opacity='.35'/%3E%3Cpath d='M0 150 C260 100 440 110 680 160 S1120 210 1440 140 V260 H0Z' fill='%23fff' fill-opacity='.55'/%3E%3C/svg%3E") bottom / 100% 100% no-repeat;
+  opacity: var(--backdrop-wave-opacity);
+}
+
 h1,
 h2,
 h3,

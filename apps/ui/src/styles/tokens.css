@@ -21,6 +21,8 @@
 
   /* Page backdrop (sky gradient and soft glows) */
   --backdrop-gradient: linear-gradient(180deg, #0f1c47 0%, #1b3a94 55%, #2a55c8 100%);
+  --backdrop-sun-opacity: 0.18;
+  --backdrop-wave-opacity: 0.25;
   --backdrop-glow-a: rgb(143 227 207 / 14%);
   --backdrop-glow-b: rgb(255 201 153 / 12%);
 
@@ -102,6 +104,8 @@
   --color-success-text: #0f5f45;
   --color-success-bg: rgb(224 250 240 / 85%);
   --backdrop-gradient: linear-gradient(180deg, #d3e3ff 0%, #9dbdff 42%, #5f8cf0 100%);
+  --backdrop-sun-opacity: 1;
+  --backdrop-wave-opacity: 1;
   --backdrop-glow-a: rgb(143 227 207 / 55%);
   --backdrop-glow-b: rgb(255 201 153 / 50%);
   --glass-bg: rgb(255 255 255 / 45%);
