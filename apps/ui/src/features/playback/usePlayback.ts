@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 
 import { hostAdapter, type LibraryEntry, type PlaybackPanel, type PlaybackSettings } from "../../host-adapter";
 import { formatTimecode, nominalFrameStep100ns, parseSegmentDraft, parseTimecode, runPlaybackAction } from "../../playback-time.mjs";
+import { describeError } from "../errors/error-message";
 
 export function usePlayback() {
   const [playbackPanel, setPlaybackPanel] = useState<PlaybackPanel | null>(null);
@@ -23,7 +24,7 @@ export function usePlayback() {
       setPlaybackSettingsDraft(panel.settings);
       setPlaybackMessage("");
     }).catch((error: unknown) => {
-      if (!stopped) setPlaybackMessage(error instanceof Error ? error.message : "Playback state is unavailable.");
+      if (!stopped) setPlaybackMessage(describeError(error, "Playback state is unavailable."));
     });
     const timer = window.setInterval(() => {
       if (polling || stopped) return;
@@ -31,7 +32,7 @@ export function usePlayback() {
       void hostAdapter.playbackState().then((state) => {
         if (!stopped) setPlaybackPanel((panel) => panel ? { ...panel, state } : { state, settings: null });
       }).catch((error: unknown) => {
-        if (!stopped) setPlaybackMessage(error instanceof Error ? error.message : "Playback state is unavailable.");
+        if (!stopped) setPlaybackMessage(describeError(error, "Playback state is unavailable."));
       }).finally(() => { polling = false; });
     }, 500);
     return () => {
@@ -75,7 +76,7 @@ export function usePlayback() {
       }
       setPlaybackMessage(`Playing ${entry.displayName}.`);
     } catch (error) {
-      setPlaybackMessage(error instanceof Error ? error.message : "The video could not be started.");
+      setPlaybackMessage(describeError(error, "The video could not be started."));
     } finally {
       setPlaybackBusy(false);
     }
@@ -114,7 +115,7 @@ export function usePlayback() {
       setSeekTimeDirty(false);
       setPlaybackMessage("");
     } catch (error) {
-      setPlaybackMessage(error instanceof Error ? error.message : "The seek command failed.");
+      setPlaybackMessage(describeError(error, "The seek command failed."));
     } finally {
       setPlaybackBusy(false);
     }
@@ -139,7 +140,7 @@ export function usePlayback() {
       setPlaybackPanel((panel) => panel ? { ...panel, state: next } : { state: next, settings: null });
       setPlaybackMessage("");
     } catch (error) {
-      setPlaybackMessage(error instanceof Error ? error.message : "Frame seek failed.");
+      setPlaybackMessage(describeError(error, "Frame seek failed."));
     } finally {
       setPlaybackBusy(false);
     }
@@ -175,7 +176,7 @@ export function usePlayback() {
       setPlaybackSettingsDraft(panel.settings);
       setPlaybackMessage("Playback settings applied and saved.");
     } catch (error) {
-      setPlaybackMessage(error instanceof Error ? error.message : "Playback settings could not be applied.");
+      setPlaybackMessage(describeError(error, "Playback settings could not be applied."));
     } finally {
       setPlaybackBusy(false);
     }

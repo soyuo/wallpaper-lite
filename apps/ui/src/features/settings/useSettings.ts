@@ -3,13 +3,11 @@ import { useCallback, useEffect, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 
 import { hostAdapter } from "../../host-adapter";
+import { describeError } from "../errors/error-message";
 import type { AppInfo } from "../../host-adapter";
 
 const RESTORE_NOTICE_KEY = "wallpaper-lite.restore-notice";
 
-function messageOf(error: unknown, fallback: string): string {
-  return error instanceof Error ? error.message : fallback;
-}
 
 export interface SettingsState {
   appInfo: AppInfo | null;
@@ -54,7 +52,7 @@ export function useSettings(active: boolean): SettingsState {
     setLoadError(null);
     hostAdapter.appInfo().then(
       (info) => { if (!cancelled) setAppInfo(info); },
-      (reason: unknown) => { if (!cancelled) setLoadError(messageOf(reason, "Could not read the app information.")); },
+      (reason: unknown) => { if (!cancelled) setLoadError(describeError(reason, "Could not read the app information.")); },
     );
     hostAdapter.getAutostart().then(
       (enabled) => { if (!cancelled) setAutostart(enabled); },
@@ -62,7 +60,7 @@ export function useSettings(active: boolean): SettingsState {
         if (cancelled) return;
         // Leave the checkbox usable so the user can still try to set it.
         setAutostart((current) => current ?? false);
-        setLoadError(messageOf(reason, "Could not read the launch-at-login setting. The checkbox may not match the real setting."));
+        setLoadError(describeError(reason, "Could not read the launch-at-login setting. The checkbox may not match the real setting."));
       },
     );
     return () => { cancelled = true; };
@@ -76,7 +74,7 @@ export function useSettings(active: boolean): SettingsState {
       setAutostart(enabled);
     } catch (reason) {
       // Keep the checkbox at the real registry state when the change is refused.
-      setError(messageOf(reason, "Could not change the launch-at-login setting."));
+      setError(describeError(reason, "Could not change the launch-at-login setting."));
     } finally {
       setAutostartBusy(false);
     }
@@ -87,7 +85,7 @@ export function useSettings(active: boolean): SettingsState {
     try {
       await hostAdapter.openAppFolder(folder);
     } catch (reason) {
-      setError(messageOf(reason, "Could not open the folder."));
+      setError(describeError(reason, "Could not open the folder."));
     }
   }, []);
 
@@ -101,7 +99,7 @@ export function useSettings(active: boolean): SettingsState {
       const summary = await hostAdapter.createSettingsBackup(destination);
       setBackupNotice(`Backed up ${summary.fileCount} settings files to ${summary.folder}.`);
     } catch (reason) {
-      setError(messageOf(reason, "Could not create the backup."));
+      setError(describeError(reason, "Could not create the backup."));
     } finally {
       setBackupBusy(false);
     }
@@ -121,7 +119,7 @@ export function useSettings(active: boolean): SettingsState {
         : `Restored ${summary.fileCount} settings files, but the wallpaper host could not be restarted. Quit from the tray and start the app again.`);
       window.location.reload();
     } catch (reason) {
-      setError(messageOf(reason, "Could not restore the backup."));
+      setError(describeError(reason, "Could not restore the backup."));
       setBackupBusy(false);
     }
   }, []);
