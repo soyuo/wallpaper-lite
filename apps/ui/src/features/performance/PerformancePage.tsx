@@ -1,3 +1,4 @@
+import { NumberField } from "../../components/NumberField";
 import { formatBytes, friendlyDisplayName } from "../../format";
 import { formatPerformanceValue } from "../../performance-dashboard.mjs";
 import type { PolicyAction } from "../../host-adapter";
@@ -160,9 +161,8 @@ export function PerformancePage({ hidden, state }: { hidden: boolean; state: Per
             />
             <label>
               Battery FPS cap (optional, 1–120)
-              <input
+              <NumberField
                 aria-label="Battery FPS cap"
-                type="number"
                 min={1}
                 max={120}
                 step={1}

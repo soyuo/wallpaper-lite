@@ -1,3 +1,4 @@
+import { NumberField } from "../../components/NumberField";
 import { friendlyDisplayName } from "../../format";
 import { useState } from "react";
 
@@ -101,9 +102,8 @@ export function DisplaysPage({ hidden, state }: { hidden: boolean; state: Displa
                     )}
                     <label>
                       FPS override
-                      <input
+                      <NumberField
                         aria-label={`${friendlyDisplayName(display.name)} FPS override`}
-                        type="number"
                         min={1}
                         max={120}
                         step={1}
