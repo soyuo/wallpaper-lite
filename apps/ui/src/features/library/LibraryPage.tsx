@@ -17,6 +17,8 @@ export function LibraryPage({ hidden, state, onOpenEditor, onStartPlayback }: {
     recentLibrary,
     librarySearch,
     favoritesOnly,
+    kindFilter,
+    setKindFilter,
     libraryBusy,
     libraryMessage,
     previews,
@@ -55,6 +57,12 @@ export function LibraryPage({ hidden, state, onOpenEditor, onStartPlayback }: {
         <p aria-live="polite" className="import-status" role="status">
           {importing ? "Validating selected media..." : importStatus}
         </p>
+        {importResults.length > 0 && (
+          <p className="import-summary" role="status">
+            {importResults.filter((result) => !result.failure && result.status === "imported").length} added
+            {importResults.some((result) => result.failure) ? ` · ${importResults.filter((result) => result.failure).length} skipped` : ""}
+          </p>
+        )}
         {importResults.length > 0 && (
           <ul className="import-results" aria-label="Import results">
             {importResults.map((result, index) => (
@@ -102,16 +110,29 @@ export function LibraryPage({ hidden, state, onOpenEditor, onStartPlayback }: {
             placeholder="Search wallpapers"
           />
         </label>
-        <div className="seg library-filter" role="group" aria-label="Library filter">
-          {([[false, "All"], [true, "Favorites"]] as const).map(([value, label]) => (
-            <button
-              key={label}
-              type="button"
-              aria-pressed={favoritesOnly === value}
-              className={favoritesOnly === value ? "on" : undefined}
-              onClick={() => { setFavoritesOnly(value); setVisibleCount(24); }}
-            >{label}</button>
-          ))}
+        <div className="library-chips" role="group" aria-label="Library filter">
+          {([
+            ["all", "All", library.length],
+            ["image", "Image", library.filter((entry) => entry.mediaKind === "image").length],
+            ["video", "Video", library.filter((entry) => entry.mediaKind === "video").length],
+            ["favorites", "Favorites", library.filter((entry) => entry.isFavorite).length],
+            ["missing", "Missing", library.filter((entry) => entry.availability !== "available").length],
+          ] as const).map(([key, label, count]) => {
+            const active = key === "favorites" ? favoritesOnly : kindFilter === key && !favoritesOnly;
+            return (
+              <button
+                key={key}
+                type="button"
+                aria-pressed={active}
+                className={`library-chip${active ? " on" : ""}`}
+                onClick={() => {
+                  setFavoritesOnly(key === "favorites");
+                  setKindFilter(key === "favorites" ? "all" : key);
+                  setVisibleCount(24);
+                }}
+              >{label} <span>{count}</span></button>
+            );
+          })}
         </div>
         <p aria-live="polite" className="library-message" role="status">{libraryMessage}</p>
         {filteredLibrary.length === 0 ? (
@@ -128,7 +149,7 @@ export function LibraryPage({ hidden, state, onOpenEditor, onStartPlayback }: {
             <div className="state-card library-empty">
               <p className="state-title">No matching wallpaper entries.</p>
               <p className="dashboard-detail">Try a different name or clear the search and filter.</p>
-              <button onClick={() => { setLibrarySearch(""); setFavoritesOnly(false); }}>Clear filters</button>
+              <button onClick={() => { setLibrarySearch(""); setFavoritesOnly(false); setKindFilter("all"); }}>Clear filters</button>
             </div>
           )
         ) : (
