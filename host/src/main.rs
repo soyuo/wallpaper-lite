@@ -16,12 +16,15 @@ mod performance_signals;
 mod playback;
 mod recovery;
 
+#[cfg(test)]
+mod identifier_tests;
+
 use performance_metrics::PerformanceMetricsRegistry;
 use performance_signals::{PerformanceSignalMonitor, PerformanceSignalSnapshot, policy_signals};
 use playback::PlaybackWorker;
 use recovery::DesktopRecoveryWorker;
 
-const APP_LOG_DIRECTORY: &str = "com.soyuo.wallpaper-lite";
+const APP_LOG_DIRECTORY: &str = "kr.soyuo.wallpaper";
 
 fn install_stderr_logger() {
     let _ = tracing_subscriber::fmt()
@@ -81,14 +84,23 @@ fn initialize_logging() -> Option<WorkerGuard> {
 
 /// Holds the per-session mutex that keeps a second host from attaching another
 /// wallpaper window. Windows releases it when the process exits.
-struct SingleInstanceGuard(windows::Win32::Foundation::HANDLE);
+struct SingleInstanceGuard(Vec<windows::Win32::Foundation::HANDLE>);
 
 impl Drop for SingleInstanceGuard {
     fn drop(&mut self) {
-        // SAFETY: the handle was returned by CreateMutexW and is closed exactly once.
-        let _ = unsafe { windows::Win32::Foundation::CloseHandle(self.0) };
+        for handle in &self.0 {
+            // SAFETY: each handle was returned by CreateMutexW and is closed exactly once.
+            let _ = unsafe { windows::Win32::Foundation::CloseHandle(*handle) };
+        }
     }
 }
+
+/// The host's single-instance mutex, named after the app identifier.
+const MUTEX_NAME: &str = "Local\\kr.soyuo.wallpaper.host";
+/// The name a host built before the identifier changed to kr.soyuo.wallpaper holds. That
+/// host shares the control pipe with this one, so it is checked too. Drop it once no such
+/// build is expected to be running.
+const LEGACY_MUTEX_NAME: &str = "Local\\com.soyuo.wallpaper-lite.host";
 
 enum SingleInstance {
     Acquired(SingleInstanceGuard),
@@ -99,26 +111,34 @@ enum SingleInstance {
 fn acquire_single_instance() -> SingleInstance {
     use windows::{
         Win32::{
-            Foundation::{ERROR_ALREADY_EXISTS, GetLastError},
+            Foundation::{CloseHandle, ERROR_ALREADY_EXISTS, GetLastError},
             System::Threading::CreateMutexW,
         },
-        core::w,
+        core::{HSTRING, PCWSTR},
     };
 
-    // SAFETY: the name is a valid NUL-terminated wide string and no security
-    // attributes are supplied, so the default per-user descriptor applies.
-    match unsafe { CreateMutexW(None, false, w!("Local\\com.soyuo.wallpaper-lite.host")) } {
-        Ok(handle) => {
-            // SAFETY: reads the thread's last-error value set by CreateMutexW above.
-            if unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
-                let _ = unsafe { windows::Win32::Foundation::CloseHandle(handle) };
-                SingleInstance::AlreadyRunning
-            } else {
-                SingleInstance::Acquired(SingleInstanceGuard(handle))
+    let names = [HSTRING::from(MUTEX_NAME), HSTRING::from(LEGACY_MUTEX_NAME)];
+    let mut handles = Vec::with_capacity(names.len());
+    for name in &names {
+        // SAFETY: the name is a valid NUL-terminated wide string and no security
+        // attributes are supplied, so the default per-user descriptor applies.
+        match unsafe { CreateMutexW(None, false, PCWSTR(name.as_ptr())) } {
+            Ok(handle) => {
+                // SAFETY: reads the thread's last-error value set by CreateMutexW above.
+                if unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
+                    let _ = unsafe { CloseHandle(handle) };
+                    drop(SingleInstanceGuard(handles));
+                    return SingleInstance::AlreadyRunning;
+                }
+                handles.push(handle);
+            }
+            Err(error) => {
+                drop(SingleInstanceGuard(handles));
+                return SingleInstance::Unavailable(error);
             }
         }
-        Err(error) => SingleInstance::Unavailable(error),
     }
+    SingleInstance::Acquired(SingleInstanceGuard(handles))
 }
 
 fn main() -> process::ExitCode {

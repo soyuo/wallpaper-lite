@@ -52,11 +52,26 @@ The product is called **wallpaper Lite**. It is set once, as `productName` in
 the install folder, the Start menu shortcut and the entry in Apps & features. The
 window title, sidebar, tray tooltip and messages use the same name.
 
-These identifiers keep the old spelling on purpose, so settings and the launch-at-login
-entry of an existing install are still found: the app identifier
-`com.soyuo.wallpaper-lite`, the settings folder `%APPDATA%\WallpaperLite`, the log folder,
-the `wallpaper-lite` launch-at-login value, the pipe names, the executable names
-`wallpaper-ui.exe` and `wallpaper-host.exe`, and the repository and crate names.
+The app identifier is `kr.soyuo.wallpaper` (reverse domain of soyuo.kr), set as
+`identifier` in `tauri.conf.json`. Tauri derives from it the WebView2 data folder and
+the single-instance lock. According to the installer script Tauri generates (read, not
+run), the installer's "Delete the application data" option removes
+`%APPDATA%\kr.soyuo.wallpaper` and `%LOCALAPPDATA%\kr.soyuo.wallpaper`. The app and
+host also write their logs to `%LOCALAPPDATA%\kr.soyuo.wallpaper\logs`, and the host's
+single-instance mutex is `Local\kr.soyuo.wallpaper.host`. The host also takes the old
+mutex name `Local\com.soyuo.wallpaper-lite.host`, so a host from a build with the
+earlier identifier `com.soyuo.wallpaper-lite` is still noticed and a second host does
+not start next to it; that second name can be dropped once no such build is expected to
+be running. Such a build leaves its logs and WebView data under
+`%LOCALAPPDATA%\com.soyuo.wallpaper-lite`. They are not moved or deleted, and nothing
+removes them later, so delete that folder by hand if you do not need the old logs.
+Unit tests check that the log folder and mutex names match `identifier`.
+
+These names keep their old spelling on purpose, so settings and the launch-at-login
+entry of an existing install are still found: the settings folder
+`%APPDATA%\WallpaperLite`, the `wallpaper-lite` launch-at-login value, the pipe names,
+the executable names `wallpaper-ui.exe` and `wallpaper-host.exe`, and the repository
+and crate names.
 A copy installed under the earlier name `wallpaper-lite` is a different product to the
 Tauri installer, so the installer hook removes it first (silently, keeping the user's
 data) and carries its launch-at-login choice over to the new install. See
@@ -76,11 +91,11 @@ data) and carries its launch-at-login choice over to the new install. See
   removes the app files. An upgrade keeps launch at login and user data. Stopping the host removes its wallpaper window, so
   Windows shows the normal desktop background again.
 - **Uninstall data choice:** the uninstaller's "Delete the application data"
-  option removes `%APPDATA%\com.soyuo.wallpaper-lite` (Tauri's default) and, by
+  option removes `%APPDATA%\kr.soyuo.wallpaper` (Tauri's default) and, by
   the hook above, `%APPDATA%\WallpaperLite`, where the library, editor settings,
   display profiles and performance policy are stored. Leaving it unticked keeps
   them for a later reinstall.
-- Log files in `%LOCALAPPDATA%\com.soyuo.wallpaper-lite\logs` are covered by the
+- Log files in `%LOCALAPPDATA%\kr.soyuo.wallpaper\logs` are covered by the
   same Tauri option.
 - Source images and videos are never moved or deleted.
 
@@ -133,6 +148,14 @@ Only checks that were actually run are listed. Environment: Windows 11 Education
   A `wallpaper-lite` launch-at-login value set beforehand was removed by the silent
   uninstall, which also removed the folder, shortcut and uninstall entry and left the
   existing `%APPDATA%\WallpaperLite` data in place.
+- Identifier check after the change to `kr.soyuo.wallpaper`: the generated NSIS script
+  defines `BUNDLEID "kr.soyuo.wallpaper"`; `wallpaper-ui.exe` and `wallpaper-host.exe`
+  contain the new string and not `com.soyuo.wallpaper-lite`; a silent install and
+  uninstall (`/S`) exited with code 0, removed the folder, the uninstall entry and a
+  `wallpaper-lite` launch-at-login value set beforehand, and kept the `%APPDATA%\WallpaperLite`
+  data. That the app and host actually write their logs to the new folder, and that the
+  uninstaller's "Delete the application data" option removes the new identifier's folders,
+  were not run.
 - Moving from the old name. A build made before the rename was installed with its own
   installer (`wallpaper-lite_0.1.0_x64-setup.exe /S`, which created the uninstall entry
   `wallpaper-lite`), and a `wallpaper-lite` launch-at-login value was set. Running the

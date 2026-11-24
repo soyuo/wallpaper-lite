@@ -138,7 +138,7 @@ and `last_error` carries a safe typed error from asynchronous work.
   exits so Windows restores the desktop background. Its response is
   `{"version":13,"request_id":12,"result":"shutting_down"}`. The UI backend
   (`host_process.rs`) sends it and waits for the pipe to disappear. The host also
-  holds the per-session mutex `Local\com.soyuo.wallpaper-lite.host`, so a second
+  holds the per-session mutex `Local\kr.soyuo.wallpaper.host`, so a second
   host exits immediately with code 3 instead of attaching another wallpaper
   window; the UI retries the launch while the previous host is still shutting
   down.

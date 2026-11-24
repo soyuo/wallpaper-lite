@@ -34,7 +34,7 @@ Use `tracing` with the component target and structured fields:
   log the error code, `io::ErrorKind`, and numeric OS error code only.
 
 Both processes write daily files under
-`%LOCALAPPDATA%\com.soyuo.wallpaper-lite\logs`:
+`%LOCALAPPDATA%\kr.soyuo.wallpaper\logs`:
 
 - UI backend: `ui.log` plus up to six numbered backups (`ui.log.1` through
   `ui.log.6`); at most seven files total, rotated daily or at 5 MiB.

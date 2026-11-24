@@ -407,7 +407,7 @@ try {
     }
 
     $watch.Stop()
-    $logDirectory = Join-Path $localAppData 'com.soyuo.wallpaper-lite\logs'
+    $logDirectory = Join-Path $localAppData 'kr.soyuo.wallpaper\logs'
     $logStatus = 'unavailable'
     $logFiles = @()
     if (Test-Path -LiteralPath $logDirectory -PathType Container) {

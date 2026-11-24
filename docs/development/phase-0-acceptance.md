@@ -43,7 +43,7 @@ Run the D3D11 creation/drop smoke test from the repository root:
 cargo +1.85.0 test -p wallpaper-renderer --target x86_64-pc-windows-msvc -- --test-threads=1
 ```
 
-The host writes startup and renderer initialization events under `%LOCALAPPDATA%\com.soyuo.wallpaper-lite\logs`.
+The host writes startup and renderer initialization events under `%LOCALAPPDATA%\kr.soyuo.wallpaper\logs`.
 
 ## Limitations
 
