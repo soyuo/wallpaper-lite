@@ -150,16 +150,17 @@
 
 .app-topbar { padding-right: 0; user-select: none; }
 
-.app-window-controls { display: flex; align-self: stretch; }
+.app-window-controls { display: flex; align-items: center; gap: 0.125rem; }
 
 .app-window-controls button {
   display: grid;
-  width: 3.25rem;
+  width: 2.5rem;
+  height: 2rem;
   min-height: 0;
   place-items: center;
   padding: 0;
   border: 0;
-  border-radius: 0;
+  border-radius: 0.6rem;
   background: transparent;
 }
 
