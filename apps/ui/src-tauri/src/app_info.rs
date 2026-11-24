@@ -65,7 +65,19 @@ pub fn open_app_folder(folder: AppFolder) -> Result<(), AppError> {
         )
     };
     let path = folder_path(folder).ok_or_else(failure)?;
-    fs::create_dir_all(&path).map_err(|_| failure())?;
+    match folder {
+        // Settings can be opened before anything was saved.
+        AppFolder::Data => fs::create_dir_all(&path).map_err(|_| failure())?,
+        // A missing log folder means logging is not working; say so instead of
+        // showing an empty folder that looks healthy.
+        AppFolder::Logs if !path.is_dir() => {
+            return Err(AppError::new(
+                ErrorCode::Internal,
+                "No log folder exists yet. The app has not written any logs.",
+            ));
+        }
+        AppFolder::Logs => {}
+    }
     // Explorer reports a non-zero exit code even when it opens the folder, so only
     // a failure to start it is an error.
     Command::new("explorer.exe")

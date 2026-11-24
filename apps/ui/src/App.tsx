@@ -37,10 +37,10 @@ function App() {
   const performanceState = usePerformance(displaySnapshot);
   const playbackState = usePlayback();
   const libraryState = useLibrary();
-  const settingsState = useSettings();
+  const [page, setPage] = useState<AppPage>("library");
+  const settingsState = useSettings(page === "settings");
   const { previews, setPreviews, setRecentIds } = libraryState;
   const editorState = useEditor({ previews, setPreviews, setRecentIds, onOpen: () => setPage("editor") });
-  const [page, setPage] = useState<AppPage>("library");
   const [theme, setTheme] = useState<ThemeChoice>(() => {
     const stored = localStorage.getItem("wallpaper-lite.theme");
     return stored === "light" || stored === "system" ? stored : "dark";

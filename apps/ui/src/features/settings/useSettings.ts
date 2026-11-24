@@ -11,34 +11,41 @@ export interface SettingsState {
   appInfo: AppInfo | null;
   autostart: boolean | null;
   autostartBusy: boolean;
+  /** A failure to read the settings; stays until the next successful read. */
+  loadError: string | null;
+  /** The outcome of the last change the user made. */
   error: string | null;
   changeAutostart(enabled: boolean): Promise<void>;
   openFolder(folder: "data" | "logs"): Promise<void>;
 }
 
-export function useSettings(): SettingsState {
+/** `active` is true while the Settings page is shown, so its values are re-read on each visit. */
+export function useSettings(active: boolean): SettingsState {
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
   const [autostart, setAutostart] = useState<boolean | null>(null);
   const [autostartBusy, setAutostartBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!active) return;
     let cancelled = false;
+    setLoadError(null);
     hostAdapter.appInfo().then(
       (info) => { if (!cancelled) setAppInfo(info); },
-      (reason: unknown) => { if (!cancelled) setError(messageOf(reason, "Could not read the app information.")); },
+      (reason: unknown) => { if (!cancelled) setLoadError(messageOf(reason, "Could not read the app information.")); },
     );
     hostAdapter.getAutostart().then(
       (enabled) => { if (!cancelled) setAutostart(enabled); },
       (reason: unknown) => {
         if (cancelled) return;
         // Leave the checkbox usable so the user can still try to set it.
-        setAutostart(false);
-        setError(messageOf(reason, "Could not read the launch-at-login setting."));
+        setAutostart((current) => current ?? false);
+        setLoadError(messageOf(reason, "Could not read the launch-at-login setting. The checkbox may not match the real setting."));
       },
     );
     return () => { cancelled = true; };
-  }, []);
+  }, [active]);
 
   const changeAutostart = useCallback(async (enabled: boolean) => {
     setAutostartBusy(true);
@@ -63,5 +70,5 @@ export function useSettings(): SettingsState {
     }
   }, []);
 
-  return { appInfo, autostart, autostartBusy, error, changeAutostart, openFolder };
+  return { appInfo, autostart, autostartBusy, loadError, error, changeAutostart, openFolder };
 }

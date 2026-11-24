@@ -14,10 +14,11 @@ export function SettingsPage({ hidden, state, theme, onThemeChange }: {
   theme: ThemeChoice;
   onThemeChange(theme: ThemeChoice): void;
 }) {
-  const { appInfo, autostart, autostartBusy, error, changeAutostart, openFolder } = state;
+  const { appInfo, autostart, autostartBusy, loadError, error, changeAutostart, openFolder } = state;
 
   return (
     <section className="settings-page" hidden={hidden} aria-labelledby="settings-startup-heading">
+      {loadError && <p className="settings-error" role="alert">{loadError}</p>}
       {error && <p className="settings-error" role="alert">{error}</p>}
 
       <div className="settings-group">
