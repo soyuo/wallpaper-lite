@@ -104,6 +104,17 @@ mod tests {
     }
 
     #[test]
+    fn log_folder_names_follow_the_app_identifier() {
+        let config: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).expect("valid JSON");
+        let identifier = config["identifier"]
+            .as_str()
+            .expect("identifier is a string");
+        assert_eq!(super::LOG_ROOT_DIRECTORY, identifier);
+        assert_eq!(crate::APP_LOG_DIRECTORY, identifier);
+    }
+
+    #[test]
     fn folder_names_deserialize_from_the_ui_values() {
         assert_eq!(
             serde_json::from_str::<AppFolder>("\"data\"").unwrap(),

@@ -54,12 +54,18 @@ window title, sidebar, tray tooltip and messages use the same name.
 
 The app identifier is `kr.soyuo.wallpaper` (reverse domain of soyuo.kr), set as
 `identifier` in `tauri.conf.json`. Tauri derives from it the WebView2 data folder and
-the single-instance lock, and the installer's "Delete the application data" option
-removes `%APPDATA%\kr.soyuo.wallpaper` and `%LOCALAPPDATA%\kr.soyuo.wallpaper`. The app
-and host also write their logs to `%LOCALAPPDATA%\kr.soyuo.wallpaper\logs`, and the host's
-single-instance mutex is `Local\kr.soyuo.wallpaper.host`. A build made with the earlier
-identifier `com.soyuo.wallpaper-lite` leaves its logs and WebView data under
-`%LOCALAPPDATA%\com.soyuo.wallpaper-lite`; they are not moved or deleted.
+the single-instance lock. According to the installer script Tauri generates (read, not
+run), the installer's "Delete the application data" option removes
+`%APPDATA%\kr.soyuo.wallpaper` and `%LOCALAPPDATA%\kr.soyuo.wallpaper`. The app and
+host also write their logs to `%LOCALAPPDATA%\kr.soyuo.wallpaper\logs`, and the host's
+single-instance mutex is `Local\kr.soyuo.wallpaper.host`. The host also takes the old
+mutex name `Local\com.soyuo.wallpaper-lite.host`, so a host from a build with the
+earlier identifier `com.soyuo.wallpaper-lite` is still noticed and a second host does
+not start next to it; that second name can be dropped once no such build is expected to
+be running. Such a build leaves its logs and WebView data under
+`%LOCALAPPDATA%\com.soyuo.wallpaper-lite`. They are not moved or deleted, and nothing
+removes them later, so delete that folder by hand if you do not need the old logs.
+Unit tests check that the log folder and mutex names match `identifier`.
 
 These names keep their old spelling on purpose, so settings and the launch-at-login
 entry of an existing install are still found: the settings folder
