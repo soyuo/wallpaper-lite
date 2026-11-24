@@ -136,7 +136,9 @@ fn main() -> process::ExitCode {
                 event = "already_running",
                 "Another wallpaper host is already running; exiting"
             );
-            return process::ExitCode::SUCCESS;
+            return process::ExitCode::from(
+                wallpaper_ipc::protocol::HOST_ALREADY_RUNNING_EXIT_CODE,
+            );
         }
         SingleInstance::Unavailable(error) => {
             tracing::warn!(

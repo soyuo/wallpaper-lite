@@ -13,6 +13,7 @@ mod host_process;
 mod library;
 mod performance;
 mod playback;
+mod tray;
 
 const APP_LOG_DIRECTORY: &str = "com.soyuo.wallpaper-lite";
 const UI_LOG_FILE_COUNT: usize = 7;
@@ -164,8 +165,34 @@ pub fn run() -> process::ExitCode {
     );
 
     let result = tauri::Builder::default()
+        // Must be registered first so a second launch is forwarded before any other
+        // plugin starts. It brings the existing window forward instead of opening a copy.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            tray::show_main_window(app);
+        }))
         .plugin(tauri_plugin_dialog::init())
-        .setup(|_app| {
+        .on_window_event(|window, event| {
+            // Closing the settings window must not stop the wallpaper: hide it and
+            // leave the tray's Quit item as the only exit.
+            // Without a tray there would be no way back to a hidden window, so the
+            // close button keeps its normal meaning in that case.
+            if tray::is_active()
+                && window.label() == "main"
+                && let tauri::WindowEvent::CloseRequested { api, .. } = event
+            {
+                api.prevent_close();
+                let _ = window.hide();
+            }
+        })
+        .setup(|app| {
+            if let Err(error) = tray::install(app.handle()) {
+                tracing::error!(
+                    component = "ui_backend",
+                    event = "tray_install_failed",
+                    diagnostic = %error,
+                    "The tray icon could not be created; closing the window will exit the app"
+                );
+            }
             // Start the host without waiting for the webview, so the wallpaper is
             // restored even when the settings window never opens.
             tauri::async_runtime::spawn(async {

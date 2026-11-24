@@ -19,8 +19,9 @@ crate-type = ["rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "~2.11.6", features = [] }
+tauri = { version = "~2.11.6", features = ["tray-icon"] }
 tauri-plugin-dialog = "=2.5.0"
+tauri-plugin-single-instance = "=2.4.5"
 wallpaper-core = { workspace = true }
 wallpaper-display = { workspace = true }
 wallpaper-ipc = { workspace = true }
