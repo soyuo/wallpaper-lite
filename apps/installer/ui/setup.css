@@ -36,7 +36,7 @@ p { margin: 0; color: var(--muted); line-height: 1.55; }
 .label { font-size: 12px; font-weight: 600; color: var(--muted); }
 
 .field { display: flex; gap: 8px; }
-.field input { flex: 1; min-width: 0; height: 44px; padding: 0 14px; border-radius: 12px; border: 1px solid rgba(255,255,255,.8); background: rgba(255,255,255,.06); font: 13px Consolas, monospace; color: inherit; user-select: text; }
+.field input { flex: 1; min-width: 0; height: 36px; padding: 0 14px; border-radius: 12px; border: 1px solid rgba(255,255,255,.8); background: rgba(255,255,255,.06); font: 13px Consolas, monospace; color: inherit; user-select: text; }
 .field input:focus { outline: 2px solid rgba(59,104,216,.55); }
 
 .glass-in { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-radius: 16px; background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.3); }
@@ -55,8 +55,8 @@ label.glass-in input { width: 18px; height: 18px; accent-color: #3B68D8; }
 
 .error { padding: 12px 16px; border-radius: 16px; background: rgba(255,255,255,.6); border: 1px solid rgba(200,50,70,.4); color: #8c1d2f; line-height: 1.5; user-select: text; word-break: break-word; }
 
-.actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 4px; }
-.btn { min-height: 44px; padding: 0 22px; border-radius: 999px; border: 1px solid rgba(255,255,255,.8); background: rgba(255,255,255,.6); color: #14213D; font: inherit; font-weight: 600; cursor: pointer; }
+.actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 0; }
+.btn { min-height: 36px; padding: 0 18px; font-size: 13px; border-radius: 999px; border: 1px solid rgba(255,255,255,.8); background: rgba(255,255,255,.6); color: #14213D; font: inherit; font-weight: 600; cursor: pointer; }
 .btn:hover:not(:disabled) { background: rgba(255,255,255,.8); }
 .btn.primary { background: #fff; box-shadow: 0 6px 18px rgba(24,50,130,.28); }
 .btn:disabled { opacity: .5; cursor: default; }
