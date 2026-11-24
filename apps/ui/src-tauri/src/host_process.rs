@@ -23,6 +23,7 @@ const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 const READY_TIMEOUT: Duration = Duration::from_secs(10);
 const STOP_TIMEOUT: Duration = Duration::from_secs(5);
 const POLL_INTERVAL: Duration = Duration::from_millis(100);
+const RESPAWN_BACKOFF: Duration = Duration::from_millis(500);
 
 /// Serializes start and stop so two callers never race to spawn two hosts.
 static LIFECYCLE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
@@ -126,7 +127,9 @@ pub async fn ensure_host_running() -> Result<HostStartOutcome, AppError> {
             Ok(Some(status))
                 if status.code() == Some(i32::from(HOST_ALREADY_RUNNING_EXIT_CODE)) =>
             {
-                tokio::time::sleep(POLL_INTERVAL).await;
+                // Back off so a host that is slow to release its mutex is not met with
+                // a new process on every poll.
+                tokio::time::sleep(RESPAWN_BACKOFF).await;
                 if wallpaper_ipc::client::ping().await.is_err() {
                     child = spawn()?;
                 }

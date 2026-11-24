@@ -177,6 +177,7 @@ pub fn run() -> process::ExitCode {
             // Without a tray there would be no way back to a hidden window, so the
             // close button keeps its normal meaning in that case.
             if tray::is_active()
+                && window.label() == "main"
                 && let tauri::WindowEvent::CloseRequested { api, .. } = event
             {
                 api.prevent_close();

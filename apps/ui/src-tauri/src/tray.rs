@@ -71,7 +71,8 @@ async fn toggle_playback() {
 async fn quit<R: Runtime>(app: AppHandle<R>) {
     if let Err(error) = host_process::shutdown_host().await {
         // Exit anyway: the user asked to quit and keeping a UI with no way to
-        // reach the host open would trap them. The failure is in the log.
+        // reach the host open would trap them. The host may be left running; the
+        // next launch finds it again, and the failure is in the log.
         tracing::error!(
             component = "ui_backend",
             event = "tray_quit_host_shutdown_failed",

@@ -76,8 +76,8 @@ fields use the names below:
 {"version":13,"request_id":7,"command":{"set_speed":{"percent":125}}}
 {"version":13,"request_id":8,"command":{"set_fps":{"frames_per_second":30}}}
 {"version":13,"request_id":9,"command":"get_playback_state"}
-{"version":13,"request_id":12,"command":"shutdown"}
 {"version":13,"request_id":11,"command":{"apply_playback_settings":{"settings":{"schemaVersion":1,"wallpaperId":7,"loopMode":"segment","segment":{"startMs":1000,"endMs":5000},"speedPercent":125,"fpsLimit":30,"volumePercent":100,"muted":false},"source_path":"C:/Media/clip.mp4"}}}
+{"version":13,"request_id":12,"command":"shutdown"}
 ```
 
 The playback-events pipe accepts a long-lived subscription request:
