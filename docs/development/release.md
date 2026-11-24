@@ -235,6 +235,20 @@ first). It is an alternative to the NSIS installer above, which is unchanged.
   to remove data, with install add `--launch-at-login`.
 - Without the payload files the program builds but refuses to install.
 
-Verification status: see the pull request. Unless it records a run, treat install, upgrade and
-uninstall as not exercised. The program is unsigned, has no WebView2 bootstrapper and does not
+Verification status (Windows 11 Education 10.0.26300, #169, read from process state, registry,
+files and the host log; the screen was not captured):
+
+- Silent `/S` upgrade over the running app: app and host stopped, files replaced, launch-at-login
+  value and uninstall entry kept, data unchanged.
+- Installed `wallpaper-ui.exe --autostart` started the host and its pipe. Restarting Explorer kept
+  the same host process, and the log shows `shell_exited`, `shell_restarted` and
+  `wallpaper_window_recovered`.
+- Silent `uninstall.exe --uninstall --silent`: processes, uninstall entry, launch-at-login value,
+  Start menu shortcut and pipe gone; data kept. This found that the install folder was left behind
+  (the cleanup command's quoting broke on the space in the folder name); fixed and re-run, the
+  folder is now removed.
+
+Not verified: reboot or sign-out with launch at login, the interactive wizard (install and
+uninstall pages, "Delete my library and settings"), `--delete-data`, a clean machine, Windows 10
+(#6) and several monitors (#98). The program is unsigned, has no WebView2 bootstrapper and does not
 auto-update.
