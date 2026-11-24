@@ -94,6 +94,21 @@ function App() {
     return () => { cancelled = true; };
   }, []);
 
+  useEffect(() => {
+    // The host can stop after startup (a crash, or Explorer restarting), so keep the
+    // Dashboard's status honest. This only updates the status; failures are reported
+    // when the user acts, so a single slow answer does not raise an alert.
+    let stopped = false;
+    const timer = window.setInterval(() => {
+      if (checkingHost) return;
+      hostAdapter.ping().then(
+        () => { if (!stopped) setHostState("connected"); },
+        () => { if (!stopped) setHostState("disconnected"); },
+      );
+    }, 10_000);
+    return () => { stopped = true; window.clearInterval(timer); };
+  }, [checkingHost]);
+
   async function checkHost() {
     setCheckingHost(true);
     setHostState("checking");

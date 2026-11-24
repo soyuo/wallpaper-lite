@@ -24,20 +24,20 @@ export function DashboardPage({ hidden, hostState, hostBusy, onStartHost, playba
   const canToggle = nowPlaying.active && !playbackBusy && !playbackState?.loadingVideo && hostState === "connected";
 
   return (
-    <section className="dashboard" hidden={hidden} aria-labelledby="dashboard-host-heading">
-      <div className="dashboard-card">
+    <section className="dashboard" hidden={hidden} aria-label="Dashboard">
+      <section className="dashboard-card" aria-labelledby="dashboard-host-heading">
         <h2 id="dashboard-host-heading">Wallpaper host</h2>
         <p className="dashboard-headline" data-state={hostState}>{host.label}</p>
         <p className="dashboard-detail">{host.detail}</p>
-        {hostState === "disconnected" && (
+        {(hostState === "disconnected" || hostBusy) && (
           <button className="ui-button--primary" disabled={hostBusy} onClick={onStartHost}>
             {hostBusy ? "Starting..." : "Start wallpaper host"}
           </button>
         )}
-      </div>
+      </section>
 
-      <div className="dashboard-card">
-        <h2>Now playing</h2>
+      <section className="dashboard-card" aria-labelledby="dashboard-playing-heading">
+        <h2 id="dashboard-playing-heading">Now playing</h2>
         <p className="dashboard-headline">{nowPlaying.title}</p>
         <p className="dashboard-detail">{nowPlaying.detail}</p>
         {nowPlaying.active ? (
@@ -53,10 +53,10 @@ export function DashboardPage({ hidden, hostState, hostBusy, onStartHost, playba
         )}
         {playbackState?.lastError && <p className="dashboard-detail" role="status">Playback error: {playbackState.lastError}</p>}
         {playbackMessage && <p className="dashboard-detail" role="status">{playbackMessage}</p>}
-      </div>
+      </section>
 
-      <div className="dashboard-card dashboard-recent">
-        <h2>Recently used</h2>
+      <section className="dashboard-card dashboard-recent" aria-labelledby="dashboard-recent-heading">
+        <h2 id="dashboard-recent-heading">Recently used</h2>
         {library.recentLibrary.length === 0 ? (
           <>
             <p className="dashboard-detail">Nothing used recently. Add images or videos in the Library to get started.</p>
@@ -70,7 +70,7 @@ export function DashboardPage({ hidden, hostState, hostBusy, onStartHost, playba
                 <span className="dashboard-entry-kind">{entry.mediaKind}</span>
                 <span className="dashboard-entry-actions">
                   {canPlayFromDashboard(entry) && (
-                    <button disabled={playbackBusy} onClick={() => onStartPlayback(entry)}>Play</button>
+                    <button disabled={playbackBusy || playbackState?.loadingVideo === true || hostState !== "connected"} onClick={() => onStartPlayback(entry)}>Play</button>
                   )}
                   <button onClick={() => onOpenEditor(entry)}>Edit</button>
                 </span>
@@ -78,7 +78,7 @@ export function DashboardPage({ hidden, hostState, hostBusy, onStartHost, playba
             ))}
           </ul>
         )}
-      </div>
+      </section>
     </section>
   );
 }
