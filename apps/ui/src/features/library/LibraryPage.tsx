@@ -144,6 +144,7 @@ export function LibraryPage({ hidden, state, onOpenEditor, onStartPlayback }: {
                 actionBusy={busyEntryId === entry.id}
                 renaming={renamingId === entry.id}
                 renameDraft={renameDraft}
+                nameTaken={renamingId === entry.id && library.some((other) => other.id !== entry.id && other.displayName.trim().toLowerCase() === renameDraft.trim().toLowerCase())}
                 onRequestPreview={(id) => void loadPreview(id)}
                 onLocate={(item) => void locateEntry(item)}
                 onRemove={(item) => void removeEntry(item)}

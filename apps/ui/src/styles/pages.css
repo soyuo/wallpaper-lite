@@ -326,34 +326,6 @@
   to { transform: translateX(250%); }
 }
 
-.dialog-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 90;
-  display: grid;
-  place-items: center;
-  padding: var(--space-4);
-  background: rgb(5 12 40 / 55%);
-}
-
-.dialog {
-  display: grid;
-  gap: var(--space-3);
-  width: min(26rem, 100%);
-  padding: var(--space-5);
-}
-
-.dialog h2,
-.dialog p {
-  margin: 0;
-}
-
-.dialog-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: var(--space-2);
-}
-
 .skeleton {
   border-radius: var(--radius-sm);
   background: linear-gradient(90deg, rgb(255 255 255 / 8%), rgb(255 255 255 / 22%), rgb(255 255 255 / 8%)) 0 0 / 200% 100%;
@@ -382,3 +354,79 @@
     animation: none;
   }
 }
+
+/* Library tile: caption overlay with inline rename */
+.library-thumbnail { position: relative; }
+
+.library-kind { position: absolute; top: 0.6rem; left: 0.6rem; }
+
+.tile-cap {
+  position: absolute;
+  right: 0.5rem;
+  bottom: 0.5rem;
+  left: 0.5rem;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0.45rem 0.7rem;
+  border-radius: 12px;
+  background: var(--tile-cap-bg);
+  color: var(--tile-cap-text);
+  font-size: var(--font-size-sm);
+  font-weight: 700;
+  text-align: left;
+}
+
+.tile-cap-name { display: flex; flex: 1; align-items: center; gap: 0.4rem; min-width: 0; }
+.tile-cap-name > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tile-cap-size { flex: none; font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; opacity: 0.75; }
+
+.tile-cap-edit {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 1.75rem;
+  min-height: 1.75rem;
+  padding: 0;
+  border-color: transparent;
+  background: transparent;
+  color: inherit;
+  opacity: 0;
+}
+
+.library-card:hover .tile-cap-edit,
+.tile-cap-edit:focus-visible { opacity: 1; }
+
+.tile-cap--edit { flex-direction: column; align-items: stretch; gap: 6px; padding: 8px; }
+.tile-cap-row { display: flex; align-items: center; gap: 6px; }
+
+.tile-cap--edit .field {
+  flex: 1;
+  min-width: 0;
+  min-height: 34px;
+  padding: 4px 10px;
+  border-color: #14213d;
+  box-shadow: 0 0 0 3px #fff;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.tile-cap--edit .field[aria-invalid="true"] { border-style: dashed; }
+
+.tile-cap-hint { display: flex; align-items: center; gap: 6px; min-height: 18px; font-size: 12px; font-weight: 600; }
+
+.tile-cap-hint i {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: currentcolor;
+  font-size: 11px;
+  font-style: normal;
+  color: var(--tile-cap-bg);
+  font-weight: 800;
+}
+
+.chip-glass { background: rgb(255 255 255 / 72%); color: #14213d; }
