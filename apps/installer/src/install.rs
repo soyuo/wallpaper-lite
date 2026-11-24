@@ -208,9 +208,17 @@ pub fn uninstall(options: &UninstallOptions) -> Result<(), String> {
             }
         }
     }
-    // This program runs from the install folder, so a detached command removes the folder afterwards.
+    // This program runs from the install folder, so a detached command removes the folder after it
+    // exits. It retries for about a minute because the wizard window can stay open for a while, and
+    // it runs from the temp folder so it does not hold the install folder as its own directory.
+    // `raw_arg` is needed: `args` would escape the quotes as `\"`, which `cmd` reads wrongly and
+    // which breaks on the space in "wallpaper Lite".
+    let dir = dir.display();
     let _ = Command::new("cmd")
-        .args(["/C", &format!("ping -n 3 127.0.0.1 >nul & rmdir /s /q \"{}\"", dir.display())])
+        .raw_arg(format!(
+            "/D /C \"for /L %i in (1,1,60) do (ping -n 2 127.0.0.1 >nul & rmdir /s /q \"{dir}\" 2>nul & if not exist \"{dir}\" exit)\""
+        ))
+        .current_dir(env::temp_dir())
         .creation_flags(CREATE_NO_WINDOW)
         .spawn();
     Ok(())
