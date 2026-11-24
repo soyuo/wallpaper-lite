@@ -1018,3 +1018,50 @@ label {
   display: grid;
   gap: var(--space-2);
 }
+
+/* Editor: stage + inspector layout */
+.editor-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+  gap: var(--space-5);
+}
+
+@media (min-width: 62rem) {
+  .editor-layout {
+    grid-template-columns: minmax(0, 1fr) minmax(18rem, 22rem);
+  }
+}
+
+.editor-stage {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-4);
+}
+
+.editor-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.editor-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  padding: 6px;
+  border-radius: 999px;
+  background: var(--color-surface-subtle);
+}
+
+.editor-layout .editor-controls {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface-subtle);
+}
