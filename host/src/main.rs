@@ -21,7 +21,7 @@ use performance_signals::{PerformanceSignalMonitor, PerformanceSignalSnapshot, p
 use playback::PlaybackWorker;
 use recovery::DesktopRecoveryWorker;
 
-const APP_LOG_DIRECTORY: &str = "com.soyuo.wallpaper-lite";
+const APP_LOG_DIRECTORY: &str = "kr.soyuo.wallpaper";
 
 fn install_stderr_logger() {
     let _ = tracing_subscriber::fmt()
@@ -107,7 +107,7 @@ fn acquire_single_instance() -> SingleInstance {
 
     // SAFETY: the name is a valid NUL-terminated wide string and no security
     // attributes are supplied, so the default per-user descriptor applies.
-    match unsafe { CreateMutexW(None, false, w!("Local\\com.soyuo.wallpaper-lite.host")) } {
+    match unsafe { CreateMutexW(None, false, w!("Local\\kr.soyuo.wallpaper.host")) } {
         Ok(handle) => {
             // SAFETY: reads the thread's last-error value set by CreateMutexW above.
             if unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {

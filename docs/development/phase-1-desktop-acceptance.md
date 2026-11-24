@@ -59,7 +59,7 @@ tests cover recovery retry backoff and idempotent shutdown.
 4. Save work and close open File Explorer windows. In Task Manager, select **Windows Explorer** and
    choose **Restart**. Wait for the taskbar to return and for Explorer to have a new PID. Confirm
    `shell_exited`, `shell_restarted`, and `wallpaper_window_recovered` events in
-   `%LOCALAPPDATA%\com.soyuo.wallpaper-lite\logs\`. Confirm exactly one wallpaper child exists
+   `%LOCALAPPDATA%\kr.soyuo.wallpaper\logs\`. Confirm exactly one wallpaper child exists
    under the current `Progman` and is owned by the host.
 5. With one host already active, launch a second instance to exercise its normal IPC failure exit.
    Confirm the second process exits and only the primary host's wallpaper child remains. Run the

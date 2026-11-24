@@ -18,7 +18,7 @@ mod playback;
 mod settings_backup;
 mod tray;
 
-const APP_LOG_DIRECTORY: &str = "com.soyuo.wallpaper-lite";
+const APP_LOG_DIRECTORY: &str = "kr.soyuo.wallpaper";
 const UI_LOG_FILE_COUNT: usize = 7;
 const UI_LOG_MAX_SIZE_BYTES: u64 = 5 * 1024 * 1024;
 

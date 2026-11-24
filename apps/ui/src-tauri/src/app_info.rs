@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use wallpaper_core::error::{AppError, ErrorCode};
 
 const SETTINGS_DIRECTORY: &str = "WallpaperLite";
-const LOG_ROOT_DIRECTORY: &str = "com.soyuo.wallpaper-lite";
+const LOG_ROOT_DIRECTORY: &str = "kr.soyuo.wallpaper";
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -100,7 +100,7 @@ mod tests {
         let data = folder_path(AppFolder::Data).expect("APPDATA is set on Windows");
         assert!(data.ends_with("WallpaperLite"));
         let logs = folder_path(AppFolder::Logs).expect("LOCALAPPDATA is set on Windows");
-        assert!(logs.ends_with(r"com.soyuo.wallpaper-lite\logs"));
+        assert!(logs.ends_with(r"kr.soyuo.wallpaper\logs"));
     }
 
     #[test]
