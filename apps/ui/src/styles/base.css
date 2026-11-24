@@ -328,3 +328,8 @@ input[type="number"]::-webkit-outer-spin-button {
 
 .number-field > button:nth-of-type(1) { right: 2.6rem; }
 .number-field > button:nth-of-type(2) { right: 0.4rem; }
+
+/* Code-like text (paths, IDs) uses the UI font, as in the design. */
+code, kbd, samp, pre {
+  font-family: Inter, var(--font-family);
+}
