@@ -7,6 +7,7 @@ use wallpaper_core::error::AppError;
 use wallpaper_core::error::ErrorCode;
 use wallpaper_media::{CatalogStore, ImportResult, import_local_media};
 
+mod autostart;
 mod displays;
 mod editor;
 mod host_process;
@@ -139,6 +140,17 @@ async fn host_shutdown() -> Result<(), AppError> {
     host_process::shutdown_host().await
 }
 
+/// Whether the app is registered to start when the user logs in.
+#[tauri::command]
+fn get_autostart() -> Result<bool, AppError> {
+    autostart::is_enabled()
+}
+
+#[tauri::command]
+fn set_autostart(enabled: bool) -> Result<(), AppError> {
+    autostart::set_enabled(enabled)
+}
+
 #[tauri::command]
 async fn import_media(paths: Vec<String>) -> Result<Vec<ImportResult>, AppError> {
     let store = CatalogStore::for_current_user().map_err(|error| error.to_app_error())?;
@@ -193,6 +205,20 @@ pub fn run() -> process::ExitCode {
                     "The tray icon could not be created; closing the window will exit the app"
                 );
             }
+            // Keep a registered entry pointing at this executable after a move or reinstall.
+            if let Err(error) = autostart::refresh_registration() {
+                tracing::warn!(
+                    component = "ui_backend",
+                    event = "autostart_refresh_failed",
+                    error_code = error.code.as_str(),
+                    "The launch-at-login entry could not be refreshed"
+                );
+            }
+            // The window starts hidden. A login launch stays in the tray; every other
+            // launch, or one without a tray to return to, shows it.
+            if !autostart::launched_by_autostart(std::env::args()) || !tray::is_active() {
+                tray::show_main_window(app.handle());
+            }
             // Start the host without waiting for the webview, so the wallpaper is
             // restored even when the settings window never opens.
             tauri::async_runtime::spawn(async {
@@ -211,6 +237,8 @@ pub fn run() -> process::ExitCode {
             host_ping,
             host_start,
             host_shutdown,
+            get_autostart,
+            set_autostart,
             import_media,
             editor::editor_monitors,
             editor::editor_preview,
