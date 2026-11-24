@@ -1,4 +1,7 @@
-use std::slice;
+use std::{
+    slice,
+    sync::atomic::{AtomicBool, Ordering},
+};
 
 use wallpaper_display::SpanBounds;
 use wallpaper_media::{DecodedImage, DecodedVideoFrame, VideoPixelFormat};
@@ -103,8 +106,37 @@ float3 linear_to_srgb(float3 color) {
     return saturate(lerp(low, high, step(0.0031308, color)));
 }
 
+// Catmull-Rom bicubic using five bilinear taps. Used only when the source is enlarged.
+float4 sample_bicubic(float2 uv) {
+    uint width;
+    uint height;
+    source_image.GetDimensions(width, height);
+    float2 size = float2(width, height);
+    float2 position = uv * size;
+    float2 center = floor(position - 0.5) + 0.5;
+    float2 f = position - center;
+    float2 w0 = f * (-0.5 + f * (1.0 - 0.5 * f));
+    float2 w1 = 1.0 + f * f * (-2.5 + 1.5 * f);
+    float2 w2 = f * (0.5 + f * (2.0 - 1.5 * f));
+    float2 w3 = f * f * (-0.5 + 0.5 * f);
+    float2 w12 = w1 + w2;
+    float2 t0 = (center - 1.0) / size;
+    float2 t3 = (center + 2.0) / size;
+    float2 t12 = (center + w2 / w12) / size;
+    float4 result =
+        source_image.SampleLevel(image_sampler, float2(t12.x, t0.y), 0) * (w12.x * w0.y)
+        + source_image.SampleLevel(image_sampler, float2(t0.x, t12.y), 0) * (w0.x * w12.y)
+        + source_image.SampleLevel(image_sampler, float2(t12.x, t12.y), 0) * (w12.x * w12.y)
+        + source_image.SampleLevel(image_sampler, float2(t3.x, t12.y), 0) * (w3.x * w12.y)
+        + source_image.SampleLevel(image_sampler, float2(t12.x, t3.y), 0) * (w12.x * w3.y);
+    float total = w12.x * w0.y + w0.x * w12.y + w12.x * w12.y + w3.x * w12.y + w12.x * w3.y;
+    return saturate(result / total);
+}
+
 float4 ps_main(float4 position : SV_POSITION, float2 uv : TEXCOORD0) : SV_TARGET {
-    float4 sampled_color = source_image.Sample(image_sampler, uv);
+    float4 sampled_color = color_balance.y > 0.5
+        ? sample_bicubic(uv)
+        : source_image.Sample(image_sampler, uv);
     if (all(color_controls == float4(1.0, 1.0, 1.0, 1.0))
         && all(color_mix == float4(1.0, 0.0, 1.0, 1.0))
         && color_balance.x == 1.0) {
@@ -854,6 +886,21 @@ fn create_rgba_texture(
     Ok((texture, view))
 }
 
+static SHARP_UPSCALING: AtomicBool = AtomicBool::new(true);
+
+/// Turns the sharper enlargement filter on or off for placements built afterwards.
+pub fn set_sharp_upscaling(enabled: bool) {
+    SHARP_UPSCALING.store(enabled, Ordering::Relaxed);
+}
+
+fn sharp_upscaling_enabled() -> bool {
+    SHARP_UPSCALING.load(Ordering::Relaxed)
+}
+
+fn is_enlarged(source: PlacementDimensions, output: PlacementDimensions) -> bool {
+    output.width() > source.width() || output.height() > source.height()
+}
+
 #[repr(C)]
 struct PlacementConstants {
     destination_top_left: [f32; 4],
@@ -910,7 +957,16 @@ fn create_placement_buffer(
             color_adjustments.rgb_balance().0,
             color_adjustments.rgb_balance().1,
         ],
-        color_balance: [color_adjustments.rgb_balance().2, 0.0, 0.0, 0.0],
+        color_balance: [
+            color_adjustments.rgb_balance().2,
+            if sharp_upscaling_enabled() && is_enlarged(source, output) {
+                1.0
+            } else {
+                0.0
+            },
+            0.0,
+            0.0,
+        ],
     };
     let subresource = D3D11_SUBRESOURCE_DATA {
         pSysMem: (&constants as *const PlacementConstants).cast(),
@@ -1626,6 +1682,8 @@ mod tests {
 
     #[test]
     fn editor_preview_matches_d3d_output_within_documented_tolerance() {
+        // The CPU preview is bilinear, so compare against the bilinear GPU path.
+        super::set_sharp_upscaling(false);
         use wallpaper_core::editor_settings::{
             EditorColorSettings, NormalizedCrop as StoredCrop, NormalizedPoint, PhysicalPosition,
             PhysicalSize, PlacementMode as StoredPlacementMode, RenderSettings, Scale2d,
@@ -1753,6 +1811,8 @@ mod tests {
 
     #[test]
     fn video_editor_preview_matches_d3d_output_within_documented_tolerance() {
+        // The CPU preview is bilinear, so compare against the bilinear GPU path.
+        super::set_sharp_upscaling(false);
         use wallpaper_core::editor_settings::{EditorColorSettings, WallpaperEditorSettings};
 
         let host = discover_desktop_host().expect("an interactive Windows shell is required");

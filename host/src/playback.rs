@@ -1112,6 +1112,7 @@ impl PlaybackController {
                         code: PlaybackCommandErrorCode::PerformancePolicyApplyFailed,
                     };
                 };
+                wallpaper_renderer::set_sharp_upscaling(settings.sharp_upscaling());
                 *current = settings;
                 drop(current);
                 self.poll_policy();

@@ -18,7 +18,7 @@ pub use preview::{EDITOR_PREVIEW_MAX_EDGE, RenderedEditorPreview, render_editor_
 mod image;
 
 #[cfg(target_os = "windows")]
-pub use image::D3d11ImagePresenter;
+pub use image::{D3d11ImagePresenter, set_sharp_upscaling};
 
 /// Failure while creating the rendering device.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
