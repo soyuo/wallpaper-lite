@@ -14,6 +14,7 @@ import { FirstRun } from "./components/FirstRun";
 import { Splash } from "./components/Splash";
 import type { HostState } from "./dashboard-view.mjs";
 import { hostAdapter } from "./host-adapter";
+import { useZoom } from "./use-zoom";
 import type { LibraryEntry } from "./host-adapter";
 import { PerformancePage } from "./features/performance/PerformancePage";
 import { usePerformance } from "./features/performance/usePerformance";
@@ -44,6 +45,7 @@ function App() {
   const libraryState = useLibrary();
   const [page, setPage] = useState<AppPage>("dashboard");
   const [splashOpen, setSplashOpen] = useState(true);
+  useZoom();
   const [firstRunOpen, setFirstRunOpen] = useState(() => localStorage.getItem("wallpaper-lite.first-run-done") === null);
   const settingsState = useSettings(page === "settings" || firstRunOpen);
   const { previews, setPreviews, setRecentIds } = libraryState;
