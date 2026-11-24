@@ -28,8 +28,37 @@ export function DashboardPage({ hidden, hostState, hostBusy, onStartHost, playba
   const heroPreview = playingEntry ? library.previews[playingEntry.id] : undefined;
   const stateLabel = playbackState?.state === "playing" ? "Playing" : playbackState?.state === "paused" ? "Paused" : "Idle";
 
+  const missing = library.library.find((entry) => entry.availability === "file_missing") ?? null;
+  const hostDown = hostState !== "connected";
+
   return (
     <section className="dashboard home" hidden={hidden} aria-label="Dashboard">
+      {missing && !hostDown && (
+        <p className="home-banner" role="alert">
+          <span>“{missing.displayName}” can’t be found. Its file was moved or deleted.</span>
+          <button onClick={onOpenLibrary}>Reconnect file</button>
+        </p>
+      )}
+      {playbackState?.lastError && !hostDown && (
+        <p className="home-banner" role="alert">
+          <span>Couldn’t start playback. {playbackState.lastError}</span>
+          {playingEntry && <button disabled={playbackBusy} onClick={() => onStartPlayback(playingEntry)}>Try again</button>}
+          {playingEntry && <button onClick={() => onOpenEditor(playingEntry)}>Edit</button>}
+        </p>
+      )}
+      {hostDown ? (
+      <section className="home-hero glass-card home-state" data-host={hostBusy || hostState === "checking" ? "starting" : "stopped"} aria-labelledby="dashboard-playing-heading">
+        <div className="home-hero-body">
+          <span className="chip" data-state="disconnected"><span className="dot" />{hostBusy || hostState === "checking" ? "Starting" : "Stopped"}</span>
+          <h2 id="dashboard-playing-heading" className="home-title">{hostBusy || hostState === "checking" ? "Starting the host…" : "The host is stopped"}</h2>
+          <p className="dashboard-detail">{hostBusy || hostState === "checking" ? "This only takes a moment." : "Start the wallpaper host to show your wallpaper on the desktop."}</p>
+          {(hostBusy || hostState === "checking") && <div className="dashboard-progress home-indeterminate" aria-hidden="true"><span /></div>}
+          <div className="home-actions">
+            <button className="ui-button--primary" disabled={hostBusy || hostState === "checking"} onClick={onStartHost}>{hostBusy ? "Starting…" : "Start host"}</button>
+          </div>
+        </div>
+      </section>
+      ) : (
       <section className="home-hero glass-card" aria-labelledby="dashboard-playing-heading">
         {heroPreview && <img className="home-hero-art" alt="" aria-hidden="true" src={heroPreview.thumbnailDataUrl} />}
         <div className="home-hero-body">
@@ -48,10 +77,10 @@ export function DashboardPage({ hidden, hostState, hostBusy, onStartHost, playba
             )}
             {playingEntry && <button onClick={() => onOpenEditor(playingEntry)}>Edit</button>}
           </div>
-          {playbackState?.lastError && <p className="dashboard-detail" role="status">Playback error: {playbackState.lastError}</p>}
           {playbackMessage && <p className="dashboard-detail" role="status">{playbackMessage}</p>}
         </div>
       </section>
+      )}
 
       <aside className="home-aside glass-card" aria-labelledby="dashboard-host-heading">
         <h2 id="dashboard-host-heading" className="home-eyebrow">Wallpaper host</h2>

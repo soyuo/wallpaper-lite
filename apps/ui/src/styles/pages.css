@@ -430,3 +430,25 @@
 }
 
 .chip-glass { background: rgb(255 255 255 / 72%); color: #14213d; }
+
+/* Home: alert banners and host state card */
+.home-banner {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  padding: var(--space-2) var(--space-3) var(--space-2) var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: var(--color-surface);
+  backdrop-filter: blur(var(--glass-blur, 24px));
+  box-shadow: var(--shadow-sm, 0 6px 18px rgb(24 50 130 / 18%));
+}
+.home-banner > span { flex: 1 1 14rem; font-weight: 600; }
+.home-state .home-title { margin: 0; }
+.home-indeterminate { width: min(22rem, 100%); overflow: hidden; }
+.home-indeterminate > span { display: block; width: 40%; animation: home-slide 1.2s ease-in-out infinite alternate; }
+@keyframes home-slide { from { transform: translateX(0); } to { transform: translateX(150%); } }
+@media (prefers-reduced-motion: reduce) { .home-indeterminate > span { animation: none; } }
