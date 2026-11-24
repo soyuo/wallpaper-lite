@@ -74,7 +74,7 @@
 
 .app-dock {
   position: fixed;
-  bottom: var(--space-4);
+  bottom: 1.25rem;
   left: 50%;
   z-index: 30;
   display: flex;
@@ -100,13 +100,13 @@
 
 .app-dock-item {
   display: grid;
-  min-width: 4.25rem;
+  min-width: 3.75rem;
   min-height: 3.25rem;
   place-items: center;
   gap: 0;
   padding: var(--space-1) var(--space-3);
   border-color: transparent;
-  border-radius: 1.1rem;
+  border-radius: 1.125rem;
   background: transparent;
   color: var(--color-text-muted);
   font-size: var(--font-size-xs);
