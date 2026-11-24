@@ -210,6 +210,16 @@ export interface AppInfo {
   logDirectory: string | null;
 }
 
+export interface BackupSummary {
+  folder: string;
+  fileCount: number;
+}
+
+export interface RestoreSummary {
+  fileCount: number;
+  hostRestarted: boolean;
+}
+
 export type AppErrorCode =
   | "host_unavailable"
   | "timeout"
@@ -223,6 +233,9 @@ export type AppErrorCode =
   | "transport_error"
   | "host_launch_failed"
   | "autostart_failed"
+  | "backup_failed"
+  | "invalid_backup"
+  | "restore_failed"
   | "library_storage_failed"
   | "invalid_library_entry"
   | "editor_settings_storage_failed"
@@ -265,6 +278,8 @@ export interface HostAdapter {
   /** Starts the bundled wallpaper host unless one is already running. */
   startHost(): Promise<"already_running" | "started">;
   appInfo(): Promise<AppInfo>;
+  createSettingsBackup(destination: string): Promise<BackupSummary>;
+  restoreSettingsBackup(source: string): Promise<RestoreSummary>;
   openAppFolder(folder: "data" | "logs"): Promise<void>;
   getAutostart(): Promise<boolean>;
   setAutostart(enabled: boolean): Promise<void>;
@@ -335,6 +350,9 @@ function isAppErrorCode(value: unknown): value is AppErrorCode {
     value === "transport_error" ||
     value === "host_launch_failed" ||
     value === "autostart_failed" ||
+    value === "backup_failed" ||
+    value === "invalid_backup" ||
+    value === "restore_failed" ||
     value === "library_storage_failed" ||
     value === "invalid_library_entry" ||
     value === "editor_settings_storage_failed" ||
@@ -360,6 +378,12 @@ function isAppErrorCode(value: unknown): value is AppErrorCode {
 }
 
 export const hostAdapter: HostAdapter = {
+  createSettingsBackup(destination) {
+    return invokeAppCommand<BackupSummary>("create_settings_backup", { destination });
+  },
+  restoreSettingsBackup(source) {
+    return invokeAppCommand<RestoreSummary>("restore_settings_backup", { source });
+  },
   appInfo() {
     return invoke<AppInfo>("app_info");
   },

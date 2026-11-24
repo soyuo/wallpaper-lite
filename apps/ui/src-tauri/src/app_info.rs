@@ -23,6 +23,10 @@ pub enum AppFolder {
     Logs,
 }
 
+pub(crate) fn data_directory_path() -> Option<PathBuf> {
+    data_directory()
+}
+
 fn data_directory() -> Option<PathBuf> {
     Some(PathBuf::from(env::var_os("APPDATA")?).join(SETTINGS_DIRECTORY))
 }

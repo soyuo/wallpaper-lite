@@ -43,6 +43,9 @@ pub enum ErrorCode {
     DesktopHostUnavailable,
     HostLaunchFailed,
     AutostartFailed,
+    BackupFailed,
+    InvalidBackup,
+    RestoreFailed,
     Internal,
 }
 
@@ -88,6 +91,9 @@ impl ErrorCode {
             Self::DesktopHostUnavailable => "desktop_host_unavailable",
             Self::HostLaunchFailed => "host_launch_failed",
             Self::AutostartFailed => "autostart_failed",
+            Self::BackupFailed => "backup_failed",
+            Self::InvalidBackup => "invalid_backup",
+            Self::RestoreFailed => "restore_failed",
             Self::Internal => "internal",
         }
     }

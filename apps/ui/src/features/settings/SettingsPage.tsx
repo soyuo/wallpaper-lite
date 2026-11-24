@@ -14,7 +14,7 @@ export function SettingsPage({ hidden, state, theme, onThemeChange }: {
   theme: ThemeChoice;
   onThemeChange(theme: ThemeChoice): void;
 }) {
-  const { appInfo, autostart, autostartBusy, loadError, error, changeAutostart, openFolder } = state;
+  const { appInfo, autostart, autostartBusy, loadError, error, backupBusy, backupNotice, changeAutostart, createBackup, restoreBackup, openFolder } = state;
 
   return (
     <section className="settings-page" hidden={hidden} aria-labelledby="settings-startup-heading">
@@ -52,6 +52,19 @@ export function SettingsPage({ hidden, state, theme, onThemeChange }: {
           </label>
         ))}
       </fieldset>
+
+      <div className="settings-group">
+        <h2>Backup</h2>
+        <p className="settings-help">
+          Saves your library, editor, monitor and performance settings to a folder you choose.
+          Your original images and videos are not copied or changed.
+        </p>
+        <div className="settings-actions">
+          <button disabled={backupBusy} onClick={() => void createBackup()}>Create backup…</button>
+          <button disabled={backupBusy} onClick={() => void restoreBackup()}>Restore from backup…</button>
+        </div>
+        {backupNotice && <p className="settings-notice" role="status">{backupNotice}</p>}
+      </div>
 
       <div className="settings-group">
         <h2>About</h2>
