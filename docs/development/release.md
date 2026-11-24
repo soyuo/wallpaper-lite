@@ -15,7 +15,7 @@ been verified.
   runtime is missing (Tauri's default `downloadBootstrapper` mode).
 
 The installer is a per-user NSIS installer (`installMode: currentUser`). It
-installs under `%LOCALAPPDATA%\wallpaper-lite` and needs no administrator rights.
+installs under `%LOCALAPPDATA%\wallpaper Lite` and needs no administrator rights.
 It offers English and Korean based on the system language.
 
 ## Build
@@ -44,6 +44,23 @@ The bundle settings live in `tauri.release.conf.json` instead of `tauri.conf.jso
 because `externalBin` requires the staged host file to exist, which would break
 `cargo build` and `npm run tauri dev` for contributors who have not built a
 release. Development builds are unchanged.
+
+## Product name
+
+The product is called **wallpaper Lite**. It is set once, as `productName` in
+`apps/ui/src-tauri/tauri.conf.json`, and Tauri uses it for the installer file name,
+the install folder, the Start menu shortcut and the entry in Apps & features. The
+window title, sidebar, tray tooltip and messages use the same name.
+
+These identifiers keep the old spelling on purpose, so settings and the launch-at-login
+entry of an existing install are still found: the app identifier
+`com.soyuo.wallpaper-lite`, the settings folder `%APPDATA%\WallpaperLite`, the log folder,
+the `wallpaper-lite` launch-at-login value, the pipe names, the executable names
+`wallpaper-ui.exe` and `wallpaper-host.exe`, and the repository and crate names.
+A copy installed under the earlier name `wallpaper-lite` is a different product to the
+Tauri installer, so the installer hook removes it first (silently, keeping the user's
+data) and carries its launch-at-login choice over to the new install. See
+`installer-hooks.nsh`.
 
 ## What install, uninstall and upgrade do
 
@@ -89,7 +106,7 @@ Only checks that were actually run are listed. Environment: Windows 11 Education
 
 ### Run
 
-- The script builds `wallpaper-lite_0.1.0_x64-setup.exe` (about 3.1 MB).
+- The script builds `wallpaper Lite_0.1.0_x64-setup.exe` (about 3.1 MB).
 - Silent install (`/S /D=<temporary folder>`) exited with code 0 and installed
   `wallpaper-ui.exe`, `wallpaper-host.exe` and `uninstall.exe` side by side, wrote
   the per-user uninstall entry (publisher and version set), and did not start the
@@ -107,6 +124,25 @@ Only checks that were actually run are listed. Environment: Windows 11 Education
   the installed `wallpaper-ui.exe` does too. `uninstall.exe` still shows the default
   NSIS icon. The install and uninstall ran silently with exit code 0 and removed the
   Start menu shortcut and the install folder.
+- Name check after the rename to wallpaper Lite. Commands, from the repository root:
+  `powershell -File scripts\build-release.ps1`, then
+  `& "wallpaper Lite_0.1.0_x64-setup.exe" /S` (no `/D`) and
+  `& "%LOCALAPPDATA%\wallpaper Lite\uninstall.exe" /S`. The install went to
+  `%LOCALAPPDATA%\wallpaper Lite`, created the Start menu shortcut
+  `wallpaper Lite.lnk` and an uninstall entry whose display name is `wallpaper Lite`.
+  A `wallpaper-lite` launch-at-login value set beforehand was removed by the silent
+  uninstall, which also removed the folder, shortcut and uninstall entry and left the
+  existing `%APPDATA%\WallpaperLite` data in place.
+- Moving from the old name. A build made before the rename was installed with its own
+  installer (`wallpaper-lite_0.1.0_x64-setup.exe /S`, which created the uninstall entry
+  `wallpaper-lite`), and a `wallpaper-lite` launch-at-login value was set. Running the
+  new installer with `/S` exited with code 0, removed the old uninstall entry, installed
+  `wallpaper Lite` with its shortcut, rewrote the launch-at-login value to
+  `"%LOCALAPPDATA%\wallpaper Lite\wallpaper-ui.exe" --autostart`, and kept the user
+  data (file count unchanged). Uninstalling the new build then removed everything it
+  had installed, the shortcut, the uninstall entry and the launch-at-login value. Not
+  tested: an old install whose app or host was running at the time, and an old install
+  made to a custom folder.
 - The generated NSIS script contains the sidecar installed as `wallpaper-host.exe`,
   its removal on uninstall, and the custom hooks.
 

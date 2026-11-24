@@ -1,7 +1,7 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-  Builds the wallpaper-lite NSIS installer, including the wallpaper host.
+  Builds the wallpaper Lite NSIS installer, including the wallpaper host.
 
 .DESCRIPTION
   Builds wallpaper-host.exe in release mode, stages it as the Tauri sidecar
@@ -40,8 +40,8 @@ try {
         Pop-Location
     }
 
-    $version = (Get-Content (Join-Path $root 'apps\ui\src-tauri\tauri.conf.json') -Raw | ConvertFrom-Json).version
-    $installerPath = Join-Path $root "target\$triple\release\bundle\nsis\wallpaper-lite_${version}_x64-setup.exe"
+    $config = Get-Content (Join-Path $root 'apps\ui\src-tauri\tauri.conf.json') -Raw | ConvertFrom-Json
+    $installerPath = Join-Path $root "target\$triple\release\bundle\nsis\$($config.productName)_$($config.version)_x64-setup.exe"
     if (-not (Test-Path $installerPath)) { throw "Expected installer was not produced: $installerPath" }
     $installer = Get-Item $installerPath
     Write-Host "Installer: $($installer.FullName)"

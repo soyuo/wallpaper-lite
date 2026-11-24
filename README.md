@@ -1,12 +1,12 @@
 <p align="center">
-  <img src="docs/assets/icon.png" width="128" height="128" alt="wallpaper-lite icon">
+  <img src="docs/assets/icon.png" width="128" height="128" alt="wallpaper Lite icon">
 </p>
 
-<h1 align="center">wallpaper-lite</h1>
+<h1 align="center">wallpaper Lite</h1>
 
 <p align="center">A lightweight live wallpaper app for Windows 10 and 11.</p>
 
-wallpaper-lite shows images and videos behind your desktop icons. It is built with Rust
+wallpaper Lite shows images and videos behind your desktop icons. It is built with Rust
 (a wallpaper host that draws with Direct3D 11) and Tauri, React and TypeScript (the
 settings app). The app lives in the system tray, can start when you sign in, and can
 back up and restore its settings.
