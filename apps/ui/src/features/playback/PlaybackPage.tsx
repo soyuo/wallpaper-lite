@@ -1,6 +1,15 @@
 import { formatTimecode, isTimelineCommitKey, moveSegmentHandle, parseTimecode } from "../../playback-time.mjs";
 import type { PlaybackState } from "./usePlayback";
 
+function segmentProblems(start: number | null, end: number | null, duration: number): string[] {
+  if (start === null || end === null) return ["Enter times as HH:MM:SS.mmm."];
+  const problems: string[] = [];
+  if (end <= start) problems.push("The end must be later than the start.");
+  else if (end - start < 500) problems.push("A segment must be at least 0.5 seconds.");
+  if (duration > 0 && end > duration) problems.push(`The segment can’t go past the video length (${formatTimecode(duration)}).`);
+  return problems;
+}
+
 export function PlaybackPage({ hidden, state, onOpenLibrary }: { hidden: boolean; state: PlaybackState; onOpenLibrary?(): void }) {
   const {
     playbackSettingsDraft,
@@ -39,7 +48,11 @@ export function PlaybackPage({ hidden, state, onOpenLibrary }: { hidden: boolean
         ) : (
           <>
             <div className="playback-stage">
-            <p className="playback-state chip" data-state={playbackState.state}><span className="dot" />{playbackState.loadingVideo ? "Loading" : playbackState.state} · {playbackState.speedPercent}% · {playbackState.fpsLimit} FPS</p>
+            <p className="playback-state chip" data-state={playbackState.state}><span className="dot" />{playbackState.loadingVideo ? "Loading" : playbackState.state === "ended" ? "Ended" : playbackState.state} · {playbackState.speedPercent}% · {playbackState.fpsLimit} FPS</p>
+            <p className="playback-chips">
+              <span className="chip"><span className="dot" />{playbackState.fpsLimit} FPS</span>
+              <span className="chip" data-state={playbackState.audioAvailable ? "connected" : "disconnected"}><span className="dot" />{playbackState.audioAvailable ? "Has audio" : "No audio"}</span>
+            </p>
             {playbackState.lastError && <p className="playback-message" role="status">Host playback error: {playbackState.lastError}</p>}
             <div className="playback-timeline">
               <label htmlFor="playback-seek">Timeline</label>
@@ -148,7 +161,9 @@ export function PlaybackPage({ hidden, state, onOpenLibrary }: { hidden: boolean
                     </label>
                     <label><span>Segment start</span><input value={segmentStartDraft} onChange={(event) => setSegmentStartDraft(event.currentTarget.value)} placeholder="00:00:00.000" /></label>
                     <label><span>Segment end</span><input value={segmentEndDraft} onChange={(event) => setSegmentEndDraft(event.currentTarget.value)} placeholder="00:00:00.000" /></label>
-                    <p>Segment must be at least 500 ms and fit within the video duration.</p>
+                    <ul className="playback-segment-errors" role="status">
+                      {segmentProblems(parseTimecode(segmentStartDraft), parseTimecode(segmentEndDraft), playbackDurationMs).map((problem) => <li key={problem}>{problem}</li>)}
+                    </ul>
                   </div>
                 )}
                 <label><span>Speed</span><select value={playbackSettingsDraft.speedPercent} onChange={(event) => setPlaybackSettingsDraft({ ...playbackSettingsDraft, speedPercent: Number(event.currentTarget.value) })}>{[25, 50, 75, 100, 125, 150, 200].map((value) => <option key={value} value={value}>{value}%</option>)}</select></label>
