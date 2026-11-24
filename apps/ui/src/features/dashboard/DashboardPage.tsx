@@ -15,7 +15,8 @@ export function DashboardPage({ hidden, hostState, hostBusy, onStartHost, playba
   onOpenEditor(entry: LibraryEntry): void;
   onOpenLibrary(): void;
 }) {
-  const { playbackState, playbackBusy, playbackMessage, sendPlaybackControl } = playback;
+  const { playbackState, playbackBusy, playbackMessage, sendPlaybackControl, playbackDurationMs, playbackPositionMs } = playback;
+  const progress = playbackDurationMs > 0 ? Math.min(100, (playbackPositionMs / playbackDurationMs) * 100) : 0;
   const host = hostSummary(hostState);
   const playingEntry = playbackState?.wallpaperId == null
     ? null
@@ -25,21 +26,11 @@ export function DashboardPage({ hidden, hostState, hostBusy, onStartHost, playba
 
   return (
     <section className="dashboard" hidden={hidden} aria-label="Dashboard">
-      <section className="dashboard-card" aria-labelledby="dashboard-host-heading">
-        <h2 id="dashboard-host-heading">Wallpaper host</h2>
-        <p className="dashboard-headline" data-state={hostState}>{host.label}</p>
-        <p className="dashboard-detail">{host.detail}</p>
-        {(hostState === "disconnected" || hostBusy) && (
-          <button className="ui-button--primary" disabled={hostBusy} onClick={onStartHost}>
-            {hostBusy ? "Starting..." : "Start wallpaper host"}
-          </button>
-        )}
-      </section>
-
-      <section className="dashboard-card" aria-labelledby="dashboard-playing-heading">
+      <section className="dashboard-card dashboard-hero" aria-labelledby="dashboard-playing-heading">
         <h2 id="dashboard-playing-heading">Now playing</h2>
-        <p className="dashboard-headline">{nowPlaying.title}</p>
+        <p className="dashboard-headline dashboard-title">{nowPlaying.title}</p>
         <p className="dashboard-detail">{nowPlaying.detail}</p>
+        {nowPlaying.active && <div className="dashboard-progress" role="progressbar" aria-label="Playback position" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(progress)}><span style={{ width: `${progress}%` }} /></div>}
         {nowPlaying.active ? (
           <button
             className="ui-button--primary"
@@ -53,6 +44,17 @@ export function DashboardPage({ hidden, hostState, hostBusy, onStartHost, playba
         )}
         {playbackState?.lastError && <p className="dashboard-detail" role="status">Playback error: {playbackState.lastError}</p>}
         {playbackMessage && <p className="dashboard-detail" role="status">{playbackMessage}</p>}
+      </section>
+
+      <section className="dashboard-card dashboard-aside" aria-labelledby="dashboard-host-heading">
+        <h2 id="dashboard-host-heading">Wallpaper host</h2>
+        <p className="dashboard-headline dashboard-chip" data-state={hostState}>{host.label}</p>
+        <p className="dashboard-detail">{host.detail}</p>
+        {(hostState === "disconnected" || hostBusy) && (
+          <button className="ui-button--primary" disabled={hostBusy} onClick={onStartHost}>
+            {hostBusy ? "Starting..." : "Start wallpaper host"}
+          </button>
+        )}
       </section>
 
       <section className="dashboard-card dashboard-recent" aria-labelledby="dashboard-recent-heading">
