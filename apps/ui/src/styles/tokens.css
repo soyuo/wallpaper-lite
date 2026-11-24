@@ -25,7 +25,7 @@
   --backdrop-glow-b: rgb(255 201 153 / 12%);
 
   /* Glass surfaces */
-  --glass-bg: linear-gradient(135deg, rgb(255 255 255 / 16%), rgb(255 255 255 / 7%));
+  --glass-bg: rgb(255 255 255 / 12%);
   --glass-flat: rgb(255 255 255 / 12%);
   --glass-border: rgb(255 255 255 / 24%);
   --glass-blur: blur(28px) saturate(1.5);
@@ -104,7 +104,7 @@
   --backdrop-gradient: linear-gradient(180deg, #d3e3ff 0%, #9dbdff 42%, #5f8cf0 100%);
   --backdrop-glow-a: rgb(143 227 207 / 55%);
   --backdrop-glow-b: rgb(255 201 153 / 50%);
-  --glass-bg: linear-gradient(135deg, rgb(255 255 255 / 66%), rgb(255 255 255 / 42%));
+  --glass-bg: rgb(255 255 255 / 45%);
   --glass-flat: rgb(255 255 255 / 45%);
   --glass-border: rgb(255 255 255 / 70%);
   --glass-shadow: 0 16px 48px rgb(24 50 130 / 28%), inset 0 1px 0 rgb(255 255 255 / 85%);
