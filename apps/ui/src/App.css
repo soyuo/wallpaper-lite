@@ -44,8 +44,7 @@
 .performance-policy-heading,
 .performance-dashboard-heading,
 .performance-target-heading,
-.display-manager-heading,
-.display-manager-actions {
+.display-manager-heading {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;

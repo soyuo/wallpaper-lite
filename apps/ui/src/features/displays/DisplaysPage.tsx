@@ -148,11 +148,6 @@ export function DisplaysPage({ hidden, state }: { hidden: boolean; state: Displa
                 <button className="ui-button--primary" disabled={displaySaving || displayLoading} onClick={() => void saveDisplayAssignments()}>Save and apply</button>
               </p>
             )}
-            <div className="display-manager-actions">
-              <button className="ui-button--primary" disabled={displaySaving || displayLoading} onClick={() => void saveDisplayAssignments()}>
-                {displaySaving ? "Applying..." : "Save and apply"}
-              </button>
-            </div>
           </>
         ) : (
           <p>No display state is available yet.</p>
