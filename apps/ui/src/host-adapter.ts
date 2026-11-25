@@ -310,6 +310,7 @@ export interface HostAdapter {
   playbackState(): Promise<PlaybackState>;
   loadVideoForPlayback(id: number): Promise<PlaybackPanel>;
   controlPlayback(control: "play" | "pause" | "stop"): Promise<PlaybackState>;
+  removeWallpaper(): Promise<PlaybackState>;
   seekPlayback(positionMs: number): Promise<PlaybackState>;
   seekPlayback100ns(position100ns: number): Promise<PlaybackState>;
   applyPlaybackSettings(id: number, settings: PlaybackSettings): Promise<PlaybackPanel>;
@@ -487,6 +488,9 @@ export const hostAdapter: HostAdapter = {
   },
   controlPlayback(control) {
     return invokeAppCommand<PlaybackState>("control_playback", { control });
+  },
+  removeWallpaper() {
+    return invokeAppCommand<PlaybackState>("remove_wallpaper");
   },
   seekPlayback(positionMs) {
     return invokeAppCommand<PlaybackState>("seek_playback", { positionMs });

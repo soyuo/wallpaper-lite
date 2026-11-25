@@ -58,6 +58,9 @@ function App() {
       // Recents are refreshed again on the next library load.
     }
   }
+  async function removeWallpaper() {
+    if (await playbackState.removeWallpaper()) await displaysState.refreshDisplayManager();
+  }
   const [theme, setTheme] = useState<ThemeChoice>(() => {
     const stored = localStorage.getItem("wallpaper-lite.theme");
     return stored === "light" || stored === "system" ? stored : "dark";
@@ -186,6 +189,7 @@ function App() {
         library={libraryState}
         displaySnapshot={displaySnapshot}
         onStartPlayback={(entry) => void startPlayback(entry)}
+        onRemoveWallpaper={() => void removeWallpaper()}
         onOpenEditor={openInEditor}
         onOpenLibrary={() => setPage("library")}
       />

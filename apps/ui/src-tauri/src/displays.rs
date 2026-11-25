@@ -22,7 +22,7 @@ pub struct DisplayManagerSnapshot {
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DisplayProfileApplyOutcome {
-    applied: bool,
+    pub(crate) applied: bool,
     failed_targets: Vec<DisplayTargetFailure>,
 }
 

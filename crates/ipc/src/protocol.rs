@@ -64,6 +64,8 @@ pub enum Command {
     Play,
     Pause,
     Stop,
+    /// Stop drawing and release the wallpaper so the Windows desktop shows again.
+    ClearWallpaper,
     Seek {
         position_100ns: i64,
     },

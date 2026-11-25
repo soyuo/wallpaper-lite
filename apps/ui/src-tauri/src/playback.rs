@@ -191,6 +191,21 @@ pub async fn control_playback(control: PlaybackControl) -> Result<PlaybackStateV
     execute_state_command(command).await
 }
 
+/// Take the wallpaper down: forget the display assignments so a restart does
+/// not bring it back, then have the host release the wallpaper window so the
+/// Windows desktop shows again. The host keeps running.
+#[tauri::command]
+pub async fn remove_wallpaper() -> Result<PlaybackStateView, AppError> {
+    let outcome = crate::displays::apply_display_profiles(Vec::new()).await?;
+    if !outcome.applied {
+        return Err(AppError::new(
+            ErrorCode::DisplayProfilesApplyFailed,
+            "The wallpaper could not be removed from every display.",
+        ));
+    }
+    execute_state_command(Command::ClearWallpaper).await
+}
+
 #[tauri::command]
 pub async fn seek_playback(position_ms: u64) -> Result<PlaybackStateView, AppError> {
     let position_100ns = position_ms

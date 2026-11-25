@@ -34,6 +34,7 @@ pub(crate) enum RecoveryCommand {
     ExplorerExited,
     ExplorerRestarted,
     SetRenderingPaused(bool),
+    Clear(Sender<()>),
     PresentImage {
         image: DecodedImage,
         source_path: PathBuf,
@@ -92,6 +93,14 @@ impl RecoveryFrameSender {
         result
             .recv_timeout(Duration::from_secs(1))
             .unwrap_or(Err(RendererError::WindowUnavailable))
+    }
+
+    /// Release the wallpaper window so the Windows desktop shows again. A later
+    /// present re-attaches it.
+    pub(crate) fn clear(&self) -> bool {
+        let (response, result) = mpsc::channel();
+        self.0.send(RecoveryCommand::Clear(response)).is_ok()
+            && result.recv_timeout(Duration::from_secs(2)).is_ok()
     }
 
     pub(crate) fn set_rendering_paused(&self, paused: bool) -> bool {
@@ -413,6 +422,25 @@ fn recovery_loop(
                     }
                 }
             }
+            Some(RecoveryCommand::Clear(response)) => {
+                drop(presenter.take());
+                drop(window.take());
+                current_image = None;
+                current_video_frame = None;
+                active_source_path = None;
+                active_editor_settings = None;
+                device_recovery_pending = false;
+                device_recovery_attempts = 0;
+                recovery_pending = false;
+                next_retry = None;
+                retry_delay = INITIAL_RETRY_DELAY;
+                tracing::info!(
+                    component = "desktop",
+                    event = "wallpaper_cleared",
+                    "Wallpaper released; the Windows desktop is visible"
+                );
+                let _ = response.send(());
+            }
             Some(RecoveryCommand::ExplorerExited) => {
                 drop(presenter.take());
                 device_recovery_pending = false;
@@ -468,6 +496,11 @@ fn recovery_loop(
                         Err(error) => Err(error),
                     }
                 } else {
+                    if !recovery_pending {
+                        // The wallpaper was cleared; re-attach for the new content.
+                        recovery_pending = true;
+                        next_retry = Some(Instant::now());
+                    }
                     Ok(())
                 };
                 if result.is_ok() {
@@ -559,6 +592,11 @@ fn recovery_loop(
                     .map(|next_presenter| {
                         presenter = Some(next_presenter);
                     })
+                } else if !recovery_pending {
+                    // The wallpaper was cleared; re-attach for the new content.
+                    recovery_pending = true;
+                    next_retry = Some(Instant::now());
+                    Ok(())
                 } else {
                     Err(RendererError::WindowUnavailable)
                 };
