@@ -1200,6 +1200,26 @@ impl PlaybackController {
                 self.policy_state.user_stop();
                 Ok(())
             }),
+            Command::ClearWallpaper => {
+                self.source = None;
+                self.pending_load = None;
+                self.loading_video = false;
+                self.active_wallpaper_id = None;
+                self.eos_pending = false;
+                self.deferred_frame = None;
+                self.last_error = None;
+                self.policy_state.user_stop();
+                self.scheduler
+                    .stop(now)
+                    .map_err(|_| PlaybackCommandErrorCode::PlaybackFailed)
+                    .and_then(|()| {
+                        if self.frame_sender.clear() {
+                            Ok(())
+                        } else {
+                            Err(PlaybackCommandErrorCode::PlaybackFailed)
+                        }
+                    })
+            }
             Command::Seek { position_100ns } => self.require_source().and_then(|()| {
                 let source = self.source.as_mut().expect("source checked above");
                 let duration = source

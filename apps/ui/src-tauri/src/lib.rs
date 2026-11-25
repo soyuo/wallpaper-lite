@@ -277,6 +277,7 @@ pub fn run() -> process::ExitCode {
             playback::playback_state,
             playback::load_video_for_playback,
             playback::control_playback,
+            playback::remove_wallpaper,
             playback::seek_playback,
             playback::seek_playback_100ns,
             playback::apply_playback_settings,

@@ -7,7 +7,7 @@ import type { DisplayManagerSnapshot, LibraryEntry } from "../../host-adapter";
 import type { LibraryState } from "../library/useLibrary";
 import type { PlaybackState } from "../playback/usePlayback";
 
-export function DashboardPage({ hidden, hostState, hostBusy, onStartHost, playback, library, displaySnapshot, onStartPlayback, onOpenEditor, onOpenLibrary }: {
+export function DashboardPage({ hidden, hostState, hostBusy, onStartHost, playback, library, displaySnapshot, onStartPlayback, onRemoveWallpaper, onOpenEditor, onOpenLibrary }: {
   hidden: boolean;
   hostState: HostState;
   hostBusy: boolean;
@@ -16,6 +16,7 @@ export function DashboardPage({ hidden, hostState, hostBusy, onStartHost, playba
   library: LibraryState;
   displaySnapshot: DisplayManagerSnapshot | null;
   onStartPlayback(entry: LibraryEntry): void;
+  onRemoveWallpaper(): void;
   onOpenEditor(entry: LibraryEntry): void;
   onOpenLibrary(): void;
 }) {
@@ -90,6 +91,7 @@ export function DashboardPage({ hidden, hostState, hostBusy, onStartHost, playba
               <button className="ui-button--primary" onClick={onOpenLibrary}>Open Library</button>
             )}
             {playingEntry && <button onClick={() => onOpenEditor(playingEntry)}>Edit</button>}
+            {nowPlaying.active && <button disabled={playbackBusy || playbackState?.loadingVideo === true} onClick={onRemoveWallpaper}>Remove wallpaper</button>}
           </div>
           {playbackMessage && <p className="dashboard-detail" role="status">{playbackMessage}</p>}
         </div>

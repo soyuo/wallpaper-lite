@@ -98,6 +98,23 @@ export function usePlayback() {
     setPlaybackBusy(false);
   }
 
+  async function removeWallpaper() {
+    setPlaybackBusy(true);
+    setPlaybackMessage("");
+    const result = await runPlaybackAction(
+      () => hostAdapter.removeWallpaper(),
+      "Could not remove the wallpaper.",
+    );
+    if (result.ok) {
+      const state = result.value;
+      setPlaybackPanel((panel) => panel ? { ...panel, state } : { state, settings: null });
+    } else {
+      setPlaybackMessage(result.message);
+    }
+    setPlaybackBusy(false);
+    return result.ok;
+  }
+
   async function commitSeek(positionMs: number) {
     if (!Number.isSafeInteger(positionMs) || positionMs < 0) return;
     const durationMs = playbackPanel?.state.duration100ns == null
@@ -222,6 +239,7 @@ export function usePlayback() {
     seekTimecode,
     startPlayback,
     sendPlaybackControl,
+    removeWallpaper,
     commitSeek,
     seekByFrame,
     applyPlaybackSettingsDraft,
