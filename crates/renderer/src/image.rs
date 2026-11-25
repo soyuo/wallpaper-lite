@@ -174,6 +174,8 @@ pub struct D3d11ImagePresenter {
     placement_buffer: ID3D11Buffer,
     image_texture: ID3D11Texture2D,
     image_view: ID3D11ShaderResourceView,
+    /// True while `image_texture` is a decoder-owned frame that must not be overwritten.
+    image_texture_is_frame: bool,
     vertex_shader: ID3D11VertexShader,
     pixel_shader: ID3D11PixelShader,
     sampler: ID3D11SamplerState,
@@ -287,6 +289,24 @@ impl D3d11ImagePresenter {
         if frame.pixel_format() != VideoPixelFormat::Rgba8 {
             return Err(RendererError::InvalidVideoFrame);
         }
+        if frame.gpu_texture().is_some() {
+            // The frame has no CPU pixels: start from one black pixel, then present the texture.
+            let mut presenter = Self::new_with_pixels(
+                device,
+                window_handle,
+                Rgba8PixelBuffer {
+                    width: 1,
+                    height: 1,
+                    stride: 4,
+                    pixels: &[0, 0, 0, 255],
+                },
+                PlacementMode::Cover,
+                ImageTransform::default(),
+                ColorAdjustments::default(),
+            )?;
+            presenter.set_video_frame(frame)?;
+            return Ok(presenter);
+        }
         Self::new_with_pixels(
             device,
             window_handle,
@@ -398,6 +418,7 @@ impl D3d11ImagePresenter {
             placement_buffer,
             image_texture,
             image_view,
+            image_texture_is_frame: false,
             vertex_shader,
             pixel_shader,
             sampler,
@@ -426,7 +447,49 @@ impl D3d11ImagePresenter {
         if frame.pixel_format() != VideoPixelFormat::Rgba8 {
             return Err(RendererError::InvalidVideoFrame);
         }
+        if let Some(gpu) = frame.gpu_texture() {
+            return self.set_gpu_frame(frame.width(), frame.height(), gpu.texture());
+        }
         self.set_rgba_frame(frame.width(), frame.height(), frame.stride(), frame.rgba8())
+    }
+
+    /// Present a frame that already lives on this presenter's device, without CPU copies.
+    fn set_gpu_frame(
+        &mut self,
+        frame_width: u32,
+        frame_height: u32,
+        texture: &ID3D11Texture2D,
+    ) -> Result<(), RendererError> {
+        let new_dimensions = PlacementDimensions::new(frame_width, frame_height)
+            .map_err(|_| RendererError::InvalidVideoFrame)?;
+        let mut view = None;
+        unsafe {
+            self.device
+                .device()
+                .CreateShaderResourceView(texture, None, Some(&mut view))
+        }
+        .map_err(|error| RendererError::ImageTextureCreation {
+            hresult: error.code().0,
+        })?;
+        let view = view.ok_or(RendererError::ImageTextureCreation { hresult: 0 })?;
+        if new_dimensions != self.source_dimensions {
+            let placement_buffer = create_placement_buffer(
+                &self.device,
+                new_dimensions,
+                PlacementDimensions::new(self.width, self.height)?,
+                self.placement_mode,
+                self.transform,
+                self.color_adjustments,
+                self.span_bounds,
+            )?;
+            self.placement_buffer = placement_buffer;
+            self.source_dimensions = new_dimensions;
+        }
+        self.unbind_resources();
+        self.image_texture = texture.clone();
+        self.image_view = view;
+        self.image_texture_is_frame = true;
+        self.render_current_image()
     }
 
     fn set_rgba_frame(
@@ -441,7 +504,7 @@ impl D3d11ImagePresenter {
         let new_dimensions = PlacementDimensions::new(frame_width, frame_height)
             .map_err(|_| RendererError::InvalidVideoFrame)?;
 
-        if new_dimensions == self.source_dimensions {
+        if new_dimensions == self.source_dimensions && !self.image_texture_is_frame {
             self.unbind_resources();
             let depth_pitch = frame_stride
                 .checked_mul(frame_height)
@@ -476,6 +539,7 @@ impl D3d11ImagePresenter {
             self.unbind_resources();
             self.image_texture = texture;
             self.image_view = view;
+            self.image_texture_is_frame = false;
             self.source_dimensions = new_dimensions;
             self.placement_buffer = placement_buffer;
         }

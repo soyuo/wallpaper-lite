@@ -303,9 +303,34 @@ pub enum VideoPixelFormat {
     Rgba8,
 }
 
+/// A decoded frame that stays on the GPU as a shader-readable D3D11 texture.
+#[cfg(target_os = "windows")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GpuFrameTexture(windows::Win32::Graphics::Direct3D11::ID3D11Texture2D);
+
+#[cfg(target_os = "windows")]
+impl GpuFrameTexture {
+    pub fn texture(&self) -> &windows::Win32::Graphics::Direct3D11::ID3D11Texture2D {
+        &self.0
+    }
+}
+
+// SAFETY: the texture belongs to a device with D3D11 multithread protection enabled,
+// so its interface pointers may be used from the source and presenter threads.
+#[cfg(target_os = "windows")]
+unsafe impl Send for GpuFrameTexture {}
+#[cfg(target_os = "windows")]
+unsafe impl Sync for GpuFrameTexture {}
+
+/// Placeholder so frames have one shape on every platform; it is never constructed.
+#[cfg(not(target_os = "windows"))]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GpuFrameTexture(());
+
 /// One decoded presentation-order video frame.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DecodedVideoFrame {
+    gpu_texture: Option<GpuFrameTexture>,
     width: u32,
     height: u32,
     stride: u32,
@@ -328,8 +353,12 @@ impl DecodedVideoFrame {
     pub const fn pixel_format(&self) -> VideoPixelFormat {
         self.pixel_format
     }
+    /// CPU pixels; empty when the frame is only available as a GPU texture.
     pub fn rgba8(&self) -> &[u8] {
         &self.rgba8
+    }
+    pub const fn gpu_texture(&self) -> Option<&GpuFrameTexture> {
+        self.gpu_texture.as_ref()
     }
     pub const fn pts_100ns(&self) -> i64 {
         self.pts_100ns

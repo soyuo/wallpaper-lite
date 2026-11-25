@@ -572,6 +572,7 @@ mod tests {
 
     fn frame(pts_100ns: i64, duration_100ns: i64, marker: u8) -> DecodedVideoFrame {
         DecodedVideoFrame {
+            gpu_texture: None,
             width: 1,
             height: 1,
             stride: 4,

@@ -285,7 +285,8 @@ fn d3d11_device_enables_dxva_preference_without_forcing_hardware_only_decode() {
         source.read_next().expect("DXVA frames should be readable")
     {
         assert_eq!(frame.pixel_format(), VideoPixelFormat::Rgba8);
-        assert_eq!(frame.rgba8().len(), 64 * 48 * 4);
+        // DXVA frames stay on the GPU; only the software fallback carries CPU pixels.
+        assert!(frame.gpu_texture().is_some() || frame.rgba8().len() == 64 * 48 * 4);
         frames += 1;
     }
     assert_eq!(frames, 30);

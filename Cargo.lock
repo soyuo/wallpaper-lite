@@ -4193,7 +4193,7 @@ dependencies = [
 
 [[package]]
 name = "wallpaper-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -4201,7 +4201,7 @@ dependencies = [
 
 [[package]]
 name = "wallpaper-desktop"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "wallpaper-core",
  "wallpaper-display",
@@ -4210,7 +4210,7 @@ dependencies = [
 
 [[package]]
 name = "wallpaper-display"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde",
  "windows",
@@ -4218,7 +4218,7 @@ dependencies = [
 
 [[package]]
 name = "wallpaper-host"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde_json",
  "tokio",
@@ -4236,7 +4236,7 @@ dependencies = [
 
 [[package]]
 name = "wallpaper-ipc"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -4248,7 +4248,7 @@ dependencies = [
 
 [[package]]
 name = "wallpaper-media"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -4260,7 +4260,7 @@ dependencies = [
 
 [[package]]
 name = "wallpaper-renderer"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "wallpaper-core",
  "wallpaper-desktop",
@@ -4271,7 +4271,7 @@ dependencies = [
 
 [[package]]
 name = "wallpaper-setup"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -4285,7 +4285,7 @@ dependencies = [
 
 [[package]]
 name = "wallpaper-ui"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "base64 0.22.1",
  "rolling-file",

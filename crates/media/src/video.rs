@@ -5,7 +5,7 @@ use windows::{
         Foundation::RPC_E_CHANGED_MODE,
         Graphics::Direct3D11::{
             D3D11_BOX, D3D11_CPU_ACCESS_READ, D3D11_MAP_READ, D3D11_MAPPED_SUBRESOURCE,
-            D3D11_TEXTURE2D_DESC, D3D11_USAGE_STAGING, ID3D11Device, ID3D11Multithread,
+            D3D11_BIND_SHADER_RESOURCE, D3D11_TEXTURE2D_DESC, D3D11_USAGE_DEFAULT, D3D11_USAGE_STAGING, ID3D11Device, ID3D11Multithread,
             ID3D11Texture2D,
         },
         Graphics::Dxgi::Common::{
@@ -37,7 +37,7 @@ use windows::{
 
 use super::audio_engine::AudioEngine;
 use crate::{
-    DecodedVideoFrame, MAX_IMAGE_DIMENSION, MAX_IMAGE_PIXELS, MediaError, VideoDecoderMode,
+    DecodedVideoFrame, GpuFrameTexture, MAX_IMAGE_DIMENSION, MAX_IMAGE_PIXELS, MediaError, VideoDecoderMode,
     VideoMetadata, VideoPixelFormat, VideoReadEvent, VideoStreamSelection,
 };
 
@@ -545,11 +545,20 @@ fn decode_sample(
     let height = handle.metadata.height();
     let (rgba_stride, byte_len) =
         crate::checked_pixel_layout(width, height).map_err(|_| MediaError::InvalidVideoSample)?;
+    let mut gpu_texture = None;
     let rgba8 = if let (Some(device), Ok(buffer)) = (handle.d3d11_device.as_ref(), unsafe {
         sample.GetBufferByIndex(0)
     }) {
         if let Ok(dxgi_buffer) = buffer.cast::<IMFDXGIBuffer>() {
-            copy_dxgi_sample_to_rgba8(&dxgi_buffer, device, width, height, byte_len)?
+            // Prefer a GPU-side copy: reading pixels back to the CPU blocks for tens of
+            // milliseconds when the machine is busy. Fall back to the readback on error.
+            match copy_dxgi_sample_to_gpu_texture(&dxgi_buffer, device, width, height) {
+                Ok(texture) => {
+                    gpu_texture = Some(GpuFrameTexture(texture));
+                    Vec::new()
+                }
+                Err(_) => copy_dxgi_sample_to_rgba8(&dxgi_buffer, device, width, height, byte_len)?,
+            }
         } else {
             copy_locked_sample_to_rgba8(
                 sample,
@@ -566,6 +575,7 @@ fn decode_sample(
 
     handle.last_pts_100ns = Some(timestamp_100ns);
     Ok(DecodedVideoFrame {
+        gpu_texture,
         width,
         height,
         stride: rgba_stride,
@@ -640,6 +650,71 @@ fn copy_locked_sample_to_rgba8(
     }
     drop(lock);
     Ok(rgba8)
+}
+
+/// Copies the decoder output into a new shader-readable texture without touching the CPU.
+fn copy_dxgi_sample_to_gpu_texture(
+    buffer: &IMFDXGIBuffer,
+    device: &ID3D11Device,
+    width: u32,
+    height: u32,
+) -> Result<ID3D11Texture2D, MediaError> {
+    let access = |error: windows::core::Error| MediaError::VideoSampleBufferAccess {
+        hresult: error.code().0,
+    };
+    let mut raw_texture = ptr::null_mut();
+    unsafe { buffer.GetResource(&ID3D11Texture2D::IID, &mut raw_texture) }.map_err(access)?;
+    if raw_texture.is_null() {
+        return Err(MediaError::InvalidVideoSample);
+    }
+    let texture = unsafe { ID3D11Texture2D::from_raw(raw_texture) };
+    let mut source_desc = D3D11_TEXTURE2D_DESC::default();
+    unsafe { texture.GetDesc(&mut source_desc) };
+    if source_desc.Width < width || source_desc.Height < height || source_desc.SampleDesc.Count != 1
+    {
+        return Err(MediaError::InvalidVideoSample);
+    }
+    if source_desc.Format != DXGI_FORMAT_B8G8R8A8_UNORM
+        && source_desc.Format != DXGI_FORMAT_B8G8R8X8_UNORM
+        && source_desc.Format != DXGI_FORMAT_R8G8B8A8_UNORM
+    {
+        return Err(MediaError::UnsupportedVideoPixelFormat);
+    }
+    let mut frame_desc = source_desc;
+    frame_desc.Width = width;
+    frame_desc.Height = height;
+    frame_desc.MipLevels = 1;
+    frame_desc.ArraySize = 1;
+    frame_desc.Usage = D3D11_USAGE_DEFAULT;
+    frame_desc.BindFlags = D3D11_BIND_SHADER_RESOURCE.0 as u32;
+    frame_desc.CPUAccessFlags = 0;
+    frame_desc.MiscFlags = 0;
+    let mut frame = None;
+    unsafe { device.CreateTexture2D(&frame_desc, None, Some(&mut frame)) }.map_err(access)?;
+    let frame = frame.ok_or(MediaError::InvalidVideoSample)?;
+    let subresource = unsafe { buffer.GetSubresourceIndex() }.map_err(access)?;
+    let source_box = D3D11_BOX {
+        left: 0,
+        top: 0,
+        front: 0,
+        right: width,
+        bottom: height,
+        back: 1,
+    };
+    let context = unsafe { device.GetImmediateContext() }.map_err(access)?;
+    unsafe {
+        context.CopySubresourceRegion(
+            &frame,
+            0,
+            0,
+            0,
+            0,
+            &texture,
+            subresource,
+            Some(&source_box),
+        )
+    };
+    Ok(frame)
 }
 
 fn copy_dxgi_sample_to_rgba8(
