@@ -1399,6 +1399,13 @@ impl PlaybackController {
             );
             false
         } else {
+            tracing::error!(
+                component = "renderer",
+                event = "video_frame_presentation_error",
+                error_code = error.to_app_error().code.as_str(),
+                diagnostic = %error.diagnostic_summary(),
+                "Video frame presentation failed"
+            );
             self.fail_playback(
                 "video_frame_presentation_failed",
                 PlaybackCommandErrorCode::PlaybackFailed,
