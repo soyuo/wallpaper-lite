@@ -8,7 +8,9 @@ use wallpaper_core::{
 use wallpaper_ipc::protocol::{
     Command, IpcPlaybackState, PlaybackCommandErrorCode, PlaybackStateEvent, ResponseResult,
 };
-use wallpaper_media::{Availability, CatalogStore, MediaKind, PlaybackSettingsStore};
+use wallpaper_media::{
+    Availability, CatalogStore, MediaKind, PlaybackSettingsStore, RecentWallpaperStore,
+};
 
 static SETTINGS_TRANSACTION: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
 
@@ -168,6 +170,11 @@ pub async fn load_video_for_playback(wallpaper_id: u64) -> Result<PlaybackPanel,
         ResponseResult::Error { code } => return Err(playback_error(code)),
         _ => return Err(malformed_playback_response()),
     };
+    // Playback already started; a recents write failure must not report the start as failed.
+    let _ = tauri::async_runtime::spawn_blocking(move || {
+        RecentWallpaperStore::for_current_user().and_then(|store| store.record_applied(wallpaper_id))
+    })
+    .await;
     Ok(PlaybackPanel {
         state: state.into(),
         settings: Some(settings),

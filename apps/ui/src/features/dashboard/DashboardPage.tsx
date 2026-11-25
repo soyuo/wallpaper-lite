@@ -114,7 +114,7 @@ export function DashboardPage({ hidden, hostState, hostBusy, onStartHost, playba
           </div>
         ) : (
           <ul className="home-tiles">
-            {library.recentLibrary.map((entry) => {
+            {library.recentLibrary.slice(0, 3).map((entry) => {
               const preview = library.previews[entry.id];
               return (
                 <li key={entry.id} className="home-tile">
