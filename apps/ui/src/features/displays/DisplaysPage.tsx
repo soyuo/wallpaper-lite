@@ -145,7 +145,7 @@ export function DisplaysPage({ hidden, state }: { hidden: boolean; state: Displa
               <p className="home-banner display-dirty" role="status">
                 <span>You have unsaved changes.</span>
                 <button disabled={displaySaving || displayLoading} onClick={() => void refreshDisplayManager()}>Revert</button>
-                <button className="ui-button--primary" disabled={displaySaving || displayLoading} onClick={() => void saveDisplayAssignments()}>{displaySaving ? "Applying..." : "Save and apply"}</button>
+                <button className="ui-button--primary" disabled={displaySaving || displayLoading} onClick={() => void saveDisplayAssignments()}>Save and apply</button>
               </p>
             )}
           </>
