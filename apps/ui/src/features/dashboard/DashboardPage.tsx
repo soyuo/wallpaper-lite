@@ -1,3 +1,5 @@
+import { useEffect } from "react";
+
 import { friendlyDisplayName } from "../../format";
 import { canPlayFromDashboard, hostSummary, nowPlayingSummary, toggleControl, toggleLabel } from "../../dashboard-view.mjs";
 import type { HostState } from "../../dashboard-view.mjs";
@@ -27,6 +29,17 @@ export function DashboardPage({ hidden, hostState, hostBusy, onStartHost, playba
   const canToggle = nowPlaying.active && !playbackBusy && !playbackState?.loadingVideo && hostState === "connected";
 
   const heroPreview = playingEntry ? library.previews[playingEntry.id] : undefined;
+
+  // Previews are normally requested by the Library page; Home needs its own so
+  // thumbnails show on a fresh start without visiting the Library first.
+  const { loadPreview, recentLibrary } = library;
+  const playingId = playingEntry?.id;
+  const recentKey = recentLibrary.slice(0, 3).map((entry) => entry.id).join(",");
+  useEffect(() => {
+    const ids = recentKey ? recentKey.split(",").map(Number) : [];
+    if (playingId !== undefined) ids.push(playingId);
+    for (const id of ids) void loadPreview(id);
+  }, [loadPreview, playingId, recentKey]);
   const stateLabel = playbackState?.state === "playing" ? "Playing" : playbackState?.state === "paused" ? "Paused" : "Idle";
 
   const missing = library.library.find((entry) => entry.availability === "file_missing") ?? null;
