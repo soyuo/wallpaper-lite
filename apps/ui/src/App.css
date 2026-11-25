@@ -387,11 +387,16 @@ label {
 
 .library-panel {
   order: -1;
+  /* Exactly four fixed-width cards per row: 4 cards + 3 gaps + list padding + panel padding and border. */
+  width: 100%;
+  max-width: calc(4 * 13.5rem + 3 * var(--space-3) + 0.5rem + 2 * var(--space-4) + 2px);
+  margin-inline: auto;
 }
 
 .library-list {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(13.5rem, 1fr));
+  grid-template-columns: repeat(auto-fill, 13.5rem);
+  justify-content: start;
   max-height: 44rem;
   gap: var(--space-3);
   overflow: auto;
