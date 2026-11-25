@@ -50,6 +50,14 @@ function App() {
   const settingsState = useSettings(page === "settings" || firstRunOpen);
   const { previews, setPreviews, setRecentIds } = libraryState;
   const editorState = useEditor({ previews, setPreviews, setRecentIds, onOpen: () => setPage("editor") });
+  async function startPlayback(entry: Parameters<typeof playbackState.startPlayback>[0]) {
+    await playbackState.startPlayback(entry);
+    try {
+      setRecentIds(await hostAdapter.recentWallpaperIds());
+    } catch {
+      // Recents are refreshed again on the next library load.
+    }
+  }
   const [theme, setTheme] = useState<ThemeChoice>(() => {
     const stored = localStorage.getItem("wallpaper-lite.theme");
     return stored === "light" || stored === "system" ? stored : "dark";
@@ -177,11 +185,11 @@ function App() {
         playback={playbackState}
         library={libraryState}
         displaySnapshot={displaySnapshot}
-        onStartPlayback={(entry) => void playbackState.startPlayback(entry)}
+        onStartPlayback={(entry) => void startPlayback(entry)}
         onOpenEditor={openInEditor}
         onOpenLibrary={() => setPage("library")}
       />
-      <LibraryPage hidden={page !== "library"} state={libraryState} onOpenEditor={openInEditor} onStartPlayback={(entry) => void playbackState.startPlayback(entry)} />
+      <LibraryPage hidden={page !== "library"} state={libraryState} onOpenEditor={openInEditor} onStartPlayback={(entry) => void startPlayback(entry)} />
     </main>
       {splashOpen && <Splash ready={hostState !== "checking"} onDone={() => setSplashOpen(false)} />}
       {!splashOpen && firstRunOpen && (
