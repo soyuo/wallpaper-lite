@@ -391,8 +391,7 @@ label {
 
 .library-list {
   display: grid;
-  grid-template-columns: repeat(auto-fill, 13.5rem);
-  justify-content: start;
+  grid-template-columns: repeat(auto-fill, minmax(13.5rem, 1fr));
   max-height: 44rem;
   gap: var(--space-3);
   overflow: auto;
