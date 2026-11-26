@@ -38,6 +38,13 @@ const QUEUE_TARGET: usize = 3;
 const WORKER_STOP_TIMEOUT: Duration = Duration::from_secs(5);
 const SOURCE_WORKER_STOP_TIMEOUT: Duration = Duration::from_secs(1);
 
+/// Presentation errors that the desktop recovery worker repairs on its own. A lost device is
+/// recreated, and a missing wallpaper window (for example after Explorer rebuilds the desktop
+/// windows) is re-attached with backoff, so playback must stay alive instead of stopping.
+fn is_recoverable_presentation_error(error: RendererError) -> bool {
+    error.is_device_lost() || matches!(error, RendererError::WindowUnavailable)
+}
+
 fn segment_bounds_100ns(segment: SegmentRange) -> Result<(i64, i64), PlaybackCommandErrorCode> {
     let convert = |milliseconds: u64| {
         milliseconds
@@ -1409,7 +1416,7 @@ impl PlaybackController {
     }
 
     fn handle_video_presentation_error(&mut self, error: RendererError) -> bool {
-        if error.is_device_lost() {
+        if is_recoverable_presentation_error(error) {
             tracing::warn!(
                 component = "renderer",
                 event = "video_frame_waiting_for_device_recovery",
@@ -1844,6 +1851,9 @@ mod tests {
             user_intent: super::UserPlaybackIntent::Playing,
             ..PlaybackPolicyState::default()
         };
+        assert!(super::is_recoverable_presentation_error(
+            RendererError::WindowUnavailable
+        ));
         let first = state.transition(PolicyAction::PausePlayback, true);
         assert!(first.pause_playback);
         assert!(first.pause_rendering);
